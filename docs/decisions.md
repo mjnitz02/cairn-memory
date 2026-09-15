@@ -8,6 +8,83 @@ what we believed and why it changed.
 
 ---
 
+## D-0026 — The assembler splits growth from eviction, and the split is conditional
+**2026-09-15.** Builds what D-0019 restated: keep the memory block high, make a
+see-saw step change its **tail** rather than its head. Three modules, because the
+design's claim is that there are two cadences and the code should say so —
+`pipeline/scheduler.js` (growth), `pipeline/budgeter.js` (eviction),
+`prompt/assembler.js` (rendering and measurement), reading tier 2 out of
+`message.extra` through `memory/scenes.js`.
+
+**The rule.** The threshold advances in steps of 10 messages, so between steps
+the included set is *identical* and the block is byte-identical. When it advances,
+summaries append at the tail of an oldest-first render, so the head keeps its
+offsets. Eviction is a separate event: it fires only when the block will not fit
+the prompt, and then drops to **half the cap** rather than shaving the one summary
+that overflowed — so the next rebuild is half a cap of growth away instead of one
+summary away.
+
+**The cap is measured, not chosen.** `getMaxPromptTokens` (`script.js:5981`) is
+ST's own prompt budget — context window minus the reserved response — and the
+observer already measures what the rest of the prompt costs, so the cap is the
+difference. Neither term is a setting (CLAUDE.md §4.15). ST does not put
+`getMaxPromptTokens` on `getContext()` (`st-context.js:115`), so it is imported
+dynamically from `/script.js`; that is the URL ST itself loads
+(`index.html:8218`), so it resolves to the same module whatever our install depth
+is, and a failed import degrades to a share of `maxContext` rather than stopping
+the extension loading.
+
+**Simulated over 170 turns against the regime it replaces**, same summaries, same
+chat, same cap — only the cadences differ:
+
+```
+                      block rebuilt from its head    eviction turns
+qvink's rule                              90                    90
+split cadences                             2                     2
+```
+
+The control is qvink's own defaults expressed in our code: advance the threshold
+every message (its `index.js:138`) and evict exactly enough to fit
+(`floorFraction: 1`). It matters that both arms run past the point where the cap
+binds — before that they are identical, which is D-0019's "turn 6 is not an event,
+it is the new steady state" seen from the other side.
+
+**The half-cap floor buys the spacing; it does not guarantee it.** Rebuilds are
+`(cap - floor) / growth-per-step` steps apart, so a cap only a step or two wide
+puts eviction back on every step — qvink's behaviour, reached by a longer road,
+with the block looking entirely correct while it happens. The first simulation run
+did exactly this and it took a printed trace to see it. So `recoupled()` checks
+the condition every turn and the inspector says so in words (CLAUDE.md §9.35).
+There is no policy that fixes the underlying case: if one step costs more than
+half the cap, the block holds fewer than two steps and no floor makes rebuilds
+rare.
+
+**Not yet the writer.** qvink still injects. Every turn the assembler also renders
+*qvink's own* selection — the set its `include`/`lagging` flags describe — and
+compares it to the block qvink actually parked. Until that is byte-identical,
+taking over the injection would move the block and change its contents in one
+step, and no measurement afterwards could separate the two. D-0020 already
+sequences the handover behind this check; `memory_fidelity` in the log is the
+check.
+
+**What is read from qvink and what is not.** Rendering is read from its live
+settings — template, separator, prefill (`its index.js:93, :113, :133`) — because
+the fidelity check has to hold for *this* user's configuration, not for the
+defaults. The cadences are ours. Reading those would import the behaviour P1
+exists to replace: qvink's growth trigger defaults to `0`, meaning "advance every
+turn", which is the 13% regime itself.
+
+**Half is the one judgement call in this.** Eviction is the expensive event, so it
+should buy the most steps it can; half the cap is the largest share that still
+keeps the block above half its capacity. `memory_evicted` and
+`memory_change_percent` in the log are what would move it.
+**Reopens if:** a real trace shows the block spending long stretches
+under-filled — the floor is too low — or `recoupled` firing on an ordinary chat,
+which would mean the cap is genuinely too tight and the block needs compaction
+rather than a better eviction rule (P4).
+
+---
+
 ## D-0025 — Gitleaks allowlists ST injection-key literals, narrowly
 **2026-09-15.** `generic-api-key` flagged `'2_floating_prompt'` in
 `src/prompt/inventory.js:41` — ST's Author's Note injection key — on the

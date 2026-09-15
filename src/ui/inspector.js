@@ -38,6 +38,7 @@ function renderSnapshot(snapshot) {
         renderWriters(summary),
         renderInventory(inventory),
         renderWorldInfo(worldInfo, snapshot.worldInfoOrdering, snapshot.worldInfoHeld),
+        renderMemory(snapshot.memory),
         renderDivergence(stability, snapshot.divergenceIn),
     ].join('');
 }
@@ -142,6 +143,69 @@ function renderOrderWarning(ordering) {
     return `<div class="${SLUG}-warn">${tiedEntries} of ${activated} lorebook entries share an
         <code>order</code> value, so their order in the prompt is decided by which keyword matched
         first and changes every turn. Give them distinct <code>order</code> values.</div>`;
+}
+
+/**
+ * The assembler's plan, and the one number it exists to move.
+ *
+ * A see-saw step has to change the block's *tail*, not its head
+ * (docs/decisions.md D-0019). "changed at 98% of the block" is that working;
+ * "changed at 0%" on a step turn is it not, and the difference is invisible in
+ * play — which is why it is on the panel rather than only in the log.
+ */
+function renderMemory(memory) {
+    if (!memory) return '';
+
+    const where = memory.change?.divergencePercent;
+    const change = memory.change?.stabilityPercent == null
+        ? 'first turn — no baseline'
+        : (where == null
+            ? 'unchanged since last turn'
+            : `changed ${where}% of the way into the block`);
+
+    const step = memory.stepped ? `stepped (${escapeHtml(memory.stepReason)})` : 'held';
+    const evicted = memory.evicted
+        ? `<span class="${SLUG}-poor">evicted ${memory.evicted}</span>`
+        : 'no eviction';
+
+    return renderRecoupled(memory) + `
+        <details class="${SLUG}-details">
+            <summary>Memory block Cairn would inject (${fmt(memory.tokens)} tokens)${renderFidelity(memory.fidelity)}</summary>
+            ${row('Scenes', `${fmt(memory.included)} in the block, of ${fmt(memory.scenes)} summarised (messages ${memory.oldest ?? '—'}\u2013${memory.newest ?? '—'})`)}
+            ${row('See-saw', `${step} at message ${memory.summarisedThrough}, ${memory.rawWindow} kept raw`)}
+            ${row('Budget', `${fmt(memory.tokens)} / ${fmt(memory.cap)} tokens, floor ${fmt(memory.floor)} \u2014 ${evicted}`)}
+            ${row('Block change', change)}
+        </details>`;
+}
+
+/**
+ * The split between growing the block and evicting from it is conditional:
+ * rebuilds are spaced by the slack a rebuild buys divided by what a step costs.
+ * A context too tight to hold more than a step or two puts eviction back on every
+ * step — and the block still looks entirely correct while that happens, so it
+ * takes a sentence to notice (docs/decisions.md D-0026).
+ */
+function renderRecoupled(memory) {
+    if (!memory.recoupled) return '';
+
+    return `<div class="${SLUG}-warn">The memory block has ${fmt(memory.slack)} tokens of room before
+        it must evict, but a see-saw step adds about ${fmt(memory.stepTokens)} — so every step also
+        rebuilds the block. There is not enough context here to keep the two apart.</div>`;
+}
+
+/**
+ * Whether our render of qvink's own selection is qvink's block byte for byte.
+ * Taking over the injection before this is true would move the block and change
+ * its contents in one go, and no later measurement could separate the two.
+ */
+function renderFidelity(fidelity) {
+    if (!fidelity?.compared) return '';
+    if (fidelity.match) return ` <span class="dim">— matches qvink byte for byte</span>`;
+
+    const caveat = fidelity.approximate
+        ? ' (template uses macros we do not resolve)'
+        : '';
+    return ` <span class="${SLUG}-poor">— diverges from qvink at ${fmt(fidelity.divergeAt)}${caveat}</span>`;
 }
 
 function renderDivergence(stability, divergenceIn) {

@@ -237,3 +237,57 @@ describe('disk log — the holder regime', () => {
         expect(JSON.parse(writtenLines().at(-1)).world_info_held).toBeNull();
     });
 });
+
+describe('disk log — the memory plan', () => {
+    /**
+     * The number P1 is aimed at (docs/decisions.md D-0019). A run is read off
+     * this file, so if the block's own change is not in it there is nothing to
+     * read — the prompt-level stability number cannot separate a block that grew
+     * at its tail from one that was rebuilt at its head.
+     */
+    it('carries where the block changed and whether the cadences held', async () => {
+        const log = createDiskLog({ delayMs: 0 });
+        log.setEnabled(true);
+        log.append(snapshot({
+            memory: {
+                source: 'qvink',
+                scenes: 122,
+                included: 96,
+                oldest: 11,
+                newest: 107,
+                summarisedThrough: 107,
+                stepped: true,
+                stepReason: 'step',
+                evicted: 0,
+                cap: 15_800,
+                floor: 7_900,
+                slack: 7_900,
+                stepTokens: 890,
+                recoupled: false,
+                chars: 38_900,
+                tokens: 9_040,
+                change: { stabilityPercent: 97.7, divergenceAt: 37_100, divergencePercent: 99.9 },
+                fidelity: { compared: true, match: true, approximate: false, divergeAt: null, liveChars: 38_900 },
+            },
+        }), getContext);
+
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        expect(JSON.parse(writtenLines().at(-1))).toMatchObject({
+            memory_planned: true,
+            memory_included: 96,
+            memory_stepped: true,
+            memory_evicted: 0,
+            memory_change_percent: 99.9,
+            memory_fidelity: true,
+        });
+    });
+
+    it('says so plainly when no block was planned', async () => {
+        const log = createDiskLog({ delayMs: 0 });
+        log.setEnabled(true);
+        log.append(snapshot(), getContext);
+
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        expect(JSON.parse(writtenLines().at(-1)).memory_planned).toBe(false);
+    });
+});

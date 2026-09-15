@@ -373,8 +373,10 @@ injection while still *reading* qvink's existing summaries out of `message.extra
 is free and the chat history stays usable. Fixes symptom A on its own.
 
 *Landed:* the World Info holder (0.6.0) — the lore block is add-only, so a keyword-scan miss can
-no longer evict it (`docs/decisions.md` D-0023, D-0024). *Next:* the assembler, so a see-saw step
-changes the memory block's tail rather than its head.
+no longer evict it (`docs/decisions.md` D-0023, D-0024). The assembler (0.7.0) — growth and
+eviction are separate cadences, so a see-saw step appends at the block's tail and the head keeps
+its offsets (`docs/decisions.md` D-0026). *Next:* the handover, once the fidelity check says our
+render of qvink's own selection is its block byte for byte (D-0020).
 
 The measured target is *where* a see-saw step breaks the prefix, not moving the block below the
 history — the history is the part that grows, so anything under it shifts every turn. Keep the

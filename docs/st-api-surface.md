@@ -68,6 +68,8 @@ literally against the cited line.
 | `runGenerationInterceptors` | Our push runs here... | `public/script.js` | 4564 |
 | `getWorldInfoPrompt` | ...which is before the scan reads it | `public/script.js` | 4635 |
 | `if (!dryRun) {` | Dry runs skip interceptors, so they cannot pollute the held set | `public/script.js` | 4562 |
+| `getMaxPromptTokens` | The prompt budget the memory block is capped against — context window minus the reserved response | `public/script.js` | 5981 |
+| `src="script.js"` | The URL ST loads it under, so `/script.js` is the same module however deeply we are installed | `public/index.html` | 8218 |
 
 ## Verified, not yet called
 

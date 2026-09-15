@@ -3,10 +3,11 @@
 A short map of the pieces. The reasoning behind them is in
 [`DESIGN.md`](../DESIGN.md); this page says what is where.
 
-> **Built today: P0 plus the first step of P1.** Cairn observes generations and
-> reports on them, and holds the lorebook block steady. It writes no memory of
-> its own, so it is still safe to run alongside an existing memory extension.
-> Everything below "Holding the lorebook block" is design, not code.
+> **Built today: P0 plus the first two steps of P1.** Cairn observes generations
+> and reports on them, holds the lorebook block steady, and plans the memory
+> block without yet injecting it. It writes no memory of its own, so it is still
+> safe to run alongside an existing memory extension. Everything below "Planning
+> the memory block" is design, not code.
 
 ## What P0 measures
 
@@ -71,6 +72,47 @@ Two consequences worth knowing:
 
 Eviction is not abolished, only batched: when the World Info budget genuinely
 binds, entries leave together rather than one keyword at a time.
+
+## Planning the memory block
+
+The summary block is the largest thing in the prompt — around 80% of what is sent
+on a long chat — and it sits above the history, which is where it belongs. What
+breaks the prompt is what happens *inside* it.
+
+Today's memory extension moves both ends of the block on the same trigger. Every
+tenth message the window slides: new summaries join the end and old ones fall off
+the front. Because the front moved, the model re-reads the block and every
+character below it. One collapse per ten messages, and it does not improve with
+chat length — it is the steady state, not an event (`docs/decisions.md` D-0019).
+
+Cairn separates the two:
+
+- **Growth** advances in steps. Between steps the set of summaries is identical,
+  so the block is byte-identical. When it does advance, the new summaries are
+  appended to the **end** of an oldest-first block, so everything above them keeps
+  the position the model already has cached.
+- **Eviction** happens only when the block will not fit the prompt at all — and
+  then it drops to half the budget rather than shaving off the one summary that
+  overflowed, so the next rebuild is half a budget of growth away.
+
+How much room the block gets is worked out rather than configured: SillyTavern's
+own prompt budget, minus what the rest of the prompt measured last turn. There is
+no setting, because there is nothing to decide.
+
+Two things the inspector says about this, because neither is visible in play:
+
+- **Where in the block the first change fell.** Near the end is the whole point;
+  near the beginning means the block was rebuilt and nothing was gained.
+- **Whether the two cadences have collapsed back into one.** The spacing between
+  rebuilds is the slack a rebuild buys divided by what a step costs, so a context
+  too tight to hold more than a step or two puts eviction back on every step. The
+  block still looks correct while that happens, so the panel says it in words.
+
+Cairn does not inject any of this yet. Every turn it also renders the *existing*
+extension's own selection and compares it to the block that extension actually
+placed; until those match byte for byte, taking over would move the block and
+change its contents at the same time, and no later measurement could tell the two
+apart.
 
 ## The shape of the problem
 

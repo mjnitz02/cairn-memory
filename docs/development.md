@@ -57,6 +57,9 @@ If a module cannot be tested that way, the ST coupling is in the wrong place.
   preamble chatter, truncation, refusals, schema violations, leaked reasoning.
   Parsers are tested against these, because this is what mid-tier models
   actually return.
+- `test/mocks/qvink.js` — qvink-memory's `message.extra` shape: the per-message
+  summary records the scene reader parses, with the flags that decide what it
+  would have injected. Shape confirmed against the corpus, content invented.
 - `test/mocks.test.js` — guards the mocks themselves. A mock that has drifted
   from ST is worse than no mock; it makes broken code pass.
 

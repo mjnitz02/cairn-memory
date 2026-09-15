@@ -396,3 +396,48 @@ describe('observer — the holder regime', () => {
         expect(observer.latest.worldInfoHeld).toBeNull();
     });
 });
+
+describe('observer — the memory plan', () => {
+    it('carries the assembler plan into the snapshot', async () => {
+        const context = createContext();
+        const observer = started(context, { memory: async () => ({ source: 'qvink', included: 42 }) });
+
+        await generate(context, 'a prompt');
+        expect(observer.latest.memory).toEqual({ source: 'qvink', included: 42 });
+    });
+
+    it('hands the assembler what the prompt cost, so the cap can be derived', async () => {
+        const context = createContext();
+        const memory = vi.fn(async () => null);
+        started(context, { memory });
+
+        await generate(context, 'x'.repeat(400));
+        // The mock tokenizer is chars/4 (test/mocks/sillytavern.js).
+        expect(memory).toHaveBeenCalledWith({ promptTokens: 100 });
+    });
+
+    /**
+     * The assembler is a diagnostic here, not a writer. A plan that throws must
+     * cost us the plan, not the turn (CLAUDE.md §4.17).
+     */
+    it('still records the turn when the plan throws', async () => {
+        const context = createContext();
+        const observer = started(context, {
+            memory: async () => { throw new Error('bad chat'); },
+        });
+
+        await generate(context, 'a prompt');
+
+        expect(observer.latest).not.toBeNull();
+        expect(observer.latest.memory).toBeNull();
+        expect(observer.latest.promptTokens).toBeGreaterThan(0);
+    });
+
+    it('records null when nothing is planning a block', async () => {
+        const context = createContext();
+        const observer = started(context);
+
+        await generate(context, 'a prompt');
+        expect(observer.latest.memory).toBeNull();
+    });
+});

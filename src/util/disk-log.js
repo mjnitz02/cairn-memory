@@ -130,6 +130,48 @@ function toEntry(snapshot) {
         // How many entries the holder is keeping in; null when it is off, which is
         // what tells a control run apart from a treatment run.
         world_info_held: snapshot.worldInfoHeld ?? null,
+        ...memoryFields(snapshot.memory),
+    };
+}
+
+/**
+ * The assembler's plan for this turn, flattened.
+ *
+ * `memory_change_percent` is the number P1 is aimed at: how far into the block
+ * the first changed byte fell. Near 100 means a step changed the block's tail,
+ * which is the whole of docs/decisions.md D-0019. Near 0 on a step turn means it
+ * changed the head and nothing was gained.
+ */
+function memoryFields(memory) {
+    if (!memory) return { memory_planned: false };
+
+    return {
+        memory_planned: true,
+        memory_source: memory.source,
+        memory_scenes: memory.scenes,
+        memory_included: memory.included,
+        memory_oldest: memory.oldest,
+        memory_newest: memory.newest,
+        memory_summarised_through: memory.summarisedThrough,
+        memory_stepped: memory.stepped,
+        memory_step_reason: memory.stepReason,
+        memory_evicted: memory.evicted,
+        memory_over_cap: memory.overCap,
+        memory_cap: memory.cap,
+        memory_floor: memory.floor,
+        memory_other_tokens: memory.otherTokens,
+        memory_max_prompt_tokens: memory.maxPromptTokens,
+        memory_chars: memory.chars,
+        memory_tokens: memory.tokens,
+        memory_stability_percent: memory.change?.stabilityPercent ?? null,
+        memory_change_at: memory.change?.divergenceAt ?? null,
+        memory_change_percent: memory.change?.divergencePercent ?? null,
+        // Whether our render of qvink's own selection is their block byte for
+        // byte. The handover is gated on this (docs/decisions.md D-0020).
+        memory_fidelity: memory.fidelity?.compared ? memory.fidelity.match : null,
+        memory_fidelity_approximate: memory.fidelity?.approximate ?? null,
+        memory_fidelity_diverge_at: memory.fidelity?.divergeAt ?? null,
+        memory_live_chars: memory.fidelity?.liveChars ?? null,
     };
 }
 

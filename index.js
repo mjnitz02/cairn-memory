@@ -4,6 +4,7 @@
  */
 import { DISPLAY_NAME, SLUG } from './src/constants.js';
 import { createDiskLog } from './src/util/disk-log.js';
+import { createAssembler } from './src/prompt/assembler.js';
 import { createInjector } from './src/prompt/injector.js';
 import { createObserver } from './src/prompt/observer.js';
 import { migrateSettings } from './src/store/schema.js';
@@ -33,6 +34,11 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
         injector.setHoldEnabled(settings.holdWorldInfo);
         globalThis.cairn_holdWorldInfo = injector.intercept;
 
+        // Plans the memory block and measures it against qvink's live one. It
+        // does not write yet — the handover waits on that comparison
+        // (docs/decisions.md D-0020, D-0026).
+        const assembler = createAssembler(getContext);
+
         let inspector;
         const observer = createObserver(getContext, {
             onSnapshot: (snapshot) => {
@@ -40,6 +46,7 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
                 diskLog.append(snapshot, getContext);
             },
             holding: () => (settings.holdWorldInfo ? injector.remembered.size : null),
+            memory: (turn) => assembler.plan(turn),
         });
 
         inspector = createInspector(await renderSettingsPanel(context, {
@@ -68,6 +75,7 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
         context.eventSource.on(context.eventTypes.CHAT_CHANGED, () => {
             observer.resetBaseline();
             injector.reset();
+            assembler.reset();
             diskLog.reset();
             inspector.render(null);
         });

@@ -11,8 +11,10 @@ set of retrievable past events.
 > **Status: pre-alpha, early P1.** Cairn *measures* — it reports what your prompt
 > is made of and how stable it is — and makes one change to it: lorebook entries
 > are held in place once they have activated, so a keyword-scan miss cannot make
-> the whole lore block vanish and come back. It still writes no memory of its
-> own, so it remains safe to run alongside your existing memory extension. The
+> the whole lore block vanish and come back. It also plans the memory block it
+> *would* inject, from the summaries your existing memory extension has already
+> written, and shows the two side by side. It writes no memory of its own and
+> injects nothing, so it remains safe to run alongside that extension. The
 > features below are being built in phases; see [`DESIGN.md`](DESIGN.md).
 
 ## The major choices

@@ -9,6 +9,31 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-09-15
+
+### Added
+
+- **Cairn now plans the memory block, and the inspector shows what it would
+  inject.** It reads the summaries Qvink Memory has already written and works out
+  which of them belong in the prompt — but it does not inject anything yet. The
+  panel and the log carry the plan beside the block that is actually there, so
+  the change can be measured before it is made.
+- **The block's two cadences are separated.** Summaries enter the block in steps,
+  and old ones are dropped only when the prompt genuinely cannot hold them —
+  where today both happen at once. The point is where the prompt breaks: a step
+  now adds to the *end* of the block, leaving the beginning where the model
+  already has it cached, instead of rewriting the block from its first character
+  and everything below it with it. Simulated over 170 turns, that is 2 full
+  rebuilds instead of 90.
+- **How much room the block gets is worked out, not configured.** Cairn asks
+  SillyTavern how large the prompt may be and subtracts what the rest of the
+  prompt measured last turn. No new setting.
+- The inspector reports where in the block the first change fell — near the end is
+  the whole point of this release — and warns when the context is too tight for
+  the two cadences to stay apart, which otherwise looks exactly like working.
+- The inspector also says whether Cairn's version of the block matches Qvink's
+  byte for byte. Cairn will not take over the injection until it does.
+
 ## [0.6.0] — 2026-09-15
 
 ### Added

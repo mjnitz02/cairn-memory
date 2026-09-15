@@ -28,11 +28,14 @@ const DEFAULT_HISTORY = 20;
  *
  * @param {() => object} getContext Returns a fresh SillyTavern.getContext()
  * @param {{limit?: number, onSnapshot?: (snapshot: object) => void,
- *           holding?: () => (number|null)}} [options]
+ *           holding?: () => (number|null),
+ *           memory?: (turn: {promptTokens: number}) => Promise<object|null>}} [options]
  *        `holding` reports how many World Info entries the holder is keeping in,
  *        so a logged run says whether the fix was on (docs/decisions.md D-0024).
+ *        `memory` is the assembler's plan for this turn — what Cairn would inject
+ *        and how it compares to what is there now (docs/decisions.md D-0026).
  */
-export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot, holding } = {}) {
+export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot, holding, memory } = {}) {
     /**
      * Previous flattened prompt per API path — the baseline the meter compares
      * against. Keyed by API because a text-completion string and a flattened
@@ -78,6 +81,7 @@ export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot
             worldInfo: pendingWorldInfo,
             worldInfoOrdering: assessOrdering(pendingWorldInfo),
             worldInfoHeld: holding?.() ?? null,
+            memory: await planMemory(promptTokens),
         };
 
         previousPrompts.set(api, flat);
@@ -89,6 +93,21 @@ export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot
         debug(`${api}: ${promptTokens} tokens, stability ${stability.stabilityPercent ?? '—'}%`);
         onSnapshot?.(snapshot);
         return snapshot;
+    }
+
+    /**
+     * The assembler is a diagnostic here, not a writer, so it gets the same
+     * treatment as one: a plan that throws costs us the plan, not the turn
+     * (CLAUDE.md §4.17).
+     */
+    async function planMemory(promptTokens) {
+        if (!memory) return null;
+        try {
+            return await memory({ promptTokens });
+        } catch (err) {
+            warn('Observer failed to plan the memory block.', err);
+            return null;
+        }
     }
 
     /**
