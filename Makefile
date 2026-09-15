@@ -5,7 +5,7 @@
 # Everything CI runs is here under the same target name (CLAUDE.md §9.34).
 
 .DEFAULT_GOAL := help
-.PHONY: help install lint lint-fix test test-watch verify-st verify-rules check version-check clean
+.PHONY: help install lint lint-fix test test-watch verify-st verify-rules check version-check secrets clean
 
 # Local SillyTavern checkout used by verify-st. Override: make verify-st ST_PATH=...
 ST_PATH ?= $(HOME)/workspaces/SillyTavern
@@ -37,13 +37,19 @@ version-check: ## Assert manifest.json and package.json versions match
 	fi; \
 	echo "✓ version $$m"
 
+secrets: ## Scan history for leaked secrets (needs gitleaks on PATH)
+	@command -v gitleaks >/dev/null 2>&1 || { \
+		echo "✗ gitleaks not installed — brew install gitleaks"; exit 1; \
+	}
+	gitleaks detect --config .gitleaks.toml --redact --no-banner -v
+
 verify-st: ## Re-check docs/st-api-surface.md against a local SillyTavern checkout
 	ST_PATH=$(ST_PATH) npm run verify-st
 
 verify-rules: ## Check every CLAUDE.md rule reference still resolves
 	npm run verify-rules
 
-check: lint version-check verify-rules test verify-st ## Full local gate (CI runs all but verify-st)
+check: lint version-check verify-rules test secrets verify-st ## Full local gate (CI runs all but verify-st)
 
 clean: ## Remove installed dependencies and coverage output
 	rm -rf node_modules coverage

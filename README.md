@@ -8,10 +8,12 @@ which degrades uniformly until everything is equally vague, and still develops
 holes. Cairn treats memory as **state**: what is true right now, plus a sparse
 set of retrievable past events.
 
-> **Status: pre-alpha, P0.** Cairn currently *measures* — it reports what your
-> prompt is made of and how stable it is, and writes nothing into it. That makes
-> it safe to run alongside your existing memory extension. The features below
-> are being built in phases; see [`DESIGN.md`](DESIGN.md).
+> **Status: pre-alpha, early P1.** Cairn *measures* — it reports what your prompt
+> is made of and how stable it is — and makes one change to it: lorebook entries
+> are held in place once they have activated, so a keyword-scan miss cannot make
+> the whole lore block vanish and come back. It still writes no memory of its
+> own, so it remains safe to run alongside your existing memory extension. The
+> features below are being built in phases; see [`DESIGN.md`](DESIGN.md).
 
 ## The major choices
 
@@ -23,7 +25,9 @@ set of retrievable past events.
   independently is how prompts quietly destabilise.
 - **It cooperates with lorebooks rather than replacing them.** World Info keeps
   doing retrieval; Cairn takes over placement and budgeting, via ST's own
-  outlet mechanism.
+  outlet and force-activate mechanisms. An entry that has activated stays in
+  until the budget genuinely evicts it, rather than flickering with the keywords
+  in the last two messages.
 - **A separate model writes memory.** Your roleplay model is tuned to be
   evocative, which is the opposite of what summarisation needs. Cairn requires
   its own connection profile and does nothing without one.
@@ -58,7 +62,7 @@ Reload SillyTavern afterwards.
 
 ## Use
 
-Open **Extensions → Cairn-Memory**. At P0 there is nothing to configure — send a
+Open **Extensions → Cairn-Memory**. There is very little to configure — send a
 message and read the inspector.
 
 The **Memory connection** setting is inert until Cairn starts writing memory
@@ -67,9 +71,10 @@ The **Memory connection** setting is inert until Cairn starts writing memory
 | Setting | What it does |
 |---|---|
 | Enabled | Turns Cairn off without uninstalling. Existing memory is kept. |
-| Memory connection | The profile Cairn uses to write memory. Must not be your roleplay model. Unused at P0. |
+| Memory connection | The profile Cairn uses to write memory. Must not be your roleplay model. Not used yet. |
 | Show inspector | Shows what was injected, from where, and how stable the prompt is. |
 | Write inspector log to disk | Appends each generation to `user/files/cairn-inspector.jsonl`. |
+| Hold World Info entries | Keeps a lorebook entry in the prompt once it has activated, instead of letting it drop out when the keyword scan misses it. On by default; off restores stock SillyTavern behaviour. |
 | Debug logging | Verbose browser-console output. Only needed for bug reports. |
 
 ## Documentation

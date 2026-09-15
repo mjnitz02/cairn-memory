@@ -8,9 +8,103 @@ what we believed and why it changed.
 
 ---
 
+## D-0025 — Gitleaks allowlists ST injection-key literals, narrowly
+**2026-09-15.** `generic-api-key` flagged `'2_floating_prompt'` in
+`src/prompt/inventory.js:41` — ST's Author's Note injection key — on the
+`key === '...'` shape plus entropy 3.62. Not a secret. CI scans full history
+(`fetch-depth: 0`), so an inline `gitleaks:allow` comment does **not** clear it:
+the finding is pinned to the blob in `1c3b743` and the old blob keeps tripping.
+It has to be config.
+
+Allowlist is scoped three ways rather than exempting the file: `targetRules =
+["generic-api-key"]`, `regexTarget = "secret"`, and `^[0-9]+_[a-z][a-z0-9_]*$` —
+numeric-prefixed lowercase snake_case, which no real credential looks like. A
+file-wide exemption would have been one line shorter and would silently cover
+whatever lands in that file later.
+
+Also added `make secrets`, which CI had no local twin for despite §9.34 — the
+reason this surfaced in CI rather than on the machine that wrote it.
+
+**Reopens if:** a real key ever matches that shape, or gitleaks' allowlist schema
+changes shape across a major version.
+
+---
+
+## D-0024 — The holder is built, and D-0023 was wrong about *how* it works
+**2026-09-15.** Ships the add-only World Info holder D-0023 specified
+(`src/prompt/lorebook.js` for the set, `src/prompt/injector.js` for the push).
+The **rule is unchanged** — an entry that has activated stays in, no cadence, no
+staleness window. Two claims about the mechanism were wrong, and both would have
+produced a holder that looked right and silently did the wrong thing.
+
+**Wrong #1 — "forced entries land in pass 1 and within a pass the sort is
+deterministic (`:4996`)".** The conclusion holds; the reason does not, and the
+reason is what you would have built against. ST substitutes *our* object for the
+book's own (`activatedNow.add(buffer.getExternallyActivated(entry))`,
+`world-info.js:4888`), and our object is not an identity member of
+`sortedEntries`, so the pass tiebreak scores it `-1`:
+
+```js
+// world-info.js:5002
+|| (sortedEntriesIndex.get(a) ?? -1) - (sortedEntriesIndex.get(b) ?? -1);
+```
+
+Every forced entry ties at `-1`. Determinism comes from `Array.prototype.sort`
+being **stable** over `activatedNow`'s insertion order, which is the scan's walk
+down `sortedEntries` — deterministic, but by a different route than the index
+lookup. Consequence worth knowing: on a mixed turn every forced entry sorts
+*above* every naturally-activated one regardless of the book's own order. It only
+shows in the prompt where `order` ties, because final placement is `sortFn` on
+`order` (`:5203`) with this as the tiebreak.
+
+**Wrong #2 — "force-activate the remembered *set*".** A set of `{world, uid}`
+keys is exactly the thing that does not work. Because ST swaps in our object
+wholesale (`:4888`), a stub would have evicted the content it was meant to
+preserve — a lore block of empty entries, on every turn, and the prefix would
+have looked *more* stable while the lore was gone. The holder keeps the **entry
+objects** from `WORLD_INFO_ACTIVATED` (`:900`), which are post-scan: decorators
+already parsed back out of `content`, `world` already attached (`:4639`, `:4535`).
+Raw entries read from the book file have neither, so `loadWorldInfo` is not a
+substitute source.
+
+**A third thing neither entry saw: held entries go stale on a book edit.**
+`getSortedEntries` hands the scan a `structuredClone` (`:4639`), so a held object
+is a copy with no link to the book. While we keep forcing it the book's own entry
+never reaches the scan again — so an author editing an entry would see no change,
+indefinitely, with no error and nothing in the log. The holder subscribes to
+`WORLDINFO_UPDATED` (`:4160`) and releases that book's entries; the next turn
+re-scans them from source. One rebuild per edit, which is obviously the right
+price.
+
+**Where the push goes.** The generate interceptor, registered as
+`generate_interceptor` in `manifest.json` (`extensions.js:2033`, resolved off
+`globalThis` at `:2037`). It is the only hook late enough to know the turn is real
+and early enough to beat the scan — `script.js:4564` against `:4635`. It must
+repeat every turn: `resetExternalEffects()` runs at the end of *every*
+`checkWorldInfo` (`:5275`). Dry runs skip interceptors (`:4562`) and do not emit
+`WORLD_INFO_ACTIVATED` (`:900`), so neither can pollute the set.
+
+**How it is tested.** `test/mocks/world-info.js` is a working model of the scan —
+recursion, the `-1` tiebreak, the clone, the per-turn reset — so the dropout is
+*reproduced* rather than asserted. `test/injector.test.js` runs the turn-4 shape
+and checks the block is byte-identical across it, with a control that turns the
+holder off and watches the same turn collapse to zero entries. A test that only
+checked "we emitted the event" would have passed for both of the wrong builds
+above.
+
+**Knob:** one, `holdWorldInfo`, default on — not a cadence, just off/on, so a run
+can be measured both ways while the observer keeps recording either way.
+**Still open, unchanged from D-0023:** forced entries still roll probability
+(`:5029`), so books with `probability < 100` entries (Akane: 15 of 110) need the
+block cached at our level. D-0021 stays alive for those.
+**Reopens if:** ST gives the pass sort a real tiebreak, or stops substituting the
+forced object for the book's own — either would change the shape of this code.
+
 ## D-0023 — The lorebook block is add-only; a dropout must never evict it
 **2026-09-15.** Supersedes the "cache and churn on a cadence" sketch in D-0022:
 a cadence is the wrong rule and would make things worse.
+*The rule below still stands. Its account of the ST mechanism is corrected by
+D-0024, which built it.*
 
 **The measurement that settles it.** Nine turns on Esin after the `order` fix,
 with two deliberate reference turns run past the see-saw:

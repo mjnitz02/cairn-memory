@@ -113,6 +113,7 @@ export function createContext({ chat = makeChat(), chatMetadata = {}, profiles =
             GENERATE_AFTER_COMBINE_PROMPTS: 'generate_after_combine_prompts',
             WORLD_INFO_ACTIVATED: 'world_info_activated',
             WORLDINFO_FORCE_ACTIVATE: 'worldinfo_force_activate',
+            WORLDINFO_UPDATED: 'worldinfo_updated',
             MESSAGE_RECEIVED: 'message_received',
             CHAT_CHANGED: 'chat_id_changed',
         },

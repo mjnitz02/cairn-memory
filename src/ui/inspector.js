@@ -37,7 +37,7 @@ function renderSnapshot(snapshot) {
         renderTotals(snapshot, summary),
         renderWriters(summary),
         renderInventory(inventory),
-        renderWorldInfo(worldInfo, snapshot.worldInfoOrdering),
+        renderWorldInfo(worldInfo, snapshot.worldInfoOrdering, snapshot.worldInfoHeld),
         renderDivergence(stability, snapshot.divergenceIn),
     ].join('');
 }
@@ -109,16 +109,22 @@ function renderInventory(inventory) {
         </details>`;
 }
 
-function renderWorldInfo(worldInfo, ordering) {
+function renderWorldInfo(worldInfo, ordering, held) {
     if (!worldInfo?.length) return '';
 
     const items = worldInfo
         .map((e) => `<li>${escapeHtml(e.comment || `uid ${e.uid}`)} <span class="dim">${escapeHtml(e.world)}</span></li>`)
         .join('');
 
+    // Says which of the two regimes produced this block, so a stability number
+    // read off the panel is never ambiguous about it (docs/decisions.md D-0024).
+    const holding = Number.isFinite(held)
+        ? ` <span class="dim">— ${held} held</span>`
+        : ' <span class="dim">— not held</span>';
+
     return renderOrderWarning(ordering) + `
         <details class="${SLUG}-details">
-            <summary>Lorebook entries activated (${worldInfo.length})</summary>
+            <summary>Lorebook entries activated (${worldInfo.length})${holding}</summary>
             <ul class="${SLUG}-list">${items}</ul>
         </details>`;
 }

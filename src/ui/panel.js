@@ -10,7 +10,8 @@ import { setDebugEnabled } from '../util/log.js';
  * Render the panel into ST's extension settings column and bind its controls.
  * @param {object} context SillyTavern.getContext()
  * @param {{onEnabledChange?: (enabled: boolean) => void,
- *           onLogToDiskChange?: (enabled: boolean) => void}} [handlers]
+ *           onLogToDiskChange?: (enabled: boolean) => void,
+ *           onHoldWorldInfoChange?: (enabled: boolean) => void}} [handlers]
  * @returns {Promise<HTMLElement>} The element the inspector renders into.
  */
 export async function renderSettingsPanel(context, handlers = {}) {
@@ -22,6 +23,7 @@ export async function renderSettingsPanel(context, handlers = {}) {
     bindCheckbox(context, 'enabled', (value) => handlers.onEnabledChange?.(value));
     bindCheckbox(context, 'showInspector', (value) => toggleInspector(value));
     bindCheckbox(context, 'logToDisk', (value) => handlers.onLogToDiskChange?.(value));
+    bindCheckbox(context, 'holdWorldInfo', (value) => handlers.onHoldWorldInfoChange?.(value));
     bindCheckbox(context, 'debugLogging', (value) => setDebugEnabled(value));
 
     populateProfiles(context, settings.memoryProfileId);

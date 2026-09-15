@@ -35,6 +35,16 @@
                 so a run can be read without copying numbers out by hand.
             </div>
 
+            <label class="checkbox_label" for="cairn_holdWorldInfo">
+                <input id="cairn_holdWorldInfo" type="checkbox">
+                <span>Hold World Info entries</span>
+            </label>
+            <div class="cairn-hint">
+                Keeps a lorebook entry in the prompt once it has activated, instead of letting it
+                drop out on a turn whose keyword scan happens to miss it. Costs a few hundred
+                tokens of stale lore; saves a full prompt rebuild each time an entry flickers.
+            </div>
+
             <label class="checkbox_label" for="cairn_debugLogging">
                 <input id="cairn_debugLogging" type="checkbox">
                 <span>Debug logging</span>

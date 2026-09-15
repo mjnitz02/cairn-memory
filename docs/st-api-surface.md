@@ -53,6 +53,21 @@ literally against the cited line.
 | `world_info_recursive` | Activated content re-enters the scan buffer, so sets cascade to a closure | `public/scripts/world-info.js` | 75 |
 | `matchKeys` | Key matching; whole-word vs substring per entry, then global | `public/scripts/world-info.js` | 337 |
 | `sticky` | Native "stay active for N messages" — but `0` on every entry in practice | `public/scripts/world-info.js` | 4118 |
+| `WORLDINFO_FORCE_ACTIVATE` | Push the held set back in before the scan | `public/scripts/world-info.js` | 1020 |
+| `WORLDINFO_FORCE_ACTIVATE` | Event name | `public/scripts/events.js` | 77 |
+| `externalActivations` | Where a forced entry is parked, keyed `${world}.${uid}` | `public/scripts/world-info.js` | 1025 |
+| `getExternallyActivated` | Consulted **before** the keyword match, so a forced entry needs no key | `public/scripts/world-info.js` | 4886 |
+| `resetExternalEffects` | Clears the forced set after **every** scan — we re-push each turn | `public/scripts/world-info.js` | 5275 |
+| `sortedEntriesIndex.get(a) ?? -1` | A forced entry is not in `sortedEntries`, so it sorts at -1 | `public/scripts/world-info.js` | 5002 |
+| `structuredClone(entries)` | The scan works on a copy, so a held entry cannot track a book edit | `public/scripts/world-info.js` | 4639 |
+| `allActivatedEntries` | WORLD_INFO_ACTIVATED carries full entries, and skips dry runs | `public/scripts/world-info.js` | 900 |
+| `WORLDINFO_UPDATED` | A saved book releases our snapshot of it | `public/scripts/world-info.js` | 4160 |
+| `WORLDINFO_UPDATED` | Event name | `public/scripts/events.js` | 42 |
+| `generate_interceptor` | Manifest key naming our interceptor; run in `loading_order` | `public/scripts/extensions.js` | 2033 |
+| `globalThis[interceptorKey]` | How ST resolves it — `(chat, contextSize, abort, type)` | `public/scripts/extensions.js` | 2037 |
+| `runGenerationInterceptors` | Our push runs here... | `public/script.js` | 4564 |
+| `getWorldInfoPrompt` | ...which is before the scan reads it | `public/script.js` | 4635 |
+| `if (!dryRun) {` | Dry runs skip interceptors, so they cannot pollute the held set | `public/script.js` | 4562 |
 
 ## Verified, not yet called
 
@@ -68,12 +83,10 @@ does not rest on an unchecked claim; each moves up as its phase lands.
 | `setExtensionPrompt` | Signature and stored shape | `public/script.js` | 8926 |
 | `CUSTOM_WI_OUTLET` | Where ST parks outlet content, unplaced | `public/script.js` | 4676 |
 | `outlet` | `world_info_position.outlet === 7` | `public/scripts/world-info.js` | 863 |
-| `WORLDINFO_FORCE_ACTIVATE` | Push entries in | `public/scripts/world-info.js` | 1020 |
 | `outletName` | Declared WI entry field, editable in the WI UI | `public/scripts/world-info.js` | 4108 |
 | `outlet::` | The `{{outlet::key}}` macro that places parked content | `public/scripts/macros.js` | 668 |
 | `ConnectionManagerRequestService` | Class definition and `sendRequest` contract | `public/scripts/extensions/shared.js` | 392 |
 | `ExtractedData` | `{ content, reasoning }`, the non-streaming return shape | `public/scripts/custom-request.js` | 60 |
-| `runGenerationInterceptors` | Interceptors run in `loading_order`; qvink is 1, Cairn 150 | `public/scripts/extensions.js` | 2024 |
 | `coreChat` | Entries are fresh objects but **share `extra` by reference** with the real chat | `public/script.js` | 4539 |
 | `IGNORE_SYMBOL` | The flag that drops a message from the sent history | `public/scripts/constants.js` | 25 |
 | `doChatInject` | Where `IN_CHAT` injections are spliced into the history | `public/script.js` | 5628 |

@@ -4,6 +4,7 @@
  */
 import { DISPLAY_NAME, SLUG } from './src/constants.js';
 import { createDiskLog } from './src/util/disk-log.js';
+import { createInjector } from './src/prompt/injector.js';
 import { createObserver } from './src/prompt/observer.js';
 import { migrateSettings } from './src/store/schema.js';
 import { createInspector } from './src/ui/inspector.js';
@@ -26,27 +27,47 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
         const diskLog = createDiskLog();
         diskLog.setEnabled(settings.logToDisk);
 
+        // ST resolves the manifest's `generate_interceptor` off globalThis
+        // (extensions.js:2035), so the name here must match manifest.json.
+        const injector = createInjector(getContext);
+        injector.setHoldEnabled(settings.holdWorldInfo);
+        globalThis.cairn_holdWorldInfo = injector.intercept;
+
         let inspector;
         const observer = createObserver(getContext, {
             onSnapshot: (snapshot) => {
                 inspector?.render(snapshot);
                 diskLog.append(snapshot, getContext);
             },
+            holding: () => (settings.holdWorldInfo ? injector.remembered.size : null),
         });
 
         inspector = createInspector(await renderSettingsPanel(context, {
-            onEnabledChange: (enabled) => (enabled ? observer.start() : observer.stop()),
+            onEnabledChange: (enabled) => {
+                if (enabled) {
+                    observer.start();
+                    injector.start();
+                } else {
+                    observer.stop();
+                    injector.stop();
+                }
+            },
             onLogToDiskChange: (enabled) => diskLog.setEnabled(enabled),
+            onHoldWorldInfoChange: (enabled) => injector.setHoldEnabled(enabled),
         }));
         inspector.render(observer.latest);
 
-        // P0 is read-only instrumentation: observing costs nothing and risks
-        // nothing, so it follows `enabled` alone (DESIGN.md §13).
-        if (settings.enabled) observer.start();
+        // Both follow `enabled` alone: observing is free, and holding degrades
+        // to ST's own scan rather than to a broken prompt (CLAUDE.md §4.17).
+        if (settings.enabled) {
+            observer.start();
+            injector.start();
+        }
 
         // A new chat is a new baseline — stability across chats is meaningless.
         context.eventSource.on(context.eventTypes.CHAT_CHANGED, () => {
             observer.resetBaseline();
+            injector.reset();
             diskLog.reset();
             inspector.render(null);
         });

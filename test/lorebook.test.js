@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assessOrdering, findOrderTies } from '../src/prompt/lorebook.js';
+import { assessOrdering, createRememberedSet, entryKey, findOrderTies } from '../src/prompt/lorebook.js';
 
 /**
  * The shape measured on Esin (docs/decisions.md D-0022): 31 entries, 29 of them
@@ -75,5 +75,107 @@ describe('assessOrdering', () => {
 
     it('is empty-safe', () => {
         expect(assessOrdering(undefined)).toMatchObject({ activated: 0, stable: true });
+    });
+});
+
+describe('entryKey', () => {
+    it('keys the way ST does, so a held entry round-trips', () => {
+        // world-info.js:1025 — `${entry.world}.${entry.uid}`.
+        expect(entryKey({ world: "Wren's Lorebook", uid: 7 })).toBe("Wren's Lorebook.7");
+    });
+
+    it('rejects what ST would refuse to force', () => {
+        // :1022 requires both fields present or the entry is ignored outright.
+        expect(entryKey({ uid: 7 })).toBeNull();
+        expect(entryKey({ world: 'A' })).toBeNull();
+        expect(entryKey({ world: 'A', uid: null })).toBeNull();
+        expect(entryKey(null)).toBeNull();
+        expect(entryKey('nope')).toBeNull();
+    });
+
+    it('accepts uid 0, which is a real uid', () => {
+        expect(entryKey({ world: 'A', uid: 0 })).toBe('A.0');
+    });
+});
+
+describe('createRememberedSet', () => {
+    const entry = (uid, content = `entry ${uid}`, world = 'A') => ({ world, uid, content });
+
+    it('is add-only: a turn that activates nothing changes nothing', () => {
+        const set = createRememberedSet();
+        set.observe([entry(1), entry(2)]);
+
+        // The dropout turn. WORLD_INFO_ACTIVATED does not even fire when the set
+        // is empty (world-info.js:900), so this is the defensive case.
+        set.observe([]);
+        set.observe(undefined);
+
+        expect(set.size).toBe(2);
+    });
+
+    it('is add-only: a smaller set never shrinks it', () => {
+        const set = createRememberedSet();
+        set.observe([entry(1), entry(2), entry(3)]);
+        set.observe([entry(1)]);
+
+        expect(set.size).toBe(3);
+    });
+
+    it('keeps the object first seen, so the block stays byte-identical', () => {
+        const set = createRememberedSet();
+        const original = entry(1, 'original text');
+        set.observe([original]);
+        set.observe([entry(1, 'a different object with different text')]);
+
+        expect(set.entries()[0]).toBe(original);
+        expect(set.entries()[0].content).toBe('original text');
+    });
+
+    it('reports what it newly learned, and only that', () => {
+        const set = createRememberedSet();
+
+        expect(set.observe([entry(1), entry(2)]).added).toEqual(['A.1', 'A.2']);
+        expect(set.observe([entry(2), entry(3)]).added).toEqual(['A.3']);
+    });
+
+    it('skips entries ST could never force back in', () => {
+        const set = createRememberedSet();
+        set.observe([entry(1), { uid: 2 }, { world: 'A' }]);
+
+        expect(set.size).toBe(1);
+    });
+
+    it('forgets one book without touching the others', () => {
+        const set = createRememberedSet();
+        set.observe([entry(1, 'a', 'A'), entry(2, 'b', 'B'), entry(3, 'c', 'A')]);
+
+        expect(set.forget('A')).toBe(2);
+        expect(set.size).toBe(1);
+        expect(set.has('B.2')).toBe(true);
+    });
+
+    it('forgetting an unknown book is a no-op', () => {
+        const set = createRememberedSet();
+        set.observe([entry(1)]);
+
+        expect(set.forget('nonexistent')).toBe(0);
+        expect(set.size).toBe(1);
+    });
+
+    it('holds entries in first-activation order', () => {
+        const set = createRememberedSet();
+        set.observe([entry(3), entry(1)]);
+        set.observe([entry(2)]);
+
+        expect(set.entries().map((e) => e.uid)).toEqual([3, 1, 2]);
+    });
+
+    it('clears completely for a new chat', () => {
+        const set = createRememberedSet();
+        set.observe([entry(1), entry(2)]);
+        set.clear();
+
+        expect(set.size).toBe(0);
+        expect(set.entries()).toEqual([]);
     });
 });

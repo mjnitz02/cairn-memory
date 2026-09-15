@@ -127,6 +127,9 @@ function toEntry(snapshot) {
         // Entries tied on `order` keep activation order, which changes per turn.
         world_info_tied: snapshot.worldInfoOrdering?.tiedEntries ?? 0,
         world_info_ordering_stable: snapshot.worldInfoOrdering?.stable ?? null,
+        // How many entries the holder is keeping in; null when it is off, which is
+        // what tells a control run apart from a treatment run.
+        world_info_held: snapshot.worldInfoHeld ?? null,
     };
 }
 

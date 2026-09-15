@@ -213,3 +213,27 @@ describe('what a line has to answer', () => {
         expect(entry).toHaveProperty('divergence_in_precision', null);
     });
 });
+
+describe('disk log — the holder regime', () => {
+    /**
+     * Without this the log cannot tell a control run from a treatment run, and
+     * the whole measurement is unreadable (docs/decisions.md D-0024).
+     */
+    it('carries how many entries were held', async () => {
+        const log = createDiskLog({ delayMs: 0 });
+        log.setEnabled(true);
+        log.append(snapshot({ worldInfoHeld: 29 }), getContext);
+
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        expect(JSON.parse(writtenLines().at(-1)).world_info_held).toBe(29);
+    });
+
+    it('carries null when the holder was off, not zero', async () => {
+        const log = createDiskLog({ delayMs: 0 });
+        log.setEnabled(true);
+        log.append(snapshot(), getContext);
+
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        expect(JSON.parse(writtenLines().at(-1)).world_info_held).toBeNull();
+    });
+});
