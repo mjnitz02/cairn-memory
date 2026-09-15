@@ -364,3 +364,35 @@ describe('observer — attributing the break', () => {
         expect(observer.latest.divergenceIn).toBeNull();
     });
 });
+
+describe('observer — the holder regime', () => {
+    /**
+     * A stability trace is only readable if each turn says which regime produced
+     * it. Without this a control run and a treatment run are indistinguishable in
+     * the log (docs/decisions.md D-0024).
+     */
+    it('records how many entries the holder is keeping in', async () => {
+        const context = createContext();
+        const observer = started(context, { holding: () => 29 });
+
+        await generate(context, 'a prompt');
+        expect(observer.latest.worldInfoHeld).toBe(29);
+    });
+
+    it('records null when the holder is off, not zero', async () => {
+        // Zero means "holding, nothing yet"; null means "not holding at all".
+        const context = createContext();
+        const observer = started(context, { holding: () => null });
+
+        await generate(context, 'a prompt');
+        expect(observer.latest.worldInfoHeld).toBeNull();
+    });
+
+    it('records null when nothing reports a holder at all', async () => {
+        const context = createContext();
+        const observer = started(context);
+
+        await generate(context, 'a prompt');
+        expect(observer.latest.worldInfoHeld).toBeNull();
+    });
+});

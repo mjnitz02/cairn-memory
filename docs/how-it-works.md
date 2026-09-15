@@ -3,10 +3,10 @@
 A short map of the pieces. The reasoning behind them is in
 [`DESIGN.md`](../DESIGN.md); this page says what is where.
 
-> **Built today: P0, instrumentation only.** Cairn observes generations and
-> reports on them. It writes nothing into the prompt, so it is safe to run
-> alongside an existing memory extension. Everything below the "What P0
-> measures" section is design, not code.
+> **Built today: P0 plus the first step of P1.** Cairn observes generations and
+> reports on them, and holds the lorebook block steady. It writes no memory of
+> its own, so it is still safe to run alongside an existing memory extension.
+> Everything below "Holding the lorebook block" is design, not code.
 
 ## What P0 measures
 
@@ -25,6 +25,9 @@ watches the finished prompt on its way out and reports:
   remove, so the inspector says so plainly.
 - **Which lorebook entries fired** this turn.
 
+- **Whether the lorebook block was held**, and how many entries were in the
+  held set — so a trace always says which regime produced it.
+
 ### What it cannot see
 
 Attribution comes from ST's `extension_prompts`, so P0 can only name writers that
@@ -38,6 +41,36 @@ and the prompt total disagree, an interceptor is the first thing to suspect.
 
 If the stability numbers do not show what `DESIGN.md` §4 predicts, P0's job is
 to stop the project and force a rethink. It is a gate, not a warm-up.
+
+## Holding the lorebook block
+
+SillyTavern decides which World Info entries are active by scanning the last
+couple of messages for keywords, every turn, from scratch. With recursion on, a
+small seed cascades into a much larger set — and the set it reaches is stable,
+because it is a fixed point of the lorebook's own cross-references.
+
+The *path* to it is not stable. When the scan window happens to contain none of
+the seed keywords, nothing activates, and the entire lore block disappears from
+the prompt. The next turn it comes back. Measured on a real chat that is two
+full prompt rebuilds in a row — worse than the summary see-saw it was hiding
+behind, and it is invisible in play because the writing reads fine either way.
+
+So Cairn remembers which entries have activated and pushes that set back in
+before each scan, using ST's own `WORLDINFO_FORCE_ACTIVATE`. The rule is
+**add-only**: an entry that has activated stays in, and a turn that activates
+nothing changes nothing. There is no cadence and no staleness window — churning
+a held block on a timer costs more rebuilds than the flicker it would fix.
+
+Two consequences worth knowing:
+
+- **Stale lore is cheap; evicting it is not.** An entry about a place you have
+  left adds a little inert background. Removing it rebuilds the prompt. The
+  asymmetry is the whole argument.
+- **Editing a lorebook releases Cairn's hold on that book**, so your change
+  appears on the next turn instead of being masked by the held copy.
+
+Eviction is not abolished, only batched: when the World Info budget genuinely
+binds, entries leave together rather than one keyword at a time.
 
 ## The shape of the problem
 

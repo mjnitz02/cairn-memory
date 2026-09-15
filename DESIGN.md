@@ -217,7 +217,11 @@ cooperation without a second competing injector — natively supported, no fork 
 - `WORLD_INFO_ACTIVATED` (`world-info.js:902`) — tells us which entries fired, but emits
   **after** `worldInfoBefore`/`worldInfoAfter` are already assembled. **Observation only, not
   interception.** Good enough for dedup accounting and budget arithmetic.
-- `WORLDINFO_FORCE_ACTIVATE` (`world-info.js:1020`) — lets us push entries in.
+- `WORLDINFO_FORCE_ACTIVATE` (`world-info.js:1020`) — pushes entries in. **In use**: the
+  holder re-pushes the remembered set from the generate interceptor every turn, because
+  `resetExternalEffects()` clears it after each scan (`:5275`). ST substitutes the *forced
+  object* for the book's own (`:4888`), so what is pushed must be the post-scan entry, not a
+  `{world, uid}` stub. See `docs/decisions.md` D-0024.
 - Depth entries are visible in `context.extensionPrompts` under `customDepthWI_<depth>_<role>`,
   so unconverted entries can still be accounted for and relocated.
 
@@ -367,6 +371,10 @@ If the prefix-stability numbers do not show what section 4 predicts, stop and re
 **P1 — Own the injection.** Assembler + injector + lorebook outlet routing. Replaces qvink's
 injection while still *reading* qvink's existing summaries out of `message.extra`, so migration
 is free and the chat history stays usable. Fixes symptom A on its own.
+
+*Landed:* the World Info holder (0.6.0) — the lore block is add-only, so a keyword-scan miss can
+no longer evict it (`docs/decisions.md` D-0023, D-0024). *Next:* the assembler, so a see-saw step
+changes the memory block's tail rather than its head.
 
 The measured target is *where* a see-saw step breaks the prefix, not moving the block below the
 history — the history is the part that grows, so anything under it shifts every turn. Keep the

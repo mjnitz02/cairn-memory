@@ -28,6 +28,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
     debugLogging: false,
     /** Write each observed generation to data/<user>/user/files/. */
     logToDisk: true,
+    /** Keep World Info entries in the prompt once they have activated (D-0023). */
+    holdWorldInfo: true,
 });
 
 /**

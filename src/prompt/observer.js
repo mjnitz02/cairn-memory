@@ -27,9 +27,12 @@ const DEFAULT_HISTORY = 20;
  * report zero injections while qvink was visibly injecting.
  *
  * @param {() => object} getContext Returns a fresh SillyTavern.getContext()
- * @param {{limit?: number, onSnapshot?: (snapshot: object) => void}} [options]
+ * @param {{limit?: number, onSnapshot?: (snapshot: object) => void,
+ *           holding?: () => (number|null)}} [options]
+ *        `holding` reports how many World Info entries the holder is keeping in,
+ *        so a logged run says whether the fix was on (docs/decisions.md D-0024).
  */
-export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot } = {}) {
+export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot, holding } = {}) {
     /**
      * Previous flattened prompt per API path — the baseline the meter compares
      * against. Keyed by API because a text-completion string and a flattened
@@ -74,6 +77,7 @@ export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot
             summary: summarizeInventory(inventory),
             worldInfo: pendingWorldInfo,
             worldInfoOrdering: assessOrdering(pendingWorldInfo),
+            worldInfoHeld: holding?.() ?? null,
         };
 
         previousPrompts.set(api, flat);

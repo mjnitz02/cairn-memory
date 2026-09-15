@@ -9,6 +9,24 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-09-15
+
+### Added
+
+- **Lorebook entries no longer drop out of the prompt.** SillyTavern re-derives
+  which World Info entries are active from a keyword scan over the last couple of
+  messages, every turn. When that scan happens to seed nothing, the entire lore
+  block vanishes — and comes back the next turn. Measured on a real chat that
+  cost two full prompt rebuilds in a row, the worst event in a nine-turn run and
+  worse than the summary see-saw it was masking. Cairn now remembers which
+  entries have activated and pushes them back in before each scan, so an entry
+  stays once it has appeared. Add-only: nothing is evicted on a keyword miss.
+- New setting, **Hold World Info entries** (on by default). Off restores stock
+  SillyTavern behaviour; the inspector keeps measuring either way, so a run can
+  be compared with and without it.
+- Editing a lorebook releases Cairn's hold on that book, so your change shows up
+  on the next turn rather than being masked by the held copy.
+
 ## [0.5.0] — 2026-09-15
 
 ### Added
