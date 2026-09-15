@@ -8,6 +8,28 @@ what we believed and why it changed.
 
 ---
 
+## D-0025 — Gitleaks allowlists ST injection-key literals, narrowly
+**2026-09-15.** `generic-api-key` flagged `'2_floating_prompt'` in
+`src/prompt/inventory.js:41` — ST's Author's Note injection key — on the
+`key === '...'` shape plus entropy 3.62. Not a secret. CI scans full history
+(`fetch-depth: 0`), so an inline `gitleaks:allow` comment does **not** clear it:
+the finding is pinned to the blob in `1c3b743` and the old blob keeps tripping.
+It has to be config.
+
+Allowlist is scoped three ways rather than exempting the file: `targetRules =
+["generic-api-key"]`, `regexTarget = "secret"`, and `^[0-9]+_[a-z][a-z0-9_]*$` —
+numeric-prefixed lowercase snake_case, which no real credential looks like. A
+file-wide exemption would have been one line shorter and would silently cover
+whatever lands in that file later.
+
+Also added `make secrets`, which CI had no local twin for despite §9.34 — the
+reason this surfaced in CI rather than on the machine that wrote it.
+
+**Reopens if:** a real key ever matches that shape, or gitleaks' allowlist schema
+changes shape across a major version.
+
+---
+
 ## D-0024 — The holder is built, and D-0023 was wrong about *how* it works
 **2026-09-15.** Ships the add-only World Info holder D-0023 specified
 (`src/prompt/lorebook.js` for the set, `src/prompt/injector.js` for the push).

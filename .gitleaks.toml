@@ -3,6 +3,18 @@ title = "cairn-memory"
 [extend]
 useDefault = true
 
-[allowlist]
+[[allowlists]]
 description = "Synthetic fixtures only — CLAUDE.md §3.13"
 paths = ['''test/fixtures/.*''']
+
+[[allowlists]]
+description = """
+SillyTavern injection-key literals are not credentials. ST names its prompt
+injections with a numeric-priority prefix ('2_floating_prompt' is the Author's
+Note, '1_memory' is ST Summarize); generic-api-key matches them on the
+`key === '...'` shape plus entropy. Narrow on purpose: lowercase snake_case
+with a numeric prefix, which no real key looks like.
+"""
+targetRules = ["generic-api-key"]
+regexTarget = "secret"
+regexes = ['''^[0-9]+_[a-z][a-z0-9_]*$''']
