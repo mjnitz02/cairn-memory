@@ -1,0 +1,133 @@
+/* Cairn-Memory. All classes are `cairn-` prefixed; colours come from the
+   active SillyTavern theme so we inherit it for free. */
+
+.cairn-settings label:not(.checkbox_label) {
+    display: block;
+    margin-top: 0.75em;
+}
+
+.cairn-settings .checkbox_label {
+    margin-top: 0.75em;
+}
+
+/* Long runs must not blow the drawer out. */
+.cairn-inspector {
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.cairn-hint {
+    font-size: 0.85em;
+    opacity: 0.7;
+    margin: 0.2em 0 0.6em 0;
+    color: var(--SmartThemeBodyColor);
+}
+
+.cairn-settings select,
+.cairn-settings input[type="text"] {
+    width: 100%;
+}
+
+/* Inspector (DESIGN.md §10). */
+
+.cairn-inspector-block h4 {
+    margin: 0.6em 0 0.4em 0;
+}
+
+.cairn-inspector-empty {
+    opacity: 0.7;
+    font-size: 0.9em;
+}
+
+.cairn-row,
+.cairn-list li {
+    display: flex;
+    justify-content: space-between;
+    gap: 1em;
+    padding: 0.15em 0;
+    font-size: 0.9em;
+}
+
+.cairn-list {
+    list-style: none;
+    margin: 0.3em 0;
+    padding: 0;
+}
+
+.cairn-meter {
+    margin: 0.5em 0 0.8em 0;
+}
+
+.cairn-meter-head {
+    display: flex;
+    justify-content: space-between;
+}
+
+.cairn-meter-track {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--black30a, rgba(0, 0, 0, 0.3));
+    overflow: hidden;
+    margin: 0.3em 0;
+}
+
+.cairn-meter-fill {
+    height: 100%;
+    transition: width 0.2s ease;
+}
+
+/* Bands, not a gradient: the question is which of three states we are in. */
+.cairn-good { color: var(--active, #4caf50); }
+.cairn-fair { color: var(--warning, #e0a030); }
+.cairn-poor { color: var(--fullred, #d05050); }
+.cairn-meter-fill.cairn-good { background: var(--active, #4caf50); }
+.cairn-meter-fill.cairn-fair { background: var(--warning, #e0a030); }
+.cairn-meter-fill.cairn-poor { background: var(--fullred, #d05050); }
+
+.cairn-warn {
+    color: var(--warning, #e0a030);
+    font-size: 0.85em;
+    margin: 0.4em 0;
+}
+
+.cairn-details {
+    margin: 0.4em 0;
+    font-size: 0.9em;
+}
+
+.cairn-details summary {
+    cursor: pointer;
+    opacity: 0.85;
+}
+
+.cairn-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85em;
+}
+
+.cairn-table th,
+.cairn-table td {
+    text-align: left;
+    padding: 0.15em 0.4em;
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+}
+
+.cairn-table td:last-child,
+.cairn-table th:last-child {
+    text-align: right;
+}
+
+.cairn-diff {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.8em;
+    margin: 0.3em 0;
+}
+
+.cairn-was { color: var(--fullred, #d05050); }
+.cairn-now { color: var(--active, #4caf50); }
+
+.dim {
+    opacity: 0.6;
+}

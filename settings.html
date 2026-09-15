@@ -1,0 +1,53 @@
+<div class="cairn-settings">
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b>Cairn-Memory</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        </div>
+        <div class="inline-drawer-content">
+
+            <label class="checkbox_label" for="cairn_enabled">
+                <input id="cairn_enabled" type="checkbox">
+                <span>Enabled</span>
+            </label>
+            <div class="cairn-hint">Turn Cairn off without uninstalling it. Existing memory is kept.</div>
+
+            <label for="cairn_memoryProfileId">Memory connection</label>
+            <select id="cairn_memoryProfileId" class="text_pole"></select>
+            <div class="cairn-hint">
+                The connection profile Cairn uses to write memory. This must not be your roleplay
+                model — roleplay models write flowery summaries.
+                <b>Not used yet:</b> Cairn currently only measures, and makes no requests of its own.
+            </div>
+
+            <label class="checkbox_label" for="cairn_showInspector">
+                <input id="cairn_showInspector" type="checkbox">
+                <span>Show inspector</span>
+            </label>
+            <div class="cairn-hint">Shows what Cairn injected, from where, and how stable the prompt is.</div>
+
+            <label class="checkbox_label" for="cairn_logToDisk">
+                <input id="cairn_logToDisk" type="checkbox">
+                <span>Write inspector log to disk</span>
+            </label>
+            <div class="cairn-hint">
+                Appends each generation to <code>data/&lt;user&gt;/user/files/cairn-inspector.jsonl</code>,
+                so a run can be read without copying numbers out by hand.
+            </div>
+
+            <label class="checkbox_label" for="cairn_debugLogging">
+                <input id="cairn_debugLogging" type="checkbox">
+                <span>Debug logging</span>
+            </label>
+            <div class="cairn-hint">Verbose output in the browser console. Only needed for bug reports.</div>
+
+            <hr>
+
+            <div id="cairn_inspector_block" class="cairn-inspector-block">
+                <h4>Last generation</h4>
+                <div id="cairn_inspector" class="cairn-inspector"></div>
+            </div>
+
+        </div>
+    </div>
+</div>

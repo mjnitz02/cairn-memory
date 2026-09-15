@@ -1,0 +1,22 @@
+{
+    "name": "cairn-memory",
+    "version": "0.3.1",
+    "description": "SillyTavern extension: typed, compacted memory with a single writer to the prompt.",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "lint": "eslint .",
+        "lint:fix": "eslint --fix .",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "verify-st": "node scripts/verify-st.mjs",
+        "verify-rules": "node scripts/verify-rules.mjs"
+    },
+    "license": "MIT",
+    "devDependencies": {
+        "@eslint/js": "^10.0.1",
+        "eslint": "^10.10.0",
+        "globals": "^17.12.0",
+        "vitest": "^5.0.1"
+    }
+}

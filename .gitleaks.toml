@@ -1,0 +1,8 @@
+title = "cairn-memory"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic fixtures only — CLAUDE.md §3.13"
+paths = ['''test/fixtures/.*''']

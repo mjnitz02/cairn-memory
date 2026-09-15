@@ -1,0 +1,12 @@
+{
+    "display_name": "Cairn-Memory",
+    "loading_order": 150,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "mjnitz02",
+    "version": "0.3.1",
+    "homePage": "https://github.com/mjnitz02/cairn-memory",
+    "auto_update": true
+}
