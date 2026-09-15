@@ -9,6 +9,42 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-09-15
+
+### Added
+
+- **Warns when lorebook entries share an `order` value.** ST sorts World Info
+  with one key and no tiebreak, so tied entries fall back to activation order —
+  which changes with the chat text. A tied block silently reshuffles itself every
+  turn and invalidates everything below it. Measured on a real book: 29 of 31
+  entries tied, prefix stability 14-16% on every turn. The inspector now says so
+  in a sentence, and the log carries `world_info_tied` and each entry's `order`.
+
+## [0.4.0] — 2026-09-15
+
+### Added
+
+- **The stability meter now names the block it broke inside.** Each injection is
+  located in the finished prompt, and the divergence index is attributed to
+  whichever block owns that character — "0 chars into Qvink Memory (short)"
+  rather than "character 7,687". This is what turns a stability number into a
+  thing you can act on, and it is the measurement P1 is steered by.
+- The inspector log carries each injection's `offset`, `offset_percent`, `chars`
+  and `match`, plus `divergence_in*` for the attributed break. A run can now be
+  read for *where* the prefix failed, not only that it did.
+
+### Changed
+
+- Attribution states its own confidence. An injection carrying macros — such as
+  `{{outlet::key}}` — is not in the prompt verbatim, so it is matched on its
+  macro-free head and reported as approximate. An approximate location presented
+  as a certain one sends tuning after the wrong block.
+
+### Fixed
+
+- Two `docs/st-api-surface.md` citations had rotted against the pinned checkout
+  (`updateChatMetadata` 8979 → 8978). Exactly the drift D-0009 predicted.
+
 ## [0.3.1] — 2026-09-15
 
 ### Fixed

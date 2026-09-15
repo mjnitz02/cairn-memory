@@ -37,8 +37,8 @@ function renderSnapshot(snapshot) {
         renderTotals(snapshot, summary),
         renderWriters(summary),
         renderInventory(inventory),
-        renderWorldInfo(worldInfo),
-        renderDivergence(stability),
+        renderWorldInfo(worldInfo, snapshot.worldInfoOrdering),
+        renderDivergence(stability, snapshot.divergenceIn),
     ].join('');
 }
 
@@ -109,30 +109,66 @@ function renderInventory(inventory) {
         </details>`;
 }
 
-function renderWorldInfo(worldInfo) {
+function renderWorldInfo(worldInfo, ordering) {
     if (!worldInfo?.length) return '';
 
     const items = worldInfo
         .map((e) => `<li>${escapeHtml(e.comment || `uid ${e.uid}`)} <span class="dim">${escapeHtml(e.world)}</span></li>`)
         .join('');
 
-    return `
+    return renderOrderWarning(ordering) + `
         <details class="${SLUG}-details">
             <summary>Lorebook entries activated (${worldInfo.length})</summary>
             <ul class="${SLUG}-list">${items}</ul>
         </details>`;
 }
 
-function renderDivergence(stability) {
+/**
+ * Entries tied on `order` keep whatever order they activated in, which changes
+ * with the chat text — so the block rewrites itself every turn and everything
+ * below it is re-read. Invisible in play, and it cost an afternoon to find by
+ * hand once (docs/decisions.md D-0022). Now it says so.
+ */
+function renderOrderWarning(ordering) {
+    if (!ordering || ordering.stable) return '';
+
+    const { tiedEntries, activated } = ordering;
+    return `<div class="${SLUG}-warn">${tiedEntries} of ${activated} lorebook entries share an
+        <code>order</code> value, so their order in the prompt is decided by which keyword matched
+        first and changes every turn. Give them distinct <code>order</code> values.</div>`;
+}
+
+function renderDivergence(stability, divergenceIn) {
     if (!stability.divergence) return '';
 
     return `
         <details class="${SLUG}-details">
             <summary>What changed since last turn</summary>
-            <div class="${SLUG}-hint">Prompts diverge at character ${fmt(stability.divergence.index)}.</div>
+            <div class="${SLUG}-hint">Prompts diverge at character ${fmt(stability.divergence.index)}${describeBreak(divergenceIn)}.</div>
             <pre class="${SLUG}-diff"><span class="${SLUG}-was">- ${escapeHtml(stability.divergence.previous)}</span>
 <span class="${SLUG}-now">+ ${escapeHtml(stability.divergence.current)}</span></pre>
         </details>`;
+}
+
+/**
+ * Name the block the break fell in. Hedged exactly as far as the match was:
+ * an approximate location reported as a certain one is worse than none, because
+ * it sends tuning after the wrong block.
+ */
+function describeBreak(divergenceIn) {
+    if (!divergenceIn) return '';
+
+    const where = escapeHtml(divergenceIn.label);
+    switch (divergenceIn.precision) {
+        case 'inside':
+            return `, ${fmt(divergenceIn.offsetInEntry)} chars into ${where}`;
+        case 'after':
+            return `, after the end of ${where}`;
+        case 'probe':
+            return `, at or after the start of ${where} <span class="dim">(approximate)</span>`;
+        default:
+            return ', above every injection';
+    }
 }
 
 function row(label, value) {

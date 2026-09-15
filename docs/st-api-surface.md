@@ -41,7 +41,18 @@ literally against the cited line.
 | `2_floating_prompt` | Author's Note injection key | `public/scripts/authors-note.js` | 26 |
 | `1_memory` | ST Summarize injection key | `public/scripts/extensions/memory/index.js` | 36 |
 | `extension_prompts` | **Reassigned** in clearChat — a held reference goes stale | `public/script.js` | 1590 |
-| `updateChatMetadata` | **Reassigns** `chat_metadata` on every update | `public/script.js` | 8979 |
+| `updateChatMetadata` | **Reassigns** `chat_metadata` on every update | `public/script.js` | 8978 |
+| `getExtensionPrompt` | Collects a position; **sorts keys**, so key names decide order | `public/script.js` | 3301 |
+| `value.trim()` | Each injection is trimmed before joining — what locate.js matches on | `public/script.js` | 3318 |
+| `substituteParams(values)` | Macros resolve *after* parking, so `{{outlet::x}}` works inside our block | `public/script.js` | 3326 |
+| `sortFn` | WI insertion sort: **one key, no tiebreak** — `b.order - a.order` | `public/scripts/world-info.js` | 88 |
+| `allActivatedEntries` | A **Map**, so `.values()` is activation order — the de facto tiebreak | `public/scripts/world-info.js` | 4732 |
+| `sortFn` | Applied to scan order | `public/scripts/world-info.js` | 4610 |
+| `allActivatedEntries` | Applied to prompt order; ties keep activation order | `public/scripts/world-info.js` | 5203 |
+| `order` | The sort key itself; plain number, default 100, unbounded | `public/scripts/world-info.js` | 4092 |
+| `world_info_recursive` | Activated content re-enters the scan buffer, so sets cascade to a closure | `public/scripts/world-info.js` | 75 |
+| `matchKeys` | Key matching; whole-word vs substring per entry, then global | `public/scripts/world-info.js` | 337 |
+| `sticky` | Native "stay active for N messages" — but `0` on every entry in practice | `public/scripts/world-info.js` | 4118 |
 
 ## Verified, not yet called
 
@@ -62,6 +73,14 @@ does not rest on an unchecked claim; each moves up as its phase lands.
 | `outlet::` | The `{{outlet::key}}` macro that places parked content | `public/scripts/macros.js` | 668 |
 | `ConnectionManagerRequestService` | Class definition and `sendRequest` contract | `public/scripts/extensions/shared.js` | 392 |
 | `ExtractedData` | `{ content, reasoning }`, the non-streaming return shape | `public/scripts/custom-request.js` | 60 |
+| `runGenerationInterceptors` | Interceptors run in `loading_order`; qvink is 1, Cairn 150 | `public/scripts/extensions.js` | 2024 |
+| `coreChat` | Entries are fresh objects but **share `extra` by reference** with the real chat | `public/script.js` | 4539 |
+| `IGNORE_SYMBOL` | The flag that drops a message from the sent history | `public/scripts/constants.js` | 25 |
+| `doChatInject` | Where `IN_CHAT` injections are spliced into the history | `public/script.js` | 5628 |
+| `flushWIInjections` | ST clears depth and outlet injections every generation | `public/script.js` | 5678 |
+| `getOutletPrompt` | Resolves `{{outlet::key}}` from the parked injection | `public/scripts/macros.js` | 597 |
+| `world_info_position.outlet` | The outlet branch of the placement switch | `public/scripts/world-info.js` | 5248 |
+| `WIOutletEntries` | Entries sharing an `outletName` group into one block | `public/scripts/world-info.js` | 5253 |
 
 ## Hazards
 
@@ -69,7 +88,7 @@ does not rest on an unchecked claim; each moves up as its phase lands.
 (`maxContext`) and captures object references (`extensionPrompts`,
 `chatMetadata`) as they are at call time. ST reassigns `extension_prompts` in
 `clearChat` (`public/script.js:1590`) and `chat_metadata` in ten places including
-`updateChatMetadata` (`:8979`), so a context captured at extension load is
+`updateChatMetadata` (`:8978`), so a context captured at extension load is
 orphaned the moment a chat opens. **Call `getContext()` fresh at the point of
 use.** `chat` is the exception — ST mutates that array in place.
 

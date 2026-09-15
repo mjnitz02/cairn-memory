@@ -94,6 +94,12 @@ function toEntry(snapshot) {
         divergence_index: snapshot.stability.divergence?.index ?? null,
         divergence_previous: snapshot.stability.divergence?.previous ?? null,
         divergence_current: snapshot.stability.divergence?.current ?? null,
+        // Which block the prefix broke inside. `precision` says how much to
+        // trust it — see attributeOffset in src/prompt/locate.js.
+        divergence_in: snapshot.divergenceIn?.key ?? null,
+        divergence_in_owner: snapshot.divergenceIn?.owner ?? null,
+        divergence_in_offset: snapshot.divergenceIn?.offsetInEntry ?? null,
+        divergence_in_precision: snapshot.divergenceIn?.precision ?? null,
         injected_tokens: snapshot.summary.tokens,
         injected_tokens_estimated: snapshot.inventory.some((entry) => entry.estimated),
         injection_count: snapshot.summary.count,
@@ -105,12 +111,22 @@ function toEntry(snapshot) {
             position: entry.positionName,
             depth: entry.depth,
             tokens: entry.tokens,
+            chars: entry.chars,
+            // Where it actually landed, which is the only way to tell a plan
+            // that was written from a plan that was honoured.
+            offset: entry.offset ?? null,
+            offset_percent: entry.offsetPercent ?? null,
+            match: entry.match ?? null,
         })),
         world_info: snapshot.worldInfo.map((entry) => ({
             world: entry.world,
             uid: entry.uid,
             comment: entry.comment,
+            order: entry.order ?? null,
         })),
+        // Entries tied on `order` keep activation order, which changes per turn.
+        world_info_tied: snapshot.worldInfoOrdering?.tiedEntries ?? 0,
+        world_info_ordering_stable: snapshot.worldInfoOrdering?.stable ?? null,
     };
 }
 

@@ -289,3 +289,78 @@ describe('observer — stale context', () => {
         expect(observer.latest.maxContext).toBe(8000);
     });
 });
+
+describe('observer — attributing the break', () => {
+    const CARD = 'You are Elizabeth. '.repeat(20);
+    const HISTORY = '\nMatt: are you okay?';
+
+    /**
+     * The P0 finding, in miniature (docs/decisions.md D-0018). The memory block
+     * sits above the history; a see-saw step evicts the oldest summary, so the
+     * block's *first* characters change and everything below is invalidated.
+     * The inspector has to name that block, not just report an offset.
+     */
+    it('names the block a see-saw step broke, and how far into it', async () => {
+        const context = createContext();
+        const observer = started(context);
+
+        // Two summaries that share no prefix, as two real ones do not.
+        const before = 'Elizabeth left the club and went home.';
+        context.setExtensionPrompt('qvink_memory_short', before, extension_prompt_types.IN_PROMPT, 16);
+        await generate(context, CARD + before + HISTORY);
+
+        // The window slides: the oldest summary falls off the front.
+        const after = 'Matt offered to decorate the apartment.';
+        context.setExtensionPrompt('qvink_memory_short', after, extension_prompt_types.IN_PROMPT, 16);
+        await generate(context, CARD + after + HISTORY);
+
+        expect(observer.latest.divergenceIn).toMatchObject({
+            key: 'qvink_memory_short',
+            owner: 'qvink',
+            offsetInEntry: 0,
+            precision: 'inside',
+        });
+    });
+
+    /**
+     * The healthy turn, which must not be confused with the broken one: the
+     * block is byte-identical and only the newest message was appended.
+     */
+    it('reports a break below the memory block as being after it', async () => {
+        const context = createContext();
+        const observer = started(context);
+
+        const memory = 'She left the club. She went home.';
+        context.setExtensionPrompt('qvink_memory_short', memory, extension_prompt_types.IN_PROMPT, 16);
+
+        await generate(context, CARD + memory + HISTORY);
+        await generate(context, CARD + memory + HISTORY + '\nElizabeth: I am fine.');
+
+        expect(observer.latest.divergenceIn).toMatchObject({
+            key: 'qvink_memory_short',
+            precision: 'after',
+        });
+    });
+
+    it('locates each injection in the prompt it measured', async () => {
+        const context = createContext();
+        const observer = started(context);
+
+        const memory = 'She left the club.';
+        context.setExtensionPrompt('qvink_memory_short', memory, extension_prompt_types.IN_PROMPT, 16);
+        await generate(context, CARD + memory + HISTORY);
+
+        expect(observer.latest.inventory[0]).toMatchObject({
+            offset: CARD.length,
+            match: 'exact',
+        });
+    });
+
+    it('has nothing to attribute on the first turn', async () => {
+        const context = createContext();
+        const observer = started(context);
+
+        await generate(context, CARD);
+        expect(observer.latest.divergenceIn).toBeNull();
+    });
+});

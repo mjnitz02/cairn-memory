@@ -91,7 +91,11 @@ Specific findings:
    damages flow. Hard facts live in structured state; *flavour* comes from the recent raw
    messages, which is what they are for.
 3. **Cooperate with lorebooks, do not replace them.** WI keeps doing retrieval. We take over
-   placement and budgeting.
+   placement and budgeting. **Assume the worst about lorebook hygiene**: `sticky` and `cooldown`
+   are `0` on every entry of every book observed, `order` ties on anything hand-made, and
+   recursion is a global toggle. Roughly nineteen books in twenty have none of it configured, so
+   nothing may depend on configuration being correct. The rules cost a well-made book nothing —
+   it still evicts, just on the see-saw instead of per turn (`docs/decisions.md` D-0023).
 4. **Retrieval is entity-based first.** Vector/RAG retrieval pushes the user toward writing
    keyword bait to hit the index. Fine for a work agent, not fine for roleplay. Names and
    entities matter more than semantics here. Vectors stay an optional second stage, if ever.
@@ -364,6 +368,10 @@ If the prefix-stability numbers do not show what section 4 predicts, stop and re
 injection while still *reading* qvink's existing summaries out of `message.extra`, so migration
 is free and the chat history stays usable. Fixes symptom A on its own.
 
+The measured target is *where* a see-saw step breaks the prefix, not moving the block below the
+history — the history is the part that grows, so anything under it shifts every turn. Keep the
+block high; make a step change its tail rather than its head. See `docs/decisions.md` D-0019.
+
 **P2 — Scenes.** Own summarisation, delta-style, see-saw scheduler ported from qvink. Now
 independent of qvink.
 
@@ -380,12 +388,14 @@ independent of qvink.
 1. ~~**Text completion or chat completion against oMLX?**~~ **Answered 2026-09-15: text
    completion.** The oMLX profile runs in `tc` mode, so `GENERATE_AFTER_COMBINE_PROMPTS` is the
    primary rewrite hook. See `docs/decisions.md` D-0010.
-2. **Willingness to migrate existing lorebooks to outlets?** Per-entry edit (position -> outlet,
-   set `outletName`). Full control if yes; if no, we stay at cooperation Level 1 (section 7).
+2. **Willingness to migrate existing lorebooks to outlets?** Open, but gated on a measurement
+   rather than an opinion: run Esin and read the stability trace first. Cheaper than it looked —
+   one outlet per *book*, not per entry, and scriptable. See `docs/decisions.md` D-0021.
 3. **Which tier is the memory model, really?** If the floor has moved from flash-class to
    GLM-4.7-class, the prompts can carry more nuance — particularly the promote/merge/drop pass,
    which is meaningfully harder than per-message summarisation.
-4. **Does qvink stay installed during P0/P1?** If so, loading order and interceptor interaction
-   need deciding up front (qvink is `loading_order: 1`).
+4. ~~**Does qvink stay installed during P0/P1?**~~ **Answered 2026-09-15: yes, as a summary
+   generator only.** Cairn takes both the injection and the blanking threshold; qvink's injection
+   is silenced and `exclude_messages_after_threshold` turned off. See `docs/decisions.md` D-0020.
 5. ~~**Minimum ST version.**~~ **Answered 2026-09-15: 1.19.0.** Local checkout and server both run
    1.19.0 (`06bde939f`); all outlet and hook citations in section 7 re-verified against it.

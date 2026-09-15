@@ -18,8 +18,13 @@ function snapshot(overrides = {}) {
             stabilityPercent: 90,
             divergence: { index: 900, previous: 'old tail', current: 'new tail' },
         },
+        divergenceIn: { key: 'qvink_memory_short', owner: 'qvink', label: 'Qvink Memory (short)', offsetInEntry: 0, precision: 'inside' },
         inventory: [
-            { key: 'qvink_memory_short', owner: 'qvink', label: 'Qvink Memory (short)', positionName: 'in-prompt', depth: 16, tokens: 120 },
+            {
+                key: 'qvink_memory_short', owner: 'qvink', label: 'Qvink Memory (short)',
+                positionName: 'in-prompt', depth: 16, tokens: 120, chars: 480,
+                offset: 300, offsetPercent: 30, match: 'exact',
+            },
         ],
         summary: { count: 1, tokens: 120, writers: 1, byOwner: [{ owner: 'qvink', count: 1, tokens: 120 }] },
         worldInfo: [],
@@ -153,5 +158,58 @@ describe('disk log', () => {
         await vi.advanceTimersByTimeAsync(1500);
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(writtenLines()).toHaveLength(3);
+    });
+});
+
+describe('what a line has to answer', () => {
+    /**
+     * The log exists so a run can be read with jq instead of by hand
+     * (docs/decisions.md D-0017). "Stability fell to 13%" is only actionable
+     * with the block it fell inside, which means offsets have to survive the
+     * trip to disk.
+     */
+    it('records which block the prefix broke inside', async () => {
+        const log = createDiskLog({ delayMs: 0 });
+        log.setEnabled(true);
+        log.append(snapshot(), getContext);
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+        expect(JSON.parse(writtenLines()[0])).toMatchObject({
+            divergence_index: 900,
+            divergence_in: 'qvink_memory_short',
+            divergence_in_owner: 'qvink',
+            divergence_in_offset: 0,
+            divergence_in_precision: 'inside',
+        });
+    });
+
+    it('records where each injection actually landed, not just its size', async () => {
+        const log = createDiskLog({ delayMs: 0 });
+        log.setEnabled(true);
+        log.append(snapshot(), getContext);
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+        expect(JSON.parse(writtenLines()[0]).injections[0]).toMatchObject({
+            key: 'qvink_memory_short',
+            chars: 480,
+            offset: 300,
+            offset_percent: 30,
+            match: 'exact',
+        });
+    });
+
+    it('writes nulls rather than dropping the fields on a first turn', async () => {
+        // A missing key and a key that is null read very differently in jq.
+        const log = createDiskLog({ delayMs: 0 });
+        log.setEnabled(true);
+        log.append(snapshot({
+            divergenceIn: null,
+            stability: { previousLength: 0, currentLength: 1000, commonPrefix: 0, stabilityPercent: null, divergence: null },
+        }), getContext);
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+        const entry = JSON.parse(writtenLines()[0]);
+        expect(entry).toHaveProperty('divergence_in', null);
+        expect(entry).toHaveProperty('divergence_in_precision', null);
     });
 });

@@ -10,6 +10,8 @@
  * diagnostic (CLAUDE.md §4.17).
  */
 import { buildInventory, summarizeInventory } from './inventory.js';
+import { assessOrdering } from './lorebook.js';
+import { attributeOffset, locateInjections } from './locate.js';
 import { comparePrompts, flattenPrompt } from '../util/prefix.js';
 import { countTokens } from '../util/tokens.js';
 import { debug, warn } from '../util/log.js';
@@ -47,11 +49,15 @@ export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot
         // Re-read every turn. See the note on getContext above.
         const context = getContext();
 
+        const extensionPrompts = context.extensionPrompts;
         const flat = flattenPrompt(prompt);
         const stability = comparePrompts(previousPrompts.get(api) ?? null, flat);
-        const inventory = await buildInventory(context.extensionPrompts, {
+        const counted = await buildInventory(extensionPrompts, {
             countTokens: (text) => countTokens(context, text),
         });
+        // Where each block sits, so the divergence index has a name rather than
+        // being an offset someone has to go and look up by hand.
+        const inventory = locateInjections(flat, counted, textsOf(extensionPrompts));
         const promptTokens = await countTokens(context, flat);
         const maxContext = Number(context.maxContext) || 0;
 
@@ -63,9 +69,11 @@ export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot
             maxContext,
             contextPercent: maxContext ? round1((promptTokens / maxContext) * 100) : null,
             stability,
+            divergenceIn: attributeOffset(stability.divergence?.index, inventory),
             inventory,
             summary: summarizeInventory(inventory),
             worldInfo: pendingWorldInfo,
+            worldInfoOrdering: assessOrdering(pendingWorldInfo),
         };
 
         previousPrompts.set(api, flat);
@@ -118,6 +126,8 @@ export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot
                 comment: entry?.comment ?? '',
                 position: entry?.position,
                 depth: entry?.depth,
+                // The sort key. Ties here reshuffle the block every turn.
+                order: entry?.order,
                 outletName: entry?.outletName ?? '',
             }));
         } catch (err) {
@@ -165,6 +175,15 @@ export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot
             return snapshots[snapshots.length - 1] ?? null;
         },
     };
+}
+
+/** Key -> raw value, the form locateInjections() searches with. */
+function textsOf(extensionPrompts) {
+    const texts = {};
+    for (const [key, prompt] of Object.entries(extensionPrompts ?? {})) {
+        texts[key] = prompt?.value ?? '';
+    }
+    return texts;
 }
 
 function round1(value) {

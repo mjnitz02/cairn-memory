@@ -8,6 +8,225 @@ what we believed and why it changed.
 
 ---
 
+## D-0023 — The lorebook block is add-only; a dropout must never evict it
+**2026-09-15.** Supersedes the "cache and churn on a cadence" sketch in D-0022:
+a cadence is the wrong rule and would make things worse.
+
+**The measurement that settles it.** Nine turns on Esin after the `order` fix,
+with two deliberate reference turns run past the see-saw:
+
+```
+turn   1      2      3      4      5      6      7      8      9
+stab   —    97.9   97.1   14.9   11.4   97.5   36.0   97.3   97.6
+wi    29     29     29      0     29     29     29     29     29
+```
+
+Turns 8 and 9 matter as much as the collapse does: the prompt re-stabilises
+immediately and completely. The see-saw is a **single-turn** event, not a
+degradation that lingers — so its cost is exactly one rebuild, and the fix is
+worth exactly what D-0019's arithmetic says.
+
+Turns 2/3/6/8/9 confirm the fix — `world_info_tied: 0` throughout, healthy turns
+back at ~97%. Turn 7 is the see-saw, breaking **43 chars into
+`qvink_memory_short`** — the template header is 39 chars, so the break is on the
+first summary, exactly the front-eviction D-0019 predicted. It costs 36% rather
+than 13% because the now-stable lore block sits above it and survives.
+
+**But the worst event in the run is not the see-saw.** Turn 4 activated *zero*
+entries — nothing in the two-message scan window seeded the recursive cascade —
+and the whole 4,232-token lore block vanished. Turn 5 it came back. **One
+dropout, two full prompt rebuilds, 14.9% and 11.4%** — worse than the see-saw,
+twice over.
+
+**Frequency, simulated over 84 historical turns:** the set is the same 29 entries
+on **82 of 84** turns and empty on 2. It moves 4 times, all four being the entry
+and exit of a dropout. So World Info causes **4 rebuilds in 84 turns**, and every
+one of them is a dropout artifact rather than a real change of what is relevant.
+
+**Why a cadence is wrong:** churning a cached block every see-saw step would cause
+~16 rebuilds over the same 84 turns — four times worse than doing nothing. The
+block does not need churning. It needs to stop flickering.
+
+**The rule:** the lorebook block is **add-only**. An entry that has activated stays
+in; a turn that activates nothing changes nothing. No cadence, no staleness
+window, no knob. Bounded by the WI budget (25% of context), and when that binds it
+becomes a real eviction — batched at the see-saw, the same discipline as the
+memory block (D-0019).
+
+**Why this is ours and not the author's problem:** `sticky` is ST's native "stay
+active for N messages" and it is `0` on every entry of every book on this machine.
+`order` defaults to a single value, so a hand-made book ties every entry
+(Eldoria: 4 of 4). Recursion is a global toggle. Authors configure none of it, so
+Cairn cannot depend on it being configured. This stays inside `DESIGN.md` §3.3 —
+WI keeps doing retrieval, we take over placement and budgeting; add-only *is*
+budgeting.
+**It is not "never evict", it is one eviction cadence for the whole prompt.** A
+well-made book loses nothing: its entries still leave, just at the see-saw step
+rather than on a per-turn keyword scan. So the rule is safe to apply
+unconditionally, which is what makes assuming the worst affordable.
+
+**Why carrying stale lore is close to free.** The current prose always supersedes
+a lore entry — an entry describing a school's gardens or a villain's history adds
+a little background the model can use, and does not compete with what the scene
+actually says is happening. The asymmetry is the whole argument: a stale entry
+costs a few hundred tokens of context that is usually inert, while evicting it
+costs a full prompt rebuild.
+
+**How it is built — outlets are not required.** `WORLDINFO_FORCE_ACTIVATE`
+(`world-info.js:1020`) seeds `WorldInfoBuffer.externalActivations`, consulted
+during the scan at `:4886`. Forcing the remembered set puts every remembered entry
+in **pass 1**, and within a pass `newEntries` is sorted by `sortedEntries` index
+(`:4996`), which is deterministic. Order instability comes only from *which
+recursion pass* an entry lands in — so forcing the set fixes membership **and**
+ordering together, on any book, without touching `order` and without outlets.
+
+**Known gap:** forced entries still go through the probability roll (`:5029`), so
+an entry with `probability < 100` re-rolls every turn regardless (Akane: 15 of
+110). Those books need the block cached at our level — i.e. outlets — which keeps
+D-0021 alive as the belt-and-braces answer rather than the first move.
+**Reopens if:** a chat shows entries that genuinely need to leave — a hard scene
+or setting change where stale lore actively misleads.
+
+## D-0022 — Symptom A is a lorebook `order` tie, not activation churn
+**2026-09-15.** Three turns on Esin, prefix stability **16%, 14.5%** — worse
+than the see-saw, and on *every* turn rather than one in five.
+
+**What the log said, immediately:** `divergence_in: null`,
+`divergence_in_precision: "none"` — the break was *above every injection*, so no
+extension prompt was responsible. `qvink_memory_short` was perfectly stable
+across all three turns: identical 38,028 chars at identical offset 31,299. The
+destabiliser was entirely the World Info block above it.
+
+**And it was not entries activating and deactivating.** The same 29 entries fired
+every turn — identical sets. What changed was their *order*:
+
+```
+turn 1: [3, 1, 2, 5, 8, 14, 15, 24, 28, 31, 6, 4, 7, ...]
+turn 2: [3, 5, 31, 4, 7, 8, 9, 14, 21, 27, 28, 6, 2, ...]
+turn 3: [5, 4, 8, 14, 21, 27, 31, 6, 2, 7, 9, 10, 11, ...]
+```
+
+**The mechanism.** ST sorts activated entries with `sortFn = (a, b) => b.order -
+a.order` (`world-info.js:88`) — one key, no tiebreak. `Array.prototype.sort` is
+stable, so tied entries keep the order of the Map they came from
+(`allActivatedEntries`, `:4732`), and that Map's insertion order is *activation*
+order: whichever keyword matched first during the scan. That changes as the chat
+text changes. Esin's book had **29 of 31 entries tied at `order: 10`**, so 29
+entries reshuffled themselves every single turn, above a 38,000-char memory
+block, in a prompt already at 84% of `max_context`.
+
+**Fix applied:** distinct `order` for every entry, `order*100 - displayIndex`,
+which preserves the existing 10/9/8 tiers and breaks ties by the author's own
+display order. Only the `order` field changed; content is byte-identical. The
+previous file is kept beside it as `.json.pre-order-fix`.
+
+**Caught mechanically from now on** (CLAUDE.md §9.35): the observer records each
+entry's `order`, `src/prompt/lorebook.js` detects ties, and the inspector says so
+in words. This is a two-minute fix that cost an afternoon to find, and it is
+invisible in play — the chat reads perfectly while the prompt is rebuilt from 14%
+every turn.
+
+**What it means for P1:** symptom A has two independent halves. This one — an
+under-specified sort key — is not ours to own and cannot be fixed by taking over
+placement. The other half, *where* the block sits relative to the memory block,
+is D-0021 and still stands.
+**Why the entries never fall off — measured over 83 historical turns.** The scan
+window is only two messages (`world_info_depth: 2`), which seeds a mean of 4.6
+entries. But `world_info_recursive` is **on**, with `world_info_max_recursion_steps:
+0` (unlimited): activated content is fed back into the scan buffer, and Esin's
+lore cross-references itself densely, so the cascade runs to a closure of **28.3 of
+31 entries** — matching the 29 observed live.
+
+That closure is a fixed point of the reference graph, so it is *stable*. The
+**path** to it is not: which entries seed the cascade depends on the last two
+messages, so activation order changes constantly.
+
+```
+consecutive turns with an identical SET:   79/83  (95%)
+consecutive turns with an identical ORDER: 23/83  (27%)
+```
+
+**This is the whole failure in two numbers.** The set is the same 95% of the time;
+the order differs 73% of the time; and with 29 entries tied on `order`, activation
+order *was* prompt order. Hence a block rewritten on roughly three turns in four.
+
+**Consequence for P1:** distinct `order` should recover ~95% of turns on its own.
+Caching the rendered block (holding it stable across genuine set changes) is worth
+the residual ~5%, not the 73% it first appeared to be. Worth building, but after
+the assembler, not before.
+**Reopens if:** ST gives `sortFn` a deterministic tiebreak, which would make the
+whole class go away.
+
+## D-0021 — Lorebook outlets wait on a measurement, not an opinion
+**2026-09-15.** `DESIGN.md` §14.2 stays open, but with a named gate: run 8-10
+turns on **Esin** and read the stability trace before editing any lorebook.
+**Why:** P0 has never measured the lorebook sawtooth. Elizabeth's chat has no
+World Info — `world_info: []` on all ten logged turns — so the only sawtooth we
+have numbers for is qvink's. Esin's 31 entries all sit at `after_char`, which
+lands in the story string *above* the memory block, so an activation flipping
+between turns invalidates ~87% of the prompt on a keyword match. That is symptom
+A, and it may be messier than the see-saw. Measuring it costs one play session
+against a gate we already built; guessing costs 141 entry edits.
+**What it turns out to cost, if we do it:** less than it looked. The books are
+uniform (Esin 31 × `after_char`, Akane 110 × `before_char`, none constant, none
+disabled), migration is two fields per entry, and **one outlet per book is
+enough** — entries sharing an `outletName` group into a single block
+(`world-info.js:5253`, joined at `script.js:4676`). So it is one decision per
+book applied uniformly, scriptable over `data/<user>/worlds/*.json`, not 141
+judgment calls. Per-entry outlets only buy differentiated placement.
+**Migration hazard:** an entry at position 7 with an empty `outletName` is
+silently skipped and its content vanishes from the prompt
+(`world-info.js:5249`). Both fields move together or neither does.
+**Reopens if:** Esin's trace shows WI churn breaking the prefix — then we
+migrate that one book and re-measure.
+**Measured 2026-09-15, and the premise was wrong:** the churn is real (14-16%
+stability) but it is **not activation churn**, and **outlets would not have fixed
+it**. Entries inside one outlet are pushed in the same `sort(sortFn)` iteration
+(`world-info.js:5203` → `:5253`), so an unstable intra-block order carries
+straight into the outlet. Outlets buy *placement*; they buy nothing about order.
+See D-0022 for what the problem actually was. This question is now purely about
+placement, and it is no longer urgent.
+
+## D-0020 — Cairn owns the message-blanking threshold
+**2026-09-15.** Closes `DESIGN.md` §14.4. qvink stays installed through P1 as a
+summary *generator* only: its injection is silenced and
+`exclude_messages_after_threshold` is turned off.
+**Why:** one prompt, one writer — and blanking and injection are the same
+decision seen twice. If Cairn owns the injection threshold while qvink owns the
+blanking threshold, the two disagree about which messages are already summarised
+and the raw window goes quietly wrong. We have to get here for P2 regardless.
+**Sequencing:** the handover happens at P1 step 3, not before, so step 2's
+byte-identical check has an unchanged baseline to compare against.
+**Reopens if:** never — P2 removes qvink from the path entirely.
+
+## D-0019 — P1's target is *where* the break lands, not moving the block down
+**2026-09-15.** Supersedes the reading of `DESIGN.md` §6 that P1 should move the
+memory block to `IN_CHAT` at low depth. It should not.
+**Why:** turn 6's prompt decomposes as card ≈ 7,687 chars (13%), memory block
+≈ 45,000 (77%), raw history ≈ 6,000 (10%) — qvink blanks 96% of the raw history
+(149,393 chars of `mes`, ~6,000 sent). The history is the part that *grows*, so
+anything placed below it shifts every turn. Moving 77% of the prompt to depth 0
+would drop stability to ~13% on **every** turn instead of one in five. The big
+block sitting above the growing tail is why quiet turns already hold at 96.7%.
+**What is actually broken** is inside the block. The divergence excerpt shows the
+block's *first* summary changing — front eviction. Elizabeth's 122 summaries
+total 44,323 chars and essentially all of them are injected, against a 7,500-token
+`short_term_context_limit` that lagging summaries ride free of
+(`SillyTavern-MessageSummarize/index.js:3862`). The window is at the frontier, so
+**turn 6 is not an event, it is the new steady state**: one collapse every 10
+messages, forever, and it does not improve with chat length.
+**The restated target:** keep the block above the history and make a see-saw step
+change its *tail* rather than its head. First changed byte moving from the block's
+start to its end takes a step turn from 13% to ≈ (7,687+45,000)/58,577 ≈ **90%**.
+**What P1 cannot do:** abolish eviction. Bounding by compaction instead of
+eviction is P4. P1 decouples the two cadences qvink fuses into one trigger — grow
+every step, evict rarely — and that trades **prompt tokens for cache hits**,
+since deferring eviction means carrying a block over budget. There is headroom
+(`max_context` 24,064, prompt ~12,000). Per §4.15 the slack is derived from
+headroom, not exposed as a knob.
+**Reopens if:** the raw window stops being blanked, which would make the history
+large enough to change the arithmetic.
+
 ## D-0018 — P0's gate PASSES: the sawtooth is real
 **2026-09-15.** Eight turns on Elizabeth, text completion, Gemma via oMLX,
 logged to `cairn-inspector.jsonl`.
@@ -213,6 +432,15 @@ Things that cost us time once. We pay for them once (CLAUDE.md §6.27).
   ST's module-level state is `let`, not `const`, and reassignment is invisible to
   anything holding the old reference. Read `extensionPrompts`, `chatMetadata` and
   `maxContext` at the point of use, every time.
+- **Object spread preserves Symbol keys; `structuredClone` does not.** The safe
+  way to flag a message in an interceptor is
+  `chat[i] = { ...chat[i], extra: { ...chat[i].extra, [IGNORE]: true } }` —
+  it replaces the element rather than writing through the shared `extra`, and it
+  carries an earlier interceptor's Symbol flags forward. This matters because
+  `coreChat` entries are fresh objects that **share `extra` by reference** with
+  the real chat (`public/script.js:4539`), so mutating `extra` in place persists
+  into the saved chat file. qvink reaches for `structuredClone` here
+  (`index.js:3993`) and gets away with it only because it runs first.
 - **ST line citations rot across releases.** Four of `DESIGN.md` §7's citations
   moved between 1.18.0 and 1.19.0 while every mechanism stayed intact. The
   mechanism surviving is not evidence the citation did. See D-0009.
