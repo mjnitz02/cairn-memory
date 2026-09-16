@@ -83,6 +83,9 @@ export async function buildInventory(extensionPrompts, { countTokens = estimateT
             label,
             position: prompt.position,
             positionName: POSITION_NAMES[String(prompt.position)] ?? `unknown(${prompt.position})`,
+            // ST collects by position (public/script.js:3312); NONE reaches the
+            // prompt only through a macro, so it is listed but is not a writer.
+            placed: Number(prompt.position) >= 0,
             depth: prompt.depth,
             role: prompt.role,
             chars: value.length,
@@ -92,9 +95,10 @@ export async function buildInventory(extensionPrompts, { countTokens = estimateT
     return entries.sort(compareByPromptOrder);
 }
 
-/** Totals, plus a per-owner breakdown — the "who is in here" answer. */
+/** Totals, plus a per-owner breakdown — the "who is in here" answer. `writers` counts placed owners only. */
 export function summarizeInventory(entries) {
     const byOwner = {};
+    const writers = new Set();
     let tokens = 0;
 
     for (const entry of entries) {
@@ -102,12 +106,13 @@ export function summarizeInventory(entries) {
         byOwner[entry.owner] ??= { owner: entry.owner, count: 0, tokens: 0 };
         byOwner[entry.owner].count++;
         byOwner[entry.owner].tokens += entry.tokens;
+        if (entry.placed) writers.add(entry.owner);
     }
 
     return {
         count: entries.length,
         tokens,
-        writers: Object.keys(byOwner).length,
+        writers: writers.size,
         byOwner: Object.values(byOwner).sort((a, b) => b.tokens - a.tokens),
     };
 }

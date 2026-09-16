@@ -81,11 +81,13 @@ describe('memory-model mock', () => {
     });
 
     it('offers the malformed shapes parsers must survive', () => {
-        const payload = { promote: [] };
-        expect(badOutputs.fencedJson(payload)).toMatch(/^```json/);
-        expect(badOutputs.preambleAndFence(payload)).toContain('```json');
-        expect(badOutputs.truncated({ a: 'x'.repeat(100) })).not.toContain('}');
-        expect(badOutputs.leakedReasoning('body')).toContain('<think>');
+        const summary = 'Aster told Wren the ferry was cancelled. Wren admitted she had read the letter.';
+        expect(badOutputs.fenced(summary)).toMatch(/^```/);
+        expect(badOutputs.preambleAndFence(summary)).toContain('```text');
+        expect(badOutputs.truncated(summary)).not.toMatch(/[.!?]$/);
+        expect(badOutputs.bulleted(summary).split('\n')).toHaveLength(2);
+        expect(badOutputs.leakedReasoning(summary)).toContain('<think>');
+        expect(badOutputs.overlong(summary).length).toBeGreaterThan(500);
         expect(badOutputs.empty()).toBe('');
     });
 });

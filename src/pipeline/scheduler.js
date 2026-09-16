@@ -43,16 +43,24 @@ export function createSeeSaw({ rawWindow = RAW_WINDOW, step = STEP } = {}) {
         /**
          * Advance the threshold if this turn has earned it.
          *
+         * `firstPending` clamps an advance to just before the oldest message still
+         * waiting for its summary (docs/p2-plan.md §3), so nothing is blanked
+         * without one. It never pulls the threshold back: a gap below it is an
+         * edit, and the assembler already stops blanking that message.
+         *
          * @param {number} chatLength `context.chat.length`
-         * @returns {{summarisedThrough: number, stepped: boolean, reason: string}}
+         * @param {{firstPending?: number|null}} [options]
+         * @returns {{summarisedThrough: number, stepped: boolean, reason: string,
+         *            waiting: boolean}} `waiting`: the clamp cut short a due step.
          */
-        advance(chatLength) {
+        advance(chatLength, { firstPending = null } = {}) {
             const length = Number.isFinite(chatLength) ? Math.max(0, chatLength) : 0;
             const base = Math.max(-1, length - 1 - rawWindow);
+            const reach = Number.isInteger(firstPending) ? Math.min(base, firstPending - 1) : base;
 
             if (summarisedThrough === null) {
-                summarisedThrough = base;
-                return { summarisedThrough, stepped: true, reason: 'first-turn' };
+                summarisedThrough = reach;
+                return { summarisedThrough, stepped: true, reason: 'first-turn', waiting: reach < base };
             }
 
             // The chat got shorter: a branch or a swipe (DESIGN.md §9). Holding the
@@ -61,15 +69,17 @@ export function createSeeSaw({ rawWindow = RAW_WINDOW, step = STEP } = {}) {
             // immediately — a rebuild on a branch is expected and unavoidable.
             if (base < summarisedThrough) {
                 summarisedThrough = base;
-                return { summarisedThrough, stepped: true, reason: 'rollback' };
+                return { summarisedThrough, stepped: true, reason: 'rollback', waiting: false };
             }
 
-            if (base > summarisedThrough && base - summarisedThrough >= step) {
-                summarisedThrough = base;
-                return { summarisedThrough, stepped: true, reason: 'step' };
+            const due = base > summarisedThrough && base - summarisedThrough >= step;
+            const waiting = due && reach < base;
+            if (due && reach > summarisedThrough && reach - summarisedThrough >= step) {
+                summarisedThrough = reach;
+                return { summarisedThrough, stepped: true, reason: 'step', waiting };
             }
 
-            return { summarisedThrough, stepped: false, reason: 'held' };
+            return { summarisedThrough, stepped: false, reason: 'held', waiting };
         },
 
         /** A new chat is a new see-saw. */

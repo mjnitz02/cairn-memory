@@ -4,7 +4,10 @@ import { QVINK_DEFAULTS, readScenes, qvinkInjected } from '../src/memory/scenes.
 import { createBudget } from '../src/pipeline/budgeter.js';
 import { createSeeSaw } from '../src/pipeline/scheduler.js';
 import { createContext } from './mocks/sillytavern.js';
-import { makeQvinkChat, makeQvinkSettings } from './mocks/qvink.js';
+import { makeQvinkChat, makeQvinkSettings, makeSummary } from './mocks/qvink.js';
+import { cairnStore, cairnSummary, makeMixedChat } from './mocks/cairn.js';
+import { pendingScenes } from '../src/memory/scenes.js';
+import { hashString } from '../src/util/hash.js';
 
 const RENDERING = {
     template: QVINK_DEFAULTS.template,
@@ -28,7 +31,8 @@ function harness({
     seeSaw = createSeeSaw(),
     budget = createBudget(),
     maxPrompt = 1_000_000,
-    settings = makeQvinkSettings(),
+    cap = 1_000_000,
+    settings = makeQvinkSettings({ short_term_context_limit: cap, short_term_context_type: 'tokens' }),
 } = {}) {
     const context = createContext({ chat: [] });
     context.extensionSettings.qvink_memory = settings;
@@ -43,26 +47,20 @@ function harness({
         context,
         assembler,
 
-        /**
-         * One turn. The plan is made in the interceptor, *before* the prompt is
-         * built, against what the observer measured for the prompt before it —
-         * so a turn is `observe` then `plan`, in that order.
-         */
-        async plan({ promptTokens = 0 } = {}) {
-            assembler.observe({ promptTokens });
+        /** One turn, planned in the interceptor before the prompt is built. */
+        async plan() {
             return (await assembler.plan()).report;
         },
 
         /** The whole plan, including the parts only the injector sees. */
-        async write({ promptTokens = 0 } = {}) {
-            assembler.observe({ promptTokens });
+        write() {
             return assembler.plan();
         },
 
         /** One turn on a chat of the given length. */
-        turn(length, options = {}) {
+        turn(length) {
             context.chat = makeQvinkChat({ length, summarisedThrough: length - 11 });
-            return this.plan(options);
+            return this.plan();
         },
     };
 }
@@ -166,13 +164,13 @@ describe('a see-saw step changes the block tail, not its head', () => {
         // A cap the block eventually reaches, because that is the only regime
         // where the two policies differ: D-0019's point is that the collapse is
         // not an event but the steady state once the window is at the frontier.
-        const treatment = harness({ maxPrompt: 9_000 });
+        const treatment = harness({ cap: 6_000 });
         const control = harness({
             // qvink's defaults, in our own code: advance the threshold on every
             // message (its index.js:138) and evict exactly enough to fit.
             seeSaw: createSeeSaw({ step: 0 }),
             budget: createBudget({ floorFraction: 1 }),
-            maxPrompt: 9_000,
+            cap: 6_000,
         });
 
         const treated = [];
@@ -196,12 +194,13 @@ describe('a see-saw step changes the block tail, not its head', () => {
     });
 
     it('holds the head across a step even after the cap has bound once', async () => {
-        const run = harness({ maxPrompt: 9_000 });
+        const run = harness({ cap: 6_000 });
         const plans = [];
         for (let length = 31; length <= 160; length++) plans.push(await run.turn(length));
 
         const afterFirstEviction = plans.findIndex((plan) => plan.evicted) + 1;
-        const later = plans.slice(afterFirstEviction).filter((plan) => plan.stepped);
+        // Every step but the ones that are themselves the next eviction.
+        const later = plans.slice(afterFirstEviction).filter((plan) => plan.stepped && !plan.evicted);
 
         expect(later.length).toBeGreaterThan(2);
         expect(later.every((plan) => plan.change.divergencePercent > 99)).toBe(true);
@@ -210,7 +209,7 @@ describe('a see-saw step changes the block tail, not its head', () => {
 
 describe('eviction under a cap the block cannot fit', () => {
     it('drops a batch once rather than a summary per turn', async () => {
-        const run = harness({ maxPrompt: 9_000 });
+        const run = harness({ cap: 6_000 });
         const evictions = [];
 
         for (let length = 31; length <= 200; length++) {
@@ -228,22 +227,12 @@ describe('eviction under a cap the block cannot fit', () => {
     });
 
     it('never lets the block exceed the cap it was given', async () => {
-        const run = harness({ maxPrompt: 9_000 });
+        const run = harness({ cap: 6_000 });
 
         for (let length = 31; length <= 200; length++) {
             const plan = await run.turn(length);
             expect(plan.tokens).toBeLessThanOrEqual(plan.cap);
         }
-    });
-
-    it('takes the rest of the prompt out of the cap', async () => {
-        const run = harness({ maxPrompt: 10_000 });
-        const plan = await run.turn(41, { promptTokens: 4_000 });
-
-        // Nothing is injected in this harness, so the whole prompt is "everything
-        // else" and the block has to fit in what is left.
-        expect(plan.otherTokens).toBe(4_000);
-        expect(plan.cap).toBe(6_000);
     });
 });
 
@@ -255,18 +244,26 @@ describe('eviction under a cap the block cannot fit', () => {
  */
 describe('detecting the two cadences collapsing back into one', () => {
     it('says so when the cap cannot hold a step past the floor', async () => {
-        const run = harness({ maxPrompt: 1_200 });
+        const run = harness({ cap: 1_500 });
         const plans = [];
         for (let length = 31; length <= 70; length++) plans.push(await run.turn(length));
 
         expect(plans.at(-1).recoupled).toBe(true);
-        // And the symptom it predicts is really there.
-        const steps = plans.filter((plan) => plan.stepped).slice(1);
-        expect(steps.every((plan) => plan.evicted > 0)).toBe(true);
+
+        // And the symptom it predicts is really there: the block rebuilds on the
+        // see-saw's own cadence rather than many steps apart. This is the mirror
+        // of the healthy case below, which spaces its evictions more than 30
+        // turns out.
+        const evictions = plans
+            .map((plan, at) => ({ at, evicted: plan.evicted }))
+            .filter((event) => event.evicted);
+        expect(evictions.length).toBeGreaterThan(2);
+        const gaps = evictions.slice(1).map((event, i) => event.at - evictions[i].at);
+        expect(Math.max(...gaps)).toBeLessThan(30);
     });
 
     it('stays quiet on a cap several steps wide', async () => {
-        const run = harness({ maxPrompt: 9_000 });
+        const run = harness({ cap: 6_000 });
         const plans = [];
         for (let length = 31; length <= 200; length++) plans.push(await run.turn(length));
 
@@ -373,7 +370,7 @@ describe('what the plan reports', () => {
         const run = harness();
         run.context.chat = [{ name: 'Wren', is_user: true, mes: 'hello', extra: {} }];
 
-        const plan = await run.plan({ promptTokens: 10 });
+        const plan = await run.plan();
 
         expect(plan).toMatchObject({ scenes: 0, included: 0, chars: 0, tokens: 0, oldest: null });
     });
@@ -414,6 +411,7 @@ describe('handing the injection over', () => {
         expect(plan.report.handover).toBe('writing');
         expect(plan.text).toContain('Scene 0:');
         expect(plan.placement).toMatchObject({ position: 0, depth: 2, role: 0, scan: false });
+        expect(plan.report.placement).toBe(0);
     });
 
     it('will not write while qvink is still taking messages out of the history', async () => {
@@ -444,10 +442,10 @@ describe('handing the injection over', () => {
     });
 
     it('holds back every message the block speaks for, evicted ones included', async () => {
-        const run = await handedOver(harness({ maxPrompt: 9_000 }), { length: 40 });
+        const run = await handedOver(harness({ cap: 6_000 }), { length: 40 });
         run.context.chat = makeQvinkChat({ length: 200, summarisedThrough: 189 });
 
-        const plan = await run.write({ promptTokens: 4_000 });
+        const plan = await run.write();
 
         expect(plan.report.evicted).toBeGreaterThan(0);
         // The block dropped the oldest summaries; their messages stay out of the
@@ -458,36 +456,35 @@ describe('handing the injection over', () => {
         expect(plan.blank.at(-1)).toBe(plan.report.summarisedThrough);
     });
 
-    it('caps against half the prompt until a prompt has been measured', async () => {
-        const run = harness({ maxPrompt: 10_000 });
-        run.context.chat = makeQvinkChat({ length: 40, summarisedThrough: 29 });
+    it('writes a placed block, and blanks nothing when it would not be placed', async () => {
+        // The handover's own instruction — qvink's position to "Macro Only" —
+        // is what made this reachable: mirroring that position parked our block
+        // at NONE while we blanked 92 messages (docs/decisions.md D-0029).
+        const run = await handedOver(harness());
+        run.context.extensionSettings.qvink_memory.short_term_position = -1;
 
-        const first = (await run.assembler.plan()).report;
-        expect(first).toMatchObject({ capEstimated: true, cap: 5_000 });
+        const plan = await run.write();
 
-        // One prompt later the estimate is gone for good.
-        const second = await run.plan({ promptTokens: 3_000 });
-        expect(second).toMatchObject({ capEstimated: false, cap: 7_000 });
+        // Defaulted rather than mirrored, so it is placed and it is written.
+        expect(plan.writing).toBe(true);
+        expect(plan.placement.position).toBe(0);
+        expect(plan.report.placementDefaulted).toBe(true);
+        expect(plan.blank.length).toBeGreaterThan(0);
     });
 
-    it('takes back what an estimated cap evicted, once a prompt has been measured', async () => {
-        // Esin, 2026-09-15: the first turn after a reload capped at half the
-        // budget, dropped 46 of 91 summaries, and the mark held them out for the
-        // rest of the session even though the measured cap had room
-        // (docs/decisions.md D-0028).
-        const run = harness({ maxPrompt: 12_000 });
-        run.context.chat = makeQvinkChat({ length: 120, summarisedThrough: 109 });
+    it('never writes a block ST would not collect, whatever qvink says', async () => {
+        // The invariant behind D-0029: writing is also blanking, so a block that
+        // is never collected means a prompt with neither the summaries nor the
+        // messages they stand for.
+        const run = await handedOver(harness());
 
-        const first = (await run.assembler.plan()).report;
+        for (const position of [-1, 0, 1, 2, -7, undefined, 'nonsense']) {
+            run.context.extensionSettings.qvink_memory.short_term_position = position;
+            const plan = await run.write();
 
-        expect(first).toMatchObject({ capEstimated: true, evictedProvisionally: true });
-        expect(first.evicted).toBeGreaterThan(0);
-        expect(first.oldest).toBeGreaterThan(0);
-
-        const second = await run.plan({ promptTokens: 1_000 });
-
-        expect(second).toMatchObject({ capEstimated: false, evictedProvisionally: false, oldest: 0 });
-        expect(second.included).toBeGreaterThan(first.included);
+            expect(plan.writing).toBe(true);
+            expect(plan.placement.position).toBeGreaterThanOrEqual(0);
+        }
     });
 
     it('keeps the block out of the report and in the plan', async () => {
@@ -499,3 +496,218 @@ describe('handing the injection over', () => {
         expect(plan.text).toContain('Scene 0:');
     });
 });
+
+/**
+ * The plan is a function of the chat (docs/decisions.md D-0033). Esin, 2026-09-16:
+ * four turns of learned state — a measured budget, a projection, a stored split,
+ * a calibrated ratio — each with its own cold start, and a reload took until turn
+ * 4 to reach a stable prefix. The first turn of a session may rebuild; the second
+ * must not.
+ */
+describe('the plan is a function of the chat', () => {
+    it('picks the cache up on the second turn of a session, even after evicting', async () => {
+        const run = harness({ cap: 6_000 });
+
+        const first = await run.turn(200);
+        const second = await run.turn(201);
+
+        expect(first.stepReason).toBe('first-turn');
+        expect(first.evicted).toBeGreaterThan(0);
+        expect(second.stepped).toBe(false);
+        expect(second.evicted).toBe(0);
+        expect(second.change.stabilityPercent).toBe(100);
+    });
+
+    it('lands the first turn of a session at the floor, so the slack is bought up front', async () => {
+        const first = await harness({ cap: 6_000 }).turn(200);
+
+        expect(first.tokens).toBeLessThanOrEqual(first.floor);
+        expect(first.overCap).toBe(true);
+    });
+
+    it('builds the same block from the same chat, whichever session asks', async () => {
+        // A reload is a fresh assembler on the same chat: nothing carried over,
+        // and nothing needed.
+        const before = harness({ cap: 6_000 });
+        const after = harness({ cap: 6_000 });
+        const chat = makeQvinkChat({ length: 200, summarisedThrough: 189 });
+        before.context.chat = chat;
+        after.context.chat = chat;
+
+        const a = await before.write();
+        const b = await after.write();
+
+        expect(b.text).toBe(a.text);
+        expect(b.blank).toEqual(a.blank);
+    });
+
+    it('does not let the size of the prompt bend a token limit', async () => {
+        // The rest of the prompt is not an input. A budget read off the last
+        // prompt is how the block went from 99% full to half in two turns.
+        const small = harness({ cap: 6_000, maxPrompt: 8_000 });
+        const large = harness({ cap: 6_000, maxPrompt: 200_000 });
+        const chat = makeQvinkChat({ length: 200, summarisedThrough: 189 });
+        small.context.chat = chat;
+        large.context.chat = chat;
+
+        expect((await small.write()).text).toBe((await large.write()).text);
+    });
+
+    it('sizes a percent limit against the prompt budget, as qvink does', async () => {
+        const run = harness({
+            maxPrompt: 20_000,
+            settings: makeQvinkSettings({ short_term_context_limit: 25, short_term_context_type: 'percent' }),
+        });
+
+        const plan = await run.turn(41);
+
+        expect(plan).toMatchObject({ cap: 5_000, capType: 'percent' });
+    });
+
+    it('has nothing to be told after a prompt goes out', () => {
+        // The guard against the next feedback loop: an observe() is how it came in.
+        expect(harness().assembler.observe).toBeUndefined();
+    });
+});
+
+/**
+ * P2's invariants on the plan (docs/p2-plan.md §6). Cairn's scenes are
+ * hand-written onto the chat here; nothing in these tests calls a model.
+ */
+describe('P2: a block read from qvink and Cairn together', () => {
+    /** Independent of readScenes: the store's own hash, or a qvink summary with no Cairn store. */
+    function hasValidScene(message) {
+        const store = message?.extra?.cairn;
+        if (store) return store.scene?.hash === hashString(message.mes);
+        return typeof message?.extra?.qvink_memory?.memory === 'string' && message.extra.qvink_memory.memory !== '';
+    }
+
+    it('renders the qvink part byte-identically to P1, and appends Cairn after it', async () => {
+        const run = harness();
+        run.context.chat = makeMixedChat({ length: 61, qvinkThrough: 29, cairnThrough: 59 });
+
+        const { text, report } = await run.write();
+
+        const qvinkPart = [...Array(30).keys()].map((i) => ({ text: makeSummary(i) }));
+        const cairnPart = [...Array(21).keys()].map((i) => ({ text: cairnSummary(30 + i) }));
+        const p1 = asQvinkWouldRender(qvinkPart);
+        expect(report.summarisedThrough).toBe(50);
+        expect(text).toBe(asQvinkWouldRender([...qvinkPart, ...cairnPart]));
+        // Everything but the template's closing newline is a shared prefix.
+        expect(text.startsWith(p1.slice(0, -1))).toBe(true);
+    });
+
+    it('holds the step while a summary is missing, and takes it once filled', async () => {
+        const run = harness();
+        run.context.chat = makeMixedChat({ length: 41, qvinkThrough: 19, cairnThrough: 39 });
+        expect((await run.plan()).summarisedThrough).toBe(30);
+
+        run.context.chat = makeMixedChat({ length: 51, qvinkThrough: 19, cairnThrough: 49, gaps: [35] });
+        const held = await run.write();
+        expect(held.report).toMatchObject({ summarisedThrough: 30, stepReason: 'held' });
+        expect(Math.max(...held.blank)).toBe(30);
+
+        run.context.chat[35].extra.cairn = cairnStore(run.context.chat[35], cairnSummary(35));
+        expect(await run.plan()).toMatchObject({ summarisedThrough: 40, stepReason: 'step' });
+    });
+
+    it('is not held by a message too short or hidden to summarise', async () => {
+        for (const skip of [{ short: [35] }, { hidden: [35] }]) {
+            const run = harness();
+            run.context.chat = makeMixedChat({ length: 41, qvinkThrough: 19, cairnThrough: 39 });
+            await run.plan();
+
+            run.context.chat = makeMixedChat({ length: 51, qvinkThrough: 19, cairnThrough: 49, ...skip });
+            const plan = await run.write();
+
+            expect(plan.report, JSON.stringify(skip)).toMatchObject({ summarisedThrough: 40, stepReason: 'step' });
+            expect(plan.blank).not.toContain(35);
+        }
+    });
+
+    it('stops blanking an edited message and queues it again', async () => {
+        const run = harness();
+        run.context.chat = makeMixedChat({ length: 61, qvinkThrough: 19, cairnThrough: 59 });
+        expect((await run.write()).blank).toContain(30);
+
+        run.context.chat[30].mes += ' An afterthought.';
+        const plan = await run.write();
+
+        expect(plan.blank).not.toContain(30);
+        expect(plan.text).not.toContain(cairnSummary(30));
+        expect(pendingScenes(run.context.chat)).toContain(30);
+    });
+
+    it('keeps the scenes a branch kept, and blanks nothing past the cut', async () => {
+        const run = harness();
+        run.context.chat = makeMixedChat({ length: 61, qvinkThrough: 19, cairnThrough: 59 });
+        await run.write();
+
+        // A branch is a structuredClone of the chat up to the message
+        // (public/scripts/bookmarks.js:173).
+        run.context.chat = structuredClone(run.context.chat.slice(0, 36));
+        const plan = await run.write();
+
+        expect(plan.report.stepReason).toBe('rollback');
+        expect(plan.blank.at(-1)).toBe(25);
+        expect(plan.blank.every((i) => i < 36 && hasValidScene(run.context.chat[i]))).toBe(true);
+        expect(plan.text).toContain(cairnSummary(25));
+    });
+
+    /**
+     * The property behind all of the above, over random play: whatever edits,
+     * deletions, hides and branches happen, every message the plan blanks has a
+     * valid scene standing in for it.
+     */
+    it('never blanks a message without a valid scene, across random chats', async () => {
+        for (let seed = 1; seed <= 25; seed++) {
+            const random = mulberry32(seed);
+            const pick = (n) => Math.floor(random() * n);
+            const run = harness({ seeSaw: createSeeSaw({ rawWindow: 6, step: 4 }) });
+            run.context.chat = makeMixedChat({ length: 30, qvinkThrough: pick(20) - 1, cairnThrough: 28 });
+
+            for (let turn = 0; turn < 60; turn++) {
+                const chat = run.context.chat;
+                const roll = random();
+                if (roll < 0.45) {
+                    const source = makeMixedChat({ length: chat.length + 1, qvinkThrough: -1, cairnThrough: -1 });
+                    const message = source.at(-1);
+                    delete message.extra.qvink_memory;
+                    chat.push(message);
+                    // The summariser catching up, most turns but not all.
+                    const pending = pendingScenes(chat);
+                    if (pending.length && random() < 0.8) {
+                        chat[pending[0]].extra.cairn = cairnStore(chat[pending[0]], cairnSummary(pending[0]));
+                    }
+                } else if (roll < 0.65 && chat.length) {
+                    chat[pick(chat.length)].mes += ` edit ${turn}.`;
+                } else if (roll < 0.75 && chat.length) {
+                    chat.splice(pick(chat.length), 1);
+                } else if (roll < 0.82 && chat.length) {
+                    chat[pick(chat.length)].is_system = true;
+                } else if (roll < 0.9 && chat.length > 2) {
+                    run.context.chat = structuredClone(chat.slice(0, 1 + pick(chat.length - 1)));
+                }
+
+                const plan = await run.write();
+                const now = run.context.chat;
+                for (const index of plan.blank) {
+                    expect(index, `seed ${seed} turn ${turn}`).toBeLessThan(now.length);
+                    expect(hasValidScene(now[index]), `seed ${seed} turn ${turn} index ${index}`).toBe(true);
+                }
+            }
+        }
+    });
+});
+
+/** A small seeded PRNG, so a failing random chat can be replayed by its seed. */
+function mulberry32(seed) {
+    let a = seed;
+    return () => {
+        a = (a + 0x6D2B79F5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+

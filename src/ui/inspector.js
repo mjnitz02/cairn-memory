@@ -171,12 +171,7 @@ function renderMemory(memory) {
     const title = memory.writing
         ? `Memory block Cairn is injecting (${fmt(memory.tokens)} tokens)`
         : `Memory block Cairn would inject (${fmt(memory.tokens)} tokens)`;
-    const provisional = memory.evictedProvisionally
-        ? `, ${fmt(memory.evicted)} held back for this turn only`
-        : '';
-    const budget = memory.capEstimated
-        ? `${fmt(memory.tokens)} / ${fmt(memory.cap)} tokens (estimated until the first prompt is measured${provisional})`
-        : `${fmt(memory.tokens)} / ${fmt(memory.cap)} tokens, floor ${fmt(memory.floor)} \u2014 ${evicted}`;
+    const budget = `${fmt(memory.tokens)} / ${fmt(memory.cap)} tokens, floor ${fmt(memory.floor)} \u2014 ${evicted}`;
 
     return renderRecoupled(memory) + `
         <details class="${SLUG}-details">
@@ -196,7 +191,10 @@ function renderMemory(memory) {
  */
 function renderHandover(memory) {
     if (memory.writing) {
-        return `yes \u2014 ${fmt(memory.blanked)} summarised messages held out of the history`;
+        const where = memory.placementDefaulted
+            ? ' (placed at Cairn\'s own default, not where qvink had it)'
+            : '';
+        return `yes \u2014 ${fmt(memory.blanked)} summarised messages held out of the history${where}`;
     }
     return `<span class="${SLUG}-fair">no \u2014 ${escapeHtml(memory.handoverDetail ?? '')}</span>`;
 }

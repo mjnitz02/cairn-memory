@@ -9,6 +9,42 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ## [Unreleased]
 
+### Changed
+
+- A memory step now waits for a missing summary. The block stays where it is
+  instead of moving past a message with no summary, so no message leaves the
+  history without a summary to replace it. This can't happen while your
+  summarising extension keeps up, because Cairn only waits on messages after
+  the newest one that extension summarised.
+- Cairn reads its own summaries from `message.extra.cairn` alongside your
+  existing ones, and prefers its own when a message has both. A summary whose
+  message has been edited is ignored until it is written again. Nothing writes
+  Cairn summaries yet.
+
+## [0.9.0] — 2026-09-16
+
+### Changed
+
+- **The memory block is a function of the chat.** Its cap is the short-term limit
+  already set in the summarising extension (tokens, or percent of the prompt), and
+  nothing measured from a previous prompt feeds back into the next plan. The first
+  turn of a session rebuilds the block and trims it to half the limit; from the
+  second turn on it is byte-identical until a step appends to its end
+  (`docs/decisions.md` D-0033). This replaces the measured budget, the growth
+  projection and the half-budget first-turn estimate, which together took a
+  reloaded page four turns to reach a stable prefix. Log fields
+  `memory_cap_estimated`, `memory_evicted_provisionally` and `memory_other_tokens`
+  are gone; `memory_cap_type` is new.
+- The recommended memory model is now a strong one, GLM-4.7 class or better
+  (`docs/decisions.md` D-0036).
+
+### Fixed
+
+- The inspector no longer counts a block parked for a macro ("Macro Only") as a
+  second writer. SillyTavern never places it, so after a handover the panel
+  warned about two writers and the log said `writers: 2` while Cairn was the only
+  one writing. Parked injections are still listed.
+
 ## [0.8.0] — 2026-09-15
 
 ### Added
@@ -22,6 +58,12 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
   blanking threshold as well as the injection (D-0020). Written in place on the
   live chat with SillyTavern's own ignore flag; nothing is cloned and nothing
   reaches the saved chat.
+- The block's placement is mirrored from the other extension only when it names a
+  position SillyTavern actually collects. "Macro Only" — the setting the handover
+  asks you to change — is not a placement, so Cairn uses its own default and says
+  so in the panel. It refuses to hold messages back at all if its block would not
+  be placed (`docs/decisions.md` D-0029). Log fields `memory_placement`,
+  `memory_placement_defaulted`.
 - **The handover gate** (`src/prompt/handover.js`). Cairn writes only when the
   setting is on, the other extension is placing neither of its injections and has
   stopped excluding messages, and our render of its own block has matched it byte

@@ -1,10 +1,11 @@
 /**
  * Tier 2 — scene summaries (DESIGN.md §5).
  *
- * P1 does not generate summaries. It reads the ones qvink has already written
- * into `message.extra` and takes over where they go (DESIGN.md §13;
- * docs/decisions.md D-0020). So this is tier 2's *source*, and at P2 its innards
- * change while its shape does not.
+ * Tier 2 has two sources, one scene per message: the summaries qvink already
+ * wrote, read and never rewritten, and Cairn's own in `extra.cairn`, which win
+ * where both exist and count only while their message is unedited
+ * (docs/p2-plan.md §1). The scene shape is the same for both, so the assembler
+ * does not care which wrote it.
  *
  * Two selections come out of here and they are not the same thing:
  *
@@ -17,6 +18,8 @@
  *
  * Pure: a chat array in, a scene list out. No ST, no DOM, no network.
  */
+
+import { readScene, summarisable } from '../store/chat-store.js';
 
 /** qvink's `message.extra` key and settings key (its index.js:45). */
 export const QVINK_KEY = 'qvink_memory';
@@ -50,23 +53,47 @@ export const QVINK_DEFAULTS = Object.freeze({
     scan: false,
     /** its index.js:136 */
     excludeAfterThreshold: true,
+    /** its index.js:151 */
+    limit: 10,
+    /** its index.js:152 — `percent` of the prompt budget, or `tokens`. */
+    limitType: 'percent',
 });
 
 /**
- * Every message carrying a summary, oldest first.
+ * Every message carrying a scene, oldest first.
  *
- * `text` is built the way qvink builds it for injection — prefill prepended only
- * when `show_prefill` is on (its index.js:3521) — because a block that differs
- * from qvink's by a prefix is not a block we can hand over byte-identically.
+ * A qvink `text` is built the way qvink builds it for injection — prefill
+ * prepended only when `show_prefill` is on (its index.js:3521) — because the
+ * qvink part of the block must stay byte-identical to what it was in P1.
  *
  * @param {Array<object>} chat ST's live message array. Read only, never mutated.
  * @param {{key?: string, showPrefill?: boolean}} [options]
- * @returns {Array<object>} `{index, text, chars, eligible, remembered, excluded, include, lagging}`
+ * @returns {Array<object>} `{index, source, text, chars, eligible, remembered,
+ *          excluded, include, lagging}`
  */
 export function readScenes(chat, { key = QVINK_KEY, showPrefill = false } = {}) {
     const scenes = [];
 
     (chat ?? []).forEach((message, index) => {
+        const cairn = readScene(message);
+        if (cairn.status === 'valid') {
+            scenes.push({
+                index,
+                source: 'cairn',
+                text: cairn.scene.text,
+                chars: cairn.scene.text.length,
+                eligible: true,
+                remembered: false,
+                excluded: false,
+                include: null,
+                lagging: false,
+            });
+            return;
+        }
+        // An edit invalidated Cairn's scene, and any qvink one on the same
+        // message is older still: the message goes back to being raw.
+        if (cairn.status === 'stale') return;
+
         const data = message?.extra?.[key];
         const memory = data?.memory;
         if (typeof memory !== 'string' || memory === '') return;
@@ -77,6 +104,7 @@ export function readScenes(chat, { key = QVINK_KEY, showPrefill = false } = {}) 
 
         scenes.push({
             index,
+            source: 'qvink',
             text,
             chars: text.length,
             // qvink's exclusion rule, minus the parts we cannot see from `extra`:
@@ -92,6 +120,37 @@ export function readScenes(chat, { key = QVINK_KEY, showPrefill = false } = {}) 
     });
 
     return scenes;
+}
+
+/**
+ * Where Cairn's summarising starts: just after qvink's newest summary. Messages
+ * qvink skipped before it stay as qvink left them, because summarising them now
+ * would insert scenes into the middle of the block (docs/p2-plan.md §1).
+ */
+export function cairnStart(chat, { key = QVINK_KEY } = {}) {
+    const list = chat ?? [];
+    for (let index = list.length - 1; index >= 0; index--) {
+        const memory = list[index]?.extra?.[key]?.memory;
+        if (typeof memory === 'string' && memory !== '') return index + 1;
+    }
+    return 0;
+}
+
+/**
+ * Messages waiting for a summary, oldest first: summarisable, at or after the
+ * start, with no valid scene — and never the last message, which can still be
+ * swiped, regenerated or edited (docs/p2-plan.md §3).
+ *
+ * @returns {number[]} Chat indexes.
+ */
+export function pendingScenes(chat, { key = QVINK_KEY } = {}) {
+    const list = chat ?? [];
+    const pending = [];
+    for (let index = cairnStart(list, { key }); index < list.length - 1; index++) {
+        const message = list[index];
+        if (summarisable(message) && readScene(message).status !== 'valid') pending.push(index);
+    }
+    return pending;
 }
 
 /**
@@ -128,6 +187,27 @@ export function resolveRendering(extensionSettings, { key = QVINK_KEY } = {}) {
 }
 
 /**
+ * The block's cap: qvink's short-term limit, resolved the way qvink resolves it
+ * (its index.js:246-256). A setting the user already chose, fixed for the chat,
+ * so the same chat always gets the same block (docs/decisions.md D-0033).
+ *
+ * @param {object} extensionSettings `context.extensionSettings`
+ * @param {number} maxPromptTokens What `percent` is a percent of. qvink's
+ *        `getMaxContextSize` is ST's `getMaxPromptTokens` under another name
+ *        (public/script.js:333).
+ * @returns {{cap: number, type: string}}
+ */
+export function resolveCap(extensionSettings, maxPromptTokens, { key = QVINK_KEY } = {}) {
+    const settings = extensionSettings?.[key];
+    const limit = Math.max(0, numberOr(settings?.short_term_context_limit, QVINK_DEFAULTS.limit));
+    const type = settings?.short_term_context_type === 'tokens' ? 'tokens' : QVINK_DEFAULTS.limitType;
+
+    if (type === 'tokens') return { cap: Math.floor(limit), type };
+    const max = Number.isFinite(maxPromptTokens) ? Math.max(0, maxPromptTokens) : 0;
+    return { cap: Math.floor(max * limit / 100), type };
+}
+
+/**
  * Where qvink parks the block, so Cairn parks it in the same place.
  *
  * The handover has to change *one* thing — who writes — or the measurement
@@ -135,18 +215,30 @@ export function resolveRendering(extensionSettings, { key = QVINK_KEY } = {}) {
  * changed" (docs/decisions.md D-0027). Moving it to where DESIGN.md §6 wants it
  * is a later change, made on its own and measured on its own.
  *
+ * **`NONE` is not a placement.** It is how the user silences qvink — the very act
+ * the handover asks of them — so mirroring it would park our block where nothing
+ * places it, on the one turn we also start holding messages back
+ * (docs/decisions.md D-0029). A silent qvink has no placement to copy, so we take
+ * its own default instead and say the placement was defaulted.
+ *
  * @param {object} extensionSettings `context.extensionSettings`
- * @returns {{position: number, depth: number, role: number, scan: boolean}}
+ * @returns {{position: number, depth: number, role: number, scan: boolean,
+ *            defaulted: boolean}}
  *          `setExtensionPrompt`'s arguments (public/script.js:8926).
  */
 export function resolvePlacement(extensionSettings, { key = QVINK_KEY } = {}) {
     const settings = extensionSettings?.[key];
+    const wanted = Number(settings?.short_term_position);
+    // Mirrored only when qvink names a position ST actually collects; `defaulted`
+    // says we chose rather than copied, which is what the inspector reports.
+    const mirrored = Number.isFinite(wanted) && wanted >= 0;
 
     return {
-        position: numberOr(settings?.short_term_position, QVINK_DEFAULTS.position),
+        position: mirrored ? wanted : QVINK_DEFAULTS.position,
         depth: numberOr(settings?.short_term_depth, QVINK_DEFAULTS.depth),
         role: numberOr(settings?.short_term_role, QVINK_DEFAULTS.role),
         scan: Boolean(settings?.short_term_scan ?? QVINK_DEFAULTS.scan),
+        defaulted: !mirrored,
     };
 }
 

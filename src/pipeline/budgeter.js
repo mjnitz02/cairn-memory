@@ -5,87 +5,32 @@
  * Eviction is the expensive event: it changes the block's first byte, so the
  * model re-reads the block and everything under it. qvink pays that price on
  * every see-saw step because its budget binds on every step. Cairn pays it only
- * when the prompt genuinely cannot hold the block, and then pays it *once* for
- * many steps by dropping down to a floor rather than shaving the single summary
- * that happened to overflow.
+ * when the block outgrows its cap, and then pays it *once* for many steps by
+ * dropping down to a floor rather than shaving the single summary that happened
+ * to overflow.
  *
- * Two numbers:
+ * Two numbers, both fixed for the chat rather than measured turn to turn
+ * (docs/decisions.md D-0033):
  *
- *   `cap`   — what the block may occupy, derived: everything the prompt may use,
- *             minus what everything else in it actually cost last turn. Not a
- *             setting (CLAUDE.md §4.15) and not a guess — the observer measures
- *             both terms every turn.
+ *   `cap`   — qvink's own short-term limit, the budget the user already chose
+ *             (memory/scenes.js, resolveCap).
  *   `floor` — where a rebuild lands. Half the cap, so the next rebuild is half a
- *             cap of growth away instead of one summary away. That fraction is
- *             the one judgement call in this file; the trace will settle it
- *             (docs/decisions.md D-0026).
+ *             cap of growth away instead of one summary away (D-0026).
  *
- * The mark only ever moves forward, which is what makes the deferral hold: after
- * a rebuild the block is under the floor, so growth has to cross the cap again
- * before anything else is dropped. Same shape as the World Info holder's add-only
- * rule (D-0023), for the same reason.
- *
- * It moves forward only on a *measured* cap. An eviction against the estimate the
- * first turn of a chat runs on cuts the block to fit for that turn and leaves the
- * mark where it was, so the measurement one turn later can take those summaries
- * back (docs/decisions.md D-0028).
+ * The mark only ever moves forward within a session, which is what makes the
+ * deferral hold. A reload starts it over: the first turn of a session rebuilds
+ * the block anyway, so it lands at the floor too and buys the full slack.
  *
  * **The deferral is conditional and the condition is checkable.** Rebuilds are
  * spaced `(cap - floor) / growth-per-step` steps apart, so a cap only a step or
  * two wide puts eviction back on every step — qvink's behaviour, reached by a
- * longer road. `recoupled()` says when that has happened, because the failure is
- * otherwise invisible: the block looks right, the numbers look plausible, and the
- * prefix collapses exactly as often as before (CLAUDE.md §9.35).
+ * longer road. `recoupled()` says when that has happened (CLAUDE.md §9.35).
  *
  * Pure but for one index of state. No ST, no DOM, no network.
  */
 
 /** A rebuild drops the block to this share of the cap. */
 export const FLOOR_FRACTION = 0.5;
-
-/**
- * The share of the prompt the block may take on a turn nobody has measured yet.
- *
- * The cap is `maxPromptTokens - otherTokens`, and `otherTokens` comes from the
- * observer, which only runs *after* a prompt has gone out. The first generation
- * of a freshly opened chat therefore has no measurement to draw on, and the
- * arithmetic would hand the block the entire prompt budget. Half is the same
- * judgement as the floor: the block never takes more room than everything else
- * put together, and the next turn replaces the estimate with the measurement.
- */
-export const UNMEASURED_CAP_FRACTION = 0.5;
-
-/**
- * Reserve when ST's own answer is unavailable (util/context-size.js). Deliberately
- * generous: overestimating the reserve costs a little memory, underestimating it
- * overflows the request, and Cairn never breaks the chat (CLAUDE.md §4.17).
- */
-export const FALLBACK_RESERVE_FRACTION = 0.125;
-
-/**
- * How many tokens the memory block may occupy.
- *
- * @param {{maxPromptTokens: number, otherTokens: number}} input
- *        `maxPromptTokens` is ST's usable prompt size — context window minus the
- *        reserved response. `otherTokens` is the rest of the prompt as measured
- *        last turn: card, persona, lore, raw window, everyone else's injections.
- * @returns {number} Never negative.
- */
-export function deriveCap({ maxPromptTokens, otherTokens }) {
-    const max = Number.isFinite(maxPromptTokens) ? maxPromptTokens : 0;
-    const other = Number.isFinite(otherTokens) ? Math.max(0, otherTokens) : 0;
-    return Math.max(0, Math.floor(max - other));
-}
-
-/**
- * The cap before anything has been measured. See UNMEASURED_CAP_FRACTION.
- *
- * @param {number} maxPromptTokens ST's usable prompt size.
- */
-export function estimateCap(maxPromptTokens, { fraction = UNMEASURED_CAP_FRACTION } = {}) {
-    const max = Number.isFinite(maxPromptTokens) ? maxPromptTokens : 0;
-    return Math.max(0, Math.floor(max * fraction));
-}
 
 /**
  * Whether growth and eviction have collapsed back into one cadence.
@@ -105,7 +50,7 @@ export function recoupled({ cap, floor, stepTokens }) {
  * @param {{floorFraction?: number}} [options]
  */
 export function createBudget({ floorFraction = FLOOR_FRACTION } = {}) {
-    /** Oldest message index still in the block. Monotonic within a chat. */
+    /** Oldest message index still in the block. Monotonic within a session. */
     let oldest = -Infinity;
 
     return {
@@ -114,19 +59,15 @@ export function createBudget({ floorFraction = FLOOR_FRACTION } = {}) {
          *
          * @param {{scenes: Array<{index: number}>, cap: number,
          *          tokensOf: (scenes: Array<object>) => number,
-         *          provisional?: boolean}} input
-         *        `tokensOf` sizes a candidate list. It is called a few times per
-         *        eviction and never otherwise, so it must be cheap — the assembler
-         *        passes an arithmetic estimate calibrated against ST's tokenizer.
-         *        `provisional` means the cap is an estimate rather than a
-         *        measurement: the block is still cut to fit it, but the mark is
-         *        not moved, so the first measured turn can take those summaries
-         *        back (docs/decisions.md D-0028).
+         *          rebuild?: boolean}} input
+         *        `tokensOf` sizes a candidate list; it is called once per dropped
+         *        summary, so it must be cheap. `rebuild` means this turn changes
+         *        the block's head whatever we do — the first turn of a session —
+         *        so trimming to the floor now costs nothing extra.
          * @returns {{kept: Array<object>, evicted: number, oldest: number,
-         *            tokens: number, cap: number, floor: number, over: boolean,
-         *            provisional: boolean}}
+         *            tokens: number, cap: number, floor: number, over: boolean}}
          */
-        fit({ scenes, cap, tokensOf, provisional = false }) {
+        fit({ scenes, cap, tokensOf, rebuild = false }) {
             const all = scenes ?? [];
 
             // A branch or swipe can take the chat back past our mark, leaving
@@ -142,7 +83,7 @@ export function createBudget({ floorFraction = FLOOR_FRACTION } = {}) {
             const over = cap > 0 && tokens > cap;
             let evicted = 0;
 
-            if (over) {
+            if (over || (rebuild && cap > 0 && tokens > floor)) {
                 // Drop to the floor in one pass, oldest first. Never to nothing:
                 // an empty block is a full rebuild *and* the memory gone with it.
                 while (kept.length > 1 && tokens > floor) {
@@ -150,12 +91,10 @@ export function createBudget({ floorFraction = FLOOR_FRACTION } = {}) {
                     tokens = tokensOf(kept);
                     evicted++;
                 }
-                // Committing the mark is what makes eviction permanent, and a
-                // permanent decision needs a real number behind it.
-                if (kept.length && !provisional) oldest = kept[0].index;
+                if (kept.length) oldest = kept[0].index;
             }
 
-            return { kept, evicted, oldest, tokens, cap, floor, over, provisional: provisional && evicted > 0 };
+            return { kept, evicted, oldest, tokens, cap, floor, over };
         },
 
         /** A new chat is a new block. */

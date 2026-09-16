@@ -24,19 +24,23 @@ export const HANDOVER = Object.freeze({
     QVINK_INJECTING: 'qvink-injecting',
     QVINK_EXCLUDING: 'qvink-excluding',
     UNPROVEN: 'unproven',
+    UNPLACED: 'unplaced',
     WRITING: 'writing',
 });
 
 /**
- * @param {{own?: boolean, injecting?: string[], excluding?: boolean, proven?: boolean}} input
+ * @param {{own?: boolean, injecting?: string[], excluding?: boolean,
+ *           proven?: boolean, placed?: boolean}} input
  *        `own` is the setting. `injecting` lists qvink injection keys ST would
  *        still place. `excluding` is its `exclude_messages_after_threshold`.
  *        `proven` is whether our renderer has matched qvink's live block byte for
  *        byte in this chat — the D-0026 check, which only means anything while
  *        qvink is still the writer, so it is remembered rather than re-earned.
+ *        `placed` is whether the block we are about to park will actually be
+ *        collected into the prompt.
  * @returns {{writing: boolean, reason: string, detail: string}}
  */
-export function assessHandover({ own = false, injecting = [], excluding = false, proven = false } = {}) {
+export function assessHandover({ own = false, injecting = [], excluding = false, proven = false, placed = true } = {}) {
     if (!own) {
         return verdict(false, HANDOVER.OFF, 'Cairn is planning the memory block but not writing it.');
     }
@@ -57,6 +61,14 @@ export function assessHandover({ own = false, injecting = [], excluding = false,
     if (!proven) {
         return verdict(false, HANDOVER.UNPROVEN,
             'Cairn has not yet rendered qvink\'s own block byte for byte in this chat, so it will not take over the injection.');
+    }
+
+    // Last, and it is an invariant rather than a step the user takes: writing is
+    // also *blanking*, so a block ST will not collect means a prompt missing both
+    // the summaries and the messages they stand for (docs/decisions.md D-0029).
+    if (!placed) {
+        return verdict(false, HANDOVER.UNPLACED,
+            'Cairn will not hold messages back while its block has nowhere in the prompt to go.');
     }
 
     return verdict(true, HANDOVER.WRITING, 'Cairn writes the memory block and holds back the messages it covers.');

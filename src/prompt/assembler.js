@@ -26,29 +26,29 @@
  * is silent and our render has matched its live block byte for byte, the plan is
  * a measurement and nothing more (docs/decisions.md D-0020, D-0027).
  *
- * The cap needs the rest of the prompt's cost, which is only known after a
- * prompt has gone out — so the observer hands back what it measured, and the
- * next turn's plan is drawn against it.
+ * **The plan is a function of the chat, not of what was measured.** The cap is
+ * qvink's own limit and every size is counted from the block itself, so the same
+ * chat always gets the same block and nothing learned last turn can bend this one
+ * (docs/decisions.md D-0033).
  */
 import {
     QVINK_SHORT_INJECTION,
+    pendingScenes,
     qvinkExcluding,
     qvinkInjected,
     qvinkInjecting,
     readScenes,
+    resolveCap,
     resolvePlacement,
     resolveRendering,
 } from '../memory/scenes.js';
-import { createBudget, deriveCap, estimateCap, recoupled } from '../pipeline/budgeter.js';
+import { createBudget, recoupled } from '../pipeline/budgeter.js';
 import { createSeeSaw } from '../pipeline/scheduler.js';
 import { assessHandover } from './handover.js';
 import { commonPrefixLength, comparePrompts } from '../util/prefix.js';
 import { createMaxPromptTokens } from '../util/context-size.js';
 import { countTokens } from '../util/tokens.js';
 import { debug } from '../util/log.js';
-
-/** Starting chars-per-token, replaced by a measured ratio after the first turn. */
-const INITIAL_CHARS_PER_TOKEN = 4;
 
 /**
  * Render the block, the way qvink renders it (its index.js:3963-3974):
@@ -87,7 +87,7 @@ export function blockChars(scenes, { template, separator, macro }) {
 }
 
 /**
- * The per-turn glue: read the chat, plan the block, measure what happened.
+ * The per-turn glue: read the chat, plan the block, report what it planned.
  *
  * Takes a *getter*, not a context (docs/st-api-surface.md, Hazards).
  *
@@ -101,15 +101,7 @@ export function createAssembler(getContext, {
     own = false,
 } = {}) {
     let previousBlock = null;
-    let charsPerToken = INITIAL_CHARS_PER_TOKEN;
     let ownInjection = Boolean(own);
-
-    /**
-     * What the observer measured for the prompt that last went out. `null` means
-     * no prompt has gone out in this chat yet, which is a different thing from a
-     * prompt that measured zero.
-     */
-    let measured = { promptTokens: null, blockTokens: 0, ours: false };
     /** Has our renderer matched qvink's live block in this chat? See handover.js. */
     let proven = false;
     /** The report the observer logs, from the plan made earlier this turn. */
@@ -129,23 +121,27 @@ export function createAssembler(getContext, {
         const scenes = readScenes(chat, { showPrefill: rendering.showPrefill });
 
         // The block qvink has parked right now: the fidelity mirror while it is
-        // still the writer, and the memory cost of the last prompt while it still
-        // has one in there.
+        // still the writer.
         const live = context.extensionPrompts?.[QVINK_SHORT_INJECTION]?.value ?? '';
         const fidelity = await checkFidelity(context, live, renderBlock(qvinkInjected(scenes), rendering));
         if (fidelity.compared && fidelity.match) proven = true;
 
+        const placement = resolvePlacement(context.extensionSettings);
         const gate = assessHandover({
             own: ownInjection,
             injecting: qvinkInjecting(context.extensionPrompts),
             excluding: qvinkExcluding(context.extensionSettings),
             proven,
+            // ST collects an injection by position (public/script.js:3312), so a
+            // block parked outside those positions is written and never read.
+            placed: placement.position >= 0,
         });
 
         const maxPrompt = await maxPromptTokens(context);
-        const { cap, otherTokens, estimated } = await deriveTurnCap(context, maxPrompt, live);
+        const { cap, type: capType } = resolveCap(context.extensionSettings, maxPrompt);
 
-        const step = seeSaw.advance(chat.length);
+        const pending = pendingScenes(chat);
+        const step = seeSaw.advance(chat.length, { firstPending: pending[0] ?? null });
         // Every summary the block speaks for. The budget may drop the oldest of
         // them from the prompt, but they stay held back from the raw history
         // either way: an evicted summary's message is older still, and putting
@@ -154,24 +150,28 @@ export function createAssembler(getContext, {
             (scene) => scene.eligible && scene.index <= step.summarisedThrough,
         );
 
+        // Size candidates by this turn's own block, counted once: a ratio from
+        // the text in hand, never one carried over from an earlier turn.
+        const candidate = covered.filter((scene) => scene.index >= budget.oldest);
+        const candidateText = renderBlock(candidate, rendering);
+        const candidateTokens = candidateText ? await countTokens(context, candidateText) : 0;
+        const charsPerToken = candidateTokens > 0 ? candidateText.length / candidateTokens : 1;
+        const tokensOf = (list) => Math.ceil(blockChars(list, rendering) / charsPerToken);
+
         const fit = budget.fit({
             scenes: covered,
             cap,
-            tokensOf: (list) => Math.ceil(blockChars(list, rendering) / charsPerToken),
-            // An estimated cap may shape this turn's block but may not throw a
-            // summary away for the rest of the chat (docs/decisions.md D-0028).
-            provisional: estimated,
+            tokensOf,
+            rebuild: step.reason === 'first-turn',
         });
 
         const text = renderBlock(fit.kept, rendering);
-        const tokens = text ? await countTokens(context, text) : 0;
-        // Calibrate for next turn's fit. chars/4 overstates prose by roughly a
-        // third, which would evict against a cap that was never really reached.
-        if (text.length && tokens > 0) charsPerToken = text.length / tokens;
+        const tokens = text === candidateText
+            ? candidateTokens
+            : (text ? await countTokens(context, text) : 0);
 
         const change = comparePrompts(previousBlock, text);
         previousBlock = text;
-        measured = { ...measured, blockTokens: tokens, ours: gate.writing };
 
         // What the next step will add, from what this block costs per scene. One
         // scene per message is the ceiling rather than the rule, so this reads a
@@ -183,8 +183,7 @@ export function createAssembler(getContext, {
         const stuck = recoupled({ cap, floor: fit.floor, stepTokens });
 
         if (fit.evicted) {
-            const how = fit.provisional ? 'for this turn only' : 'to the floor';
-            debug(`Memory block: evicted ${fit.evicted} scene(s) ${how} (${fit.tokens}/${cap} tokens).`);
+            debug(`Memory block: evicted ${fit.evicted} scene(s) to the floor (${fit.tokens}/${cap} tokens).`);
         }
         if (stuck) {
             debug(`Memory block: ${cap - fit.floor} tokens of slack cannot hold a ${stepTokens}-token step; every step will rebuild.`);
@@ -196,6 +195,8 @@ export function createAssembler(getContext, {
             handover: gate.reason,
             handoverDetail: gate.detail,
             proven,
+            placement: placement.position,
+            placementDefaulted: placement.defaulted,
             scenes: scenes.length,
             candidates: covered.length,
             blanked: covered.length,
@@ -208,19 +209,16 @@ export function createAssembler(getContext, {
             oldest: fit.kept[0]?.index ?? null,
             newest: fit.kept[fit.kept.length - 1]?.index ?? null,
             evicted: fit.evicted,
-            evictedProvisionally: fit.provisional,
             overCap: fit.over,
             cap,
-            capEstimated: estimated,
+            capType,
             floor: fit.floor,
             slack: Math.max(0, cap - fit.floor),
             stepTokens,
             recoupled: stuck,
             maxPromptTokens: maxPrompt,
-            otherTokens,
             chars: text.length,
             tokens,
-            charsPerToken: round2(charsPerToken),
             // The D-0019 measurement, on the block alone: how far into the block
             // the first changed byte is. Near 100% means a step changed the tail.
             change: {
@@ -236,44 +234,13 @@ export function createAssembler(getContext, {
             report: latest,
             text,
             blank: covered.map((scene) => scene.index),
-            placement: resolvePlacement(context.extensionSettings),
+            placement,
             writing: gate.writing,
         };
     }
 
-    /**
-     * What the finished prompt actually cost, from the observer. The other half
-     * of the cap: everything that is not the memory block has to come out of the
-     * budget before the block is drawn against it.
-     *
-     * @param {{promptTokens?: number}} snapshot
-     */
-    function observe({ promptTokens } = {}) {
-        if (!Number.isFinite(promptTokens) || promptTokens < 0) return;
-        measured = { ...measured, promptTokens };
-    }
-
-    /** The rest of the prompt, and therefore the cap, from that measurement. */
-    async function deriveTurnCap(context, maxPrompt, live) {
-        if (measured.promptTokens === null) {
-            // Nothing has been measured in this chat yet (pipeline/budgeter.js,
-            // UNMEASURED_CAP_FRACTION). One turn later this branch is gone.
-            return { cap: estimateCap(maxPrompt), otherTokens: 0, estimated: true };
-        }
-
-        // Whoever wrote the memory block into the prompt we measured — us if the
-        // gate was open, qvink if it was not.
-        const blockTokens = measured.ours
-            ? measured.blockTokens
-            : (live ? await countTokens(context, live) : 0);
-        const otherTokens = Math.max(0, measured.promptTokens - blockTokens);
-
-        return { cap: deriveCap({ maxPromptTokens: maxPrompt, otherTokens }), otherTokens, estimated: false };
-    }
-
     return {
         plan,
-        observe,
 
         /**
          * The handover lever, separate from `enabled`, so the run can be measured
@@ -290,8 +257,6 @@ export function createAssembler(getContext, {
             seeSaw.reset();
             budget.reset();
             previousBlock = null;
-            charsPerToken = INITIAL_CHARS_PER_TOKEN;
-            measured = { promptTokens: null, blockTokens: 0, ours: false };
             proven = false;
             latest = null;
         },
@@ -368,6 +333,3 @@ function round1(value) {
     return Math.round(value * 10) / 10;
 }
 
-function round2(value) {
-    return Math.round(value * 100) / 100;
-}

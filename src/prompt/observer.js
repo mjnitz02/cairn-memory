@@ -32,9 +32,9 @@ const DEFAULT_HISTORY = 20;
  *           memory?: (turn: {promptTokens: number}) => Promise<object|null>}} [options]
  *        `holding` reports how many World Info entries the holder is keeping in,
  *        so a logged run says whether the fix was on (docs/decisions.md D-0024).
- *        `memory` is handed what this prompt cost — the other half of the next
- *        turn's memory budget — and returns the report from the plan the
- *        interceptor already acted on (docs/decisions.md D-0026, D-0027).
+ *        `memory` returns the report from the plan the interceptor already
+ *        acted on (docs/decisions.md D-0027). It is handed what this prompt cost
+ *        for reporting only; the plan never reads it back (D-0033).
  */
 export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot, holding, memory } = {}) {
     /**

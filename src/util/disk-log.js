@@ -152,6 +152,8 @@ function memoryFields(memory) {
         // writing it and Cairn only measuring (docs/decisions.md D-0027).
         memory_writing: memory.writing ?? false,
         memory_handover: memory.handover ?? null,
+        memory_placement: memory.placement ?? null,
+        memory_placement_defaulted: memory.placementDefaulted ?? null,
         memory_blanked: memory.blanked ?? null,
         memory_scenes: memory.scenes,
         memory_included: memory.included,
@@ -161,14 +163,12 @@ function memoryFields(memory) {
         memory_stepped: memory.stepped,
         memory_step_reason: memory.stepReason,
         memory_evicted: memory.evicted,
-        // An eviction against an estimated cap shapes the turn without being
-        // committed, so a run's permanent losses are the ones with this false.
-        memory_evicted_provisionally: memory.evictedProvisionally ?? false,
         memory_over_cap: memory.overCap,
+        // qvink's own limit, fixed for the chat: `tokens`, or `percent` of the
+        // prompt budget (docs/decisions.md D-0033).
         memory_cap: memory.cap,
-        memory_cap_estimated: memory.capEstimated ?? false,
+        memory_cap_type: memory.capType ?? null,
         memory_floor: memory.floor,
-        memory_other_tokens: memory.otherTokens,
         memory_max_prompt_tokens: memory.maxPromptTokens,
         memory_chars: memory.chars,
         memory_tokens: memory.tokens,

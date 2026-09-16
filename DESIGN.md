@@ -230,7 +230,8 @@ cooperation without a second competing injector — natively supported, no fork 
 - **Level 1 (no lorebook edits):** observe activations, dedup summary content against active WI
   text, budget against it, relocate via the prompt-ready rewrite. Works today, coarse.
 - **Level 2 (entries migrated to outlets):** full placement control, clean dedup, stable
-  ordering. Costs a per-entry edit on existing lorebooks. See open question 2.
+  ordering. Costs a per-entry edit on existing lorebooks. Not needed while the block stays
+  where it is; see `docs/decisions.md` D-0035.
 
 ---
 
@@ -348,14 +349,17 @@ forever and that churn must not touch the spine.
 
 ## 12. Prompt constraints
 
-Memory prompts run on a mid-tier cloud model, not a frontier one. Historically that class has
-been Deepseek R1 / GLM 4.6-4.7 / Gemini Flash / GPT-mini — see open question 3.
+Memory prompts run on a strong cloud model: GLM-4.7 class or better, chosen through a connection
+profile. Prompts may assume that floor (`docs/decisions.md` D-0036).
 
 - Explicit, concrete, **positive** instructions. No hypothetical framing.
 - `IMPORTANT:` prefix on the critical instruction; concrete include/exclude examples; a
   tiebreaker at the end.
 - Positive format constraints ("a single paragraph") beat negative ones ("do not use lists"),
   though an explicit prohibition still earns its place as a secondary guard.
+- **Exception: the default summary prompt** does not follow this structure. It is Matt's qvink
+  prompt, verbatim, because a prompt measured in play beats one written to these rules
+  (`docs/p2-plan.md` §4).
 - Bake guidance into the prompt rather than making it selectable.
 - Anything reported back to the user must reflect the **actual change**, not the model's claimed
   output. Capture pre-state before applying, so counts are real.
@@ -368,7 +372,7 @@ been Deepseek R1 / GLM 4.6-4.7 / Gemini Flash / GPT-mini — see open question 3
 Zero risk, immediate diagnostic value, and it validates the whole theory before any commitment.
 If the prefix-stability numbers do not show what section 4 predicts, stop and rethink.
 
-**P1 — Own the injection.** Assembler + injector + lorebook outlet routing. Replaces qvink's
+**P1 — Own the injection.** Assembler + injector + the World Info holder. Replaces qvink's
 injection while still *reading* qvink's existing summaries out of `message.extra`, so migration
 is free and the chat history stays usable. Fixes symptom A on its own.
 
@@ -377,21 +381,49 @@ no longer evict it (`docs/decisions.md` D-0023, D-0024). The assembler (0.7.0) �
 eviction are separate cadences, so a see-saw step appends at the block's tail and the head keeps
 its offsets (D-0026). The handover (0.8.0) — Cairn parks the block and owns the blanking
 threshold, behind a gate that stays shut until qvink is silent and our render of its block has
-matched it byte for byte (D-0020, D-0027). *Next:* the measured run — P1's numbers on a real
-chat with Cairn as the writer, which is what says whether §4's prediction holds.
+matched it byte for byte (D-0020, D-0027). *Measured* (D-0034): on Esin, quiet turns hold at
+96.5–97.2%, and a step turn breaks at the block's tail for 68.2%, which is the most this layout
+allows. That averages about 91% over a cycle. The see-saw is accepted. Lorebook outlet routing
+was dropped from P1 (D-0035).
 
 The measured target is *where* a see-saw step breaks the prefix, not moving the block below the
 history — the history is the part that grows, so anything under it shifts every turn. Keep the
-block high; make a step change its tail rather than its head. See `docs/decisions.md` D-0019.
+block high; make a step change its tail rather than its head. See `docs/decisions.md` D-0019, and
+D-0034 for why the ~90% step figure it predicted is layout-dependent.
 
-**P2 — Scenes.** Own summarisation, delta-style, see-saw scheduler ported from qvink. Now
-independent of qvink.
+**P2 — Scenes.** Own summarisation, one plain-text summary per message, with an editable prompt
+and the see-saw scheduler ported from qvink. Now independent of qvink. Plan:
+`docs/p2-plan.md`.
 
 **P3 — State.** Structured, diffed, per-message. Replaces WTrackerLite.
 
 **P4 — Canon + compactor.** Promote / merge / drop under budget pressure. Fixes symptom B.
 
 **P5 — Episodes + entity retrieval.** The long tail.
+
+**P6 — A budget worked out from the chat.** Until P6, the block's cap is a fixed 35% of the max
+prompt (`docs/p2-plan.md` decision 2). P6 works the cap out from the chat's own parts, so the
+block uses the room the chat actually leaves, and P4 and P5 get more space to work with. The
+prompt splits into four parts:
+
+- **Fixed:** system prompt, card, persona and example messages. These can be counted directly,
+  and they only change when the user edits them.
+- **World Info:** a reserve that starts at a floor, with no reserve for a chat that has no
+  lorebook. It is raised only when observed lore goes past it.
+- **Raw window:** the see-saw's most messages times the measured average message length, plus
+  a buffer, with a floor it never goes below.
+- **Memory block:** whatever is left, minus a safety margin.
+
+If a check shows the next turn would overflow, Cairn pauses and works the budget out again.
+
+**How this differs from what D-0033 removed** (D-0028, D-0030 to D-0032). Those budgets were
+measured again every turn and fed the plan straight away. Every turn had a different cap, each
+piece had its own cold start, and the patches piled up. In P6, each reserve changes only at a
+discrete event, when a ceiling is crossed. Each change is at most one rebuild, and in between,
+the cap holds still. Raising the cap costs nothing, because the block simply has more room to
+grow. Lowering it costs a rebuild only if the block is already bigger than the new cap. P6 has
+to show, with a trace, that the cap holds still between those events. If it can't, D-0033
+stands.
 
 ---
 
@@ -400,12 +432,12 @@ independent of qvink.
 1. ~~**Text completion or chat completion against oMLX?**~~ **Answered 2026-09-15: text
    completion.** The oMLX profile runs in `tc` mode, so `GENERATE_AFTER_COMBINE_PROMPTS` is the
    primary rewrite hook. See `docs/decisions.md` D-0010.
-2. **Willingness to migrate existing lorebooks to outlets?** Open, but gated on a measurement
-   rather than an opinion: run Esin and read the stability trace first. Cheaper than it looked —
-   one outlet per *book*, not per entry, and scriptable. See `docs/decisions.md` D-0021.
-3. **Which tier is the memory model, really?** If the floor has moved from flash-class to
-   GLM-4.7-class, the prompts can carry more nuance — particularly the promote/merge/drop pass,
-   which is meaningfully harder than per-message summarisation.
+2. ~~**Willingness to migrate existing lorebooks to outlets?**~~ **Answered 2026-09-16: not
+   needed for P1.** The holder and the order-tie fix keep lore stable; outlets only control
+   placement, and placement waits on the deferred §6 move. See `docs/decisions.md` D-0035.
+3. ~~**Which tier is the memory model, really?**~~ **Answered 2026-09-16: a strong one.** GLM-4.7
+   class or better, still chosen through a connection profile, and prompts may assume it. See
+   `docs/decisions.md` D-0036.
 4. ~~**Does qvink stay installed during P0/P1?**~~ **Answered 2026-09-15: yes, as a summary
    generator only.** Cairn takes both the injection and the blanking threshold; qvink's injection
    is silenced and `exclude_messages_after_threshold` turned off. See `docs/decisions.md` D-0020.

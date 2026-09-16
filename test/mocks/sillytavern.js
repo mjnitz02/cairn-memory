@@ -14,6 +14,30 @@ export const extension_prompt_types = {
     BEFORE_PROMPT: 2,
 };
 
+/**
+ * The positions ST asks `getExtensionPrompt` for when it builds a prompt:
+ * BEFORE_PROMPT and IN_PROMPT around the story string (public/script.js:4700-4701),
+ * IN_CHAT per depth (:5647, and public/scripts/openai.js:856). NONE is never asked for.
+ */
+export const COLLECTED_POSITIONS = [
+    extension_prompt_types.BEFORE_PROMPT,
+    extension_prompt_types.IN_PROMPT,
+    extension_prompt_types.IN_CHAT,
+];
+
+/**
+ * Keys ST would place on its own — getExtensionPrompt's filter,
+ * `x.position == position && x.value` (public/script.js:3312), over every
+ * position it collects. Anything else reaches the prompt only through a macro.
+ */
+export function collectedKeys(extensionPrompts) {
+    return Object.keys(extensionPrompts ?? {})
+        .filter((key) => {
+            const prompt = extensionPrompts[key];
+            return prompt.value && COLLECTED_POSITIONS.some((position) => prompt.position == position);
+        });
+}
+
 /** public/scripts/world-info.js:863 */
 export const world_info_position = {
     before: 0,
@@ -151,6 +175,16 @@ export function createContext({ chat = makeChat(), chatMetadata = {}, profiles =
                 text = text.replace(new RegExp(`\\{\\{${name}\\}\\}`, 'gi'), String(value));
             }
             return text;
+        },
+
+        /**
+         * public/script.js:2981, exposed at public/scripts/st-context.js:163. The
+         * same two macros as above. An unknown `{{macro}}` is left as it is: the
+         * legacy engine (the default, public/script.js:2997) replaces a fixed list
+         * of named patterns (public/scripts/macros.js:610).
+         */
+        substituteParams(content) {
+            return context.substituteParamsExtended(content);
         },
 
         /** public/scripts/st-context.js:302 — the ignore flag's home. */

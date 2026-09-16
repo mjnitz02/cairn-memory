@@ -3,7 +3,8 @@
  *
  * ST already answers this: `getMaxPromptTokens` (public/script.js:5981) is the
  * context window minus the reserved response length, which is the number the
- * budgeter needs and not one we should be re-deriving (CLAUDE.md §2.5).
+ * percent memory limit is a percent of (docs/decisions.md D-0033), and not one
+ * we should be re-deriving (CLAUDE.md §2.5).
  * `getContext()` does not expose it (st-context.js:115), so it comes from
  * `script.js` the way every bundled extension imports it.
  *
@@ -14,8 +15,14 @@
  * module scope would stop the extension loading, and a missing diagnostic number
  * must never do that (CLAUDE.md §4.17).
  */
-import { FALLBACK_RESERVE_FRACTION } from '../pipeline/budgeter.js';
 import { debug, warn } from './log.js';
+
+/**
+ * Reserve when ST's own answer is unavailable. Deliberately generous:
+ * overestimating the reserve costs a little memory, underestimating it overflows
+ * the request, and Cairn never breaks the chat (CLAUDE.md §4.17).
+ */
+export const FALLBACK_RESERVE_FRACTION = 0.125;
 
 const ST_SCRIPT = '/script.js';
 

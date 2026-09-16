@@ -8,6 +8,357 @@ what we believed and why it changed.
 
 ---
 
+## D-0036 — The memory model is a strong one, and the prompts may assume it
+**2026-09-16.** Closes `DESIGN.md` §14.3.
+
+**The decision.** Default to a strong model: GLM-4.7 class or better, and a
+newer GLM or DeepSeek is fine. Memory prompts are written for that floor, not for
+flash-class models, so they can carry more nuance than §12 originally allowed.
+
+**Why.** A summary request is small input and small output. Per call, quality
+costs little more than cheapness, and a bad summary stays in the chat for good.
+Choosing the model is still a connection profile (D-0006), so moving to a newer
+model later means switching profiles, with no code change.
+
+**Left open for P2.** Whether the summary prompt is user-editable. "The
+instructions sent to the memory model" passes CLAUDE.md §15's one-sentence test,
+so it is allowed. Whether it is *wanted* gets decided when P2 is planned.
+
+**What would reopen it.** Users running flash-class models in practice, or
+GLM-4.7-class output failing the parser in play often enough that the prompts
+have to assume less.
+
+---
+
+## D-0035 — Lorebook outlets are not needed for P1
+**2026-09-16.** Closes `DESIGN.md` §14.2, which D-0021 left open until a
+measurement came in. The measurement is D-0034's run.
+
+**The question was never really about outlets.** Outlets were proposed because
+lore that changed between turns was breaking the cache. D-0022 found the real
+cause, which was entries tied on `order`, and D-0021 had already shown that
+outlets control only where lore goes, not what order it is in. With the holder
+(D-0023, D-0024) and the tie fix in place, Esin's run held 29 entries with 0 ties
+in the same order on every turn, and quiet turns stayed at 96.5–97.2%. Even the
+step turn broke at the end of the memory block, well below the lore.
+
+**So outlets buy placement only, and placement waits.** The only reason left to
+use them is to keep lore above the memory block if the block ever moves (the
+deferred `DESIGN.md` §6 move; D-0019, D-0027). Until then they would mean an
+edit to every lorebook entry and change nothing we can measure.
+
+**Discovery: forcing an entry does not skip its probability roll.** The holder
+pushes entries in through `WORLDINFO_FORCE_ACTIVATE`. A forced entry is added to
+the normal `activatedNow` set (`world-info.js:4886-4888`), which becomes
+`newEntries` (`:4997`, `:5005`), and every entry in that list goes through
+`verifyProbability` (`:5028-5049`, called at `:5051`). The roll is skipped only
+when probability is off or set to 100 (`:5030`), or when the entry is sticky
+(`:5035`). So a held entry below 100% is re-rolled every turn, drops out on a
+failed roll, and comes back on the next pass. Outlets would not fix this either,
+because they use the same scan. Esin's book has 0 such entries out of 31, and
+Akane's has 15 out of 110, none of them sticky. Nothing is done about it yet: the
+chat we measure is not affected, and changing a user's probabilities from inside
+Cairn is not something to do quietly.
+
+**What would reopen it.** The `DESIGN.md` §6 block move. Or a trace on a book
+with probability entries (Akane's) where lore churn breaks the prefix, which
+makes the probability roll the thing to solve, not outlets.
+
+---
+
+## D-0034 — P1 is measured: a step breaks at the block's tail, and the see-saw is accepted
+**2026-09-16.** Restates D-0019's target. The mechanism D-0019 predicted holds,
+but its ~90% step-turn figure does not, because that figure came from a
+different prompt layout. This closes P1's measurement.
+
+**The run.** Esin, text completion on oMLX, with qvink generating summaries and
+Cairn writing the prompt. All seven lines are in `cairn-inspector.jsonl`.
+
+```
+turn     1           2     3     4     5     6      7
+reason   first-turn  held  held  held  held  step   held
+stab     —           96.5  96.5  96.8  97.2  68.2   96.5
+```
+
+- **Turn 1** rebuilt the block, as D-0033 designs it to: 69 summaries evicted,
+  leaving 36 summaries in 3,694 tokens, under the 3,750 floor.
+- **Held turns:** the memory block was 100% identical, 29 lore entries were held
+  with 0 ties, and the cache hits were fast. `prompt_tokens` went from 15,666 to
+  17,762, against a 22,016-token limit.
+- **The step turn** (14:05:22Z) added 5 summaries (36 → 41, summarised through
+  125 → 135), evicted none, and grew the block from 3,694 to 4,156 tokens.
+  `memory_change_at` is 18,814, which is exactly the old block's length, so the
+  new summaries were appended at the tail. The block itself was 88.6% stable.
+  The whole prompt diverged at char 50,112, which is the end of the block.
+
+**The mechanism holds.** A break at the head of the block would have landed at
+char 31,298 and given 42.6% (31,298 / 73,504). A break at the tail gives 68.2%.
+Everything above the new summaries stayed cached: the card, the lore and the
+old block.
+
+**The 90% does not.** D-0019 computed it on Elizabeth's prompt, where the block
+was 77% and the raw history 10%. Under D-0033 the block opens at the floor, so
+the raw history below it is 23,392 chars, about 32% of this prompt, and any
+change to the block means re-reading all of it. On this layout, **68.2% is the
+most a step turn can get.** The restated target is where the step breaks (the
+block's tail), not a fixed percentage.
+
+**The cycle is what matters.** A step comes roughly every 5 turns, so the mean
+is about (4 × 96.75 + 68.2) / 5 ≈ **91%**. The same run with a head break would
+average about 86%.
+
+**The see-saw is accepted.** Several fast turns, then one slower one. The first
+turn of a session is always slow because it rebuilds the block. Matt's call:
+this is the best prompt caching has worked for him, and nothing needs to be done
+about it. Only three levers could raise the step turn: step cadence, the size of
+the raw window (P2 owns both), and placement (the deferred `DESIGN.md` §6 move).
+None of them is being pulled.
+
+**Also found.** Every line reported `writers: 2`. The inspector was counting
+qvink's parked "Macro Only" block, which ST never places. Fixed in the same
+change (`src/prompt/inventory.js`).
+
+**What would reopen it.** A slow step turn that is actually felt in play, for
+example on a chat whose raw window is much bigger. Or a P2 cadence that pulls
+the cycle mean below this run's.
+
+---
+
+## D-0033 — the plan is a function of the chat
+**2026-09-16.** Supersedes D-0028, D-0030, D-0031 and D-0032, and the measured
+cap in D-0026. Those entries stay as the record of what we believed.
+
+**What happened.** Four fixes in a row, each found in live play, each adding
+state Cairn learned by watching prompts go out: a measured budget, a projection
+of its growth, a raw-window allowance, a provisional eviction for the turn before
+any measurement, and a store to carry all of it across a reload. Every piece had
+its own cold start, and each one's error fed the next turn's plan. On the first
+real reload the prefix did not settle until turn 4 (30.5%, 40.8%, then 97.1%);
+the build before those four fixes settled on turn 3. The fixes were worse than
+the bug.
+
+**The decision.** The plan reads nothing it measured. Everything is derived from
+the chat and settings the user already chose:
+
+- **Cap** = qvink's own short-term limit, resolved as qvink resolves it (tokens,
+  or percent of `getMaxPromptTokens`, which is qvink's `getMaxContextSize` under
+  another name — public/script.js:333). No foreign cost, no projection, no
+  headroom, no estimate.
+- **Sizes** are counted from this turn's own block. No ratio is carried between
+  turns.
+- **The see-saw and the eviction mark** still live in memory for the session, and
+  start from the chat's current state. Nothing is stored in `chatMetadata`.
+- **The first turn of a session rebuilds, and lands at the floor.** That turn
+  re-reads the block anyway, so the slack it buys is free. From the second turn
+  on, the block is byte-identical until a step appends to its tail.
+
+A reload therefore costs exactly one rebuild, and a fresh session on the same chat
+builds the same block as any other. The observer still measures the whole prompt,
+for the log only.
+
+**What it gives up.** The block no longer grows into whatever the prompt has
+spare, and a session opens with half the limit. If card + lore + raw window +
+block overflows the context, ST trims history before sending it, and the log
+shows the prompt size. We accept both: a user who drops in for one turn pays one
+rebuild either way.
+
+**Discoveries.** On the reload that exposed this, turn 1 carried all 29 held lore
+entries with *nothing* stored — the store D-0032 added for them was never needed.
+And the loop itself is the lesson: when the second patch for the same symptom
+arrives, stop and simplify instead of writing the third.
+
+**What would reopen it.** A trace where the qvink limit overflows the context in
+normal play, or where one rebuild per session is shown to matter.
+
+---
+
+## D-0032 — a reload should cost nothing
+**2026-09-16.** Both of Cairn's startup costs have the same shape, and together
+they meant every test run burned two messages before it was measuring anything.
+
+Cairn derives two things by watching prompts go out, and a fresh page has
+watched none:
+
+1. **The budget split.** `foreignTokens` comes from a measured prompt, so the
+   first turn of a session ran on the half-budget estimate, evicted
+   provisionally (D-0028), and the second turn took it all back — a different
+   prompt, and a second rebuild.
+2. **The held World Info set.** The holder is add-only and learns from
+   `WORLD_INFO_ACTIVATED` (D-0023, D-0024), so the first prompt after a reload
+   went out with zero lore — 29 entries, ~5.5k tokens, absent — and the second
+   had them all back. The one turn the holder structurally cannot protect.
+
+Neither is a bug in the derivation. Both are the derivation having nowhere to
+live across a reload. So it gets one: `store/chat-store.js`, in `chatMetadata`.
+
+**What is stored is chosen to be cheap to be wrong about.** The foreign count is
+an estimate either way and the next measurement corrects it. Lore is stored as
+**identity only** — `world` and `uid`, never content — and resolved back through
+`getSortedEntries` (world-info.js:4590) at load, so a book edited while the page
+was closed cannot come back stale and the chat file never grows a copy of the
+lorebook.
+
+**Why `chatMetadata` and not settings.** The set is per chat: another
+character's lore is not ours to hold, and one chat's budget says nothing about
+another's. It also travels with the chat between devices, which is where the
+question came from.
+
+**No version bump.** `STORE_VERSION` is 1 and this is its first use — there is no
+earlier shape to migrate from. A stored shape from a version this build does not
+know is ignored rather than trusted, so a downgrade costs a rebuild and not
+someone's state.
+
+**What would reopen it.** Restored lore that no longer matches what the scan
+would have activated — a chat branched elsewhere, say. The holder is add-only
+within a session for the same reason; if the restore proves noisier than the
+rebuild it saves, store the set per branch or drop it.
+
+---
+
+## D-0031 — the raw window is Cairn's spend, not a cost imposed on it
+**2026-09-16.** Found in play, and the cause of the handover's prompt growth.
+
+The cap was `maxPromptTokens - otherTokens`, where `otherTokens` was everything
+that was not the memory block — including the un-blanked history. But that
+history is Cairn's own choice: the see-saw decides where the blanking boundary
+sits. Drawing the line there meant **evicting summaries to pay for prose we
+chose to keep raw**, and eviction is permanent because the mark only moves
+forward (D-0026).
+
+**What went out.** The prompt grew 14030 -> 21919 tokens across the handover, 58%
+to 91% of the window, and oMLX rebuilt its cache every message. The block
+explained only ~1,750 of that. The rest was the raw window:
+
+| | qvink | Cairn |
+|---|---|---|
+| boundary | recomputed every turn (`lagging = i > first_to_inject`, its index.js:3830) | held between steps (D-0019) |
+| raw window | always exactly 10 messages | 10 -> 20, sawtooth |
+
+Holding the threshold still is what makes the block byte-identical, so the
+sawtooth is the price of D-0019 and not a mistake. What was a mistake is who
+pays for it.
+
+**The fix.** Split the prompt three ways — the block, the raw window, and
+`foreignTokens` (card, persona, lore, note, other injections). The first two come
+out of one `deriveAllowance`; only the third is projected against. And when an
+eviction is about to happen *while the window is above its target*, the see-saw
+is asked to step (`reason: 'budget'`), which snaps the window back and converts
+prose into summaries already held. It rests on a summary costing a fraction of
+the prose it stands for — ~353 characters against ~1,650 in the corpus.
+
+**Rejected:** capping the raw window at `RAW_WINDOW` outright. It fixes the size
+but not the accounting, and it trims mid-prompt on turns that have no budget
+problem — a rebuild bought for nothing.
+
+**Side effect worth recording.** `test/mocks/qvink.js` had 35-character messages
+against 353-character summaries, inverting the real ratio ~50x. Nothing depended
+on message length until now. Fixtures are real in shape (CLAUDE.md §3.13), and
+this is what it costs when one is not.
+
+**What would reopen it.** Budget steps firing often. The valve should be rare; if
+it is not, `RAW_WINDOW` or `STEP` is wrong for the window size and the cadence
+wants retuning rather than the valve doing it every turn.
+
+---
+
+## D-0030 — the cap is drawn against next turn's prompt, and keeps headroom
+**2026-09-16.** A second bug found in play, on the first clean handover run.
+
+`deriveCap` was `maxPromptTokens - otherTokens`, and `otherTokens` is what the
+observer measured on the prompt that *already went out*. It is spent a turn
+later, on a prompt that has since grown by a step of history. So the invariant
+the cap exists to hold — block + everything else fits the budget — was never
+actually the invariant; it held for last turn's prompt, not this one.
+
+**What went out.** Esin, four consecutive turns, budget 22016:
+
+| turn | other (measured) | cap | block | prompt |
+|---|---|---|---|---|
+| 1 | — (estimated) | 11008 | 4296 | 15941 |
+| 2 | 11645 | 10371 | 9264 | 21421 |
+| 3 | 12157 | 9859 | 9264 | **21919** |
+| 4 | 12655 | 9361 | 9264 | **21919** |
+
+The block was inside its cap on every turn. The prompt still reached 99.6% of
+the budget, because each cap was drawn against a measurement ~500 tokens stale.
+Turn 3 was rejected as oversize by the backend; the identical resend went
+through, so the rejection was marginal rather than deterministic — which is what
+running with no margin looks like.
+
+**Two terms, because two things are approximate.**
+
+1. **Projection.** `projectOther` adds last turn's growth to last turn's
+   measurement. Self-correcting: when the prompt stops growing the projection
+   collapses onto the measurement and the block gets the room back, so a steady
+   chat is not permanently taxed for a step it is not taking.
+2. **Headroom.** `HEADROOM_FRACTION` (2%) comes off the top regardless. ST's
+   tokenizer is not the model's, and the cap is built out of two numbers that are
+   both approximations; spending to the last token makes any disagreement a
+   rejected request instead of a slightly smaller block.
+
+**Rejected:** a high-water mark of `otherTokens`. It is monotonic in a growing
+chat, so it equals the last measurement and fixes nothing; after a branch it is
+stale high and taxes the block for history that no longer exists.
+
+**Known gap.** The first *measured* turn of a chat has no previous measurement
+to project from, so it gets headroom only. It is the turn least likely to need
+it — the one before it ran on an estimated cap at half the budget — and the cost
+of guessing a growth rate there is a permanently smaller block.
+
+**What would reopen it.** A trace where the projection over-reserves: prompts
+sitting well under budget while the block is evicting. That would say growth is
+too noisy to project one turn at a time and wants smoothing over several.
+
+---
+
+## D-0029 — `NONE` is not a placement to mirror
+**2026-09-15.** A bug, found in play on the first handed-over turn, and the
+entry exists because the shape of it is worth keeping (CLAUDE.md §6.27).
+
+D-0027 mirrors qvink's placement so the handover changes only *who* writes. The
+handover also asks the user to set qvink's memory position to **Macro Only** —
+`extension_prompt_types.NONE` (`script.js:484`). So the act of opening the gate
+rewrote the placement we mirror, Cairn parked its block at `NONE`, and
+`getExtensionPrompt` collects by position (`:3312`) and never took it.
+
+**What went out.** Esin, first message after flipping both switches:
+
+```
+injections: cairn_memory (parked, match none), qvink_memory_short (parked, match none)
+prompt_tokens 7557   (14030 the turn before)   context 31.4%
+memory_writing true  memory_blanked 92  memory_tokens 9033 — none of it in the prompt
+```
+
+Nine thousand tokens of summaries written to a key nothing reads, 92 messages
+held out of the history, and no lore that turn either: the model got the last
+handful of raw messages and nothing else. The chat did not break, which is
+precisely the problem — it read as a normal turn.
+
+**Two fixes, because two things were wrong.**
+
+1. `resolvePlacement` mirrors a position only when qvink names one ST collects.
+   `NONE` — or no setting at all — takes qvink's own default (`IN_PROMPT`, its
+   index.js:153) and reports `defaulted`, so the panel says the block is not where
+   qvink had it. Depth, role and scan are still theirs.
+2. The gate refuses to write at all if the block would not be placed
+   (`HANDOVER.UNPLACED`). Unreachable through fix 1, and kept anyway: **writing is
+   also blanking**, and that invariant should hold regardless of how a placement
+   is arrived at. The assembler test asserts it across every position qvink could
+   offer.
+
+**The lesson worth paying for once.** We read another extension's *settings* to
+mirror behaviour, and the handover procedure mutates those settings. Anything
+read from a neighbour's configuration has to be read with the handover's own
+instructions in mind — the state we copy is the state we are asking the user to
+change.
+
+**Reopens if:** we decide the block should sit where DESIGN.md §6 wants it rather
+than where qvink had it, which retires the mirroring question entirely; or a user
+wants their pre-handover placement remembered across reloads, which means
+persisting it rather than re-deriving it.
+
+---
+
 ## D-0028 — An estimated cap may shape a turn, not the rest of the chat
 **2026-09-15.** Corrects one claim in D-0027. That entry said the first turn's
 estimated cap "is replaced by the measurement one turn later". True of the cap;
@@ -477,6 +828,7 @@ it**. Entries inside one outlet are pushed in the same `sort(sortFn)` iteration
 straight into the outlet. Outlets buy *placement*; they buy nothing about order.
 See D-0022 for what the problem actually was. This question is now purely about
 placement, and it is no longer urgent.
+**Closed 2026-09-16 by D-0035:** not needed for P1.
 
 ## D-0020 — Cairn owns the message-blanking threshold
 **2026-09-15.** Closes `DESIGN.md` §14.4. qvink stays installed through P1 as a
@@ -517,6 +869,9 @@ since deferring eviction means carrying a block over budget. There is headroom
 headroom, not exposed as a knob.
 **Reopens if:** the raw window stops being blanked, which would make the history
 large enough to change the arithmetic.
+**Measured 2026-09-16 (D-0034):** the tail break held, but the ~90% did not.
+That number depended on Elizabeth's layout, and on Esin under D-0033 a step turn
+tops out at 68.2%.
 
 ## D-0018 — P0's gate PASSES: the sawtooth is real
 **2026-09-15.** Eight turns on Elizabeth, text completion, Gemma via oMLX,

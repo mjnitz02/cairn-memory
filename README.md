@@ -28,8 +28,8 @@ set of retrievable past events.
   into a single ordered block with one budget. Two extensions injecting
   independently is how prompts quietly destabilise.
 - **It cooperates with lorebooks rather than replacing them.** World Info keeps
-  doing retrieval; Cairn takes over placement and budgeting, via ST's own
-  outlet and force-activate mechanisms. An entry that has activated stays in
+  doing retrieval; Cairn keeps it steady, via ST's own force-activate
+  mechanism. An entry that has activated stays in
   until the budget genuinely evicts it, rather than flickering with the keywords
   in the last two messages.
 - **A separate model writes memory.** Your roleplay model is tuned to be
@@ -43,8 +43,8 @@ set of retrievable past events.
 ## Requirements
 
 - SillyTavern **1.19.0** or newer
-- A second connection profile for memory work — any competent non-roleplay
-  model. It does not need to be large.
+- A second connection profile for memory work: a strong non-roleplay model,
+  GLM-4.7 class or better.
 - Single-character chats. Group chats are not supported.
 
 ## Install

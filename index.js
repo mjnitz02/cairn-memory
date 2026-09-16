@@ -48,12 +48,9 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
                 diskLog.append(snapshot, getContext);
             },
             holding: () => (settings.holdWorldInfo ? injector.remembered.size : null),
-            // The prompt that just went out is the other half of next turn's
-            // budget; the report is the plan the interceptor already acted on.
-            memory: (turn) => {
-                assembler.observe(turn);
-                return assembler.latest;
-            },
+            // The plan the interceptor already acted on. Nothing measured here
+            // flows back into the next plan (docs/decisions.md D-0033).
+            memory: () => assembler.latest,
         });
 
         inspector = createInspector(await renderSettingsPanel(context, {

@@ -3,11 +3,12 @@
 A short map of the pieces. The reasoning behind them is in
 [`DESIGN.md`](../DESIGN.md); this page says what is where.
 
-> **Built today: P0 plus the first two steps of P1.** Cairn observes generations
-> and reports on them, holds the lorebook block steady, and plans the memory
-> block without yet injecting it. It writes no memory of its own, so it is still
-> safe to run alongside an existing memory extension. Everything below "Planning
-> the memory block" is design, not code.
+> **Built today: P0 and P1.** Cairn observes generations and reports on them,
+> holds the lorebook block steady, and writes the memory block from summaries your
+> existing memory extension has already made, once that extension is silenced. It
+> writes no summaries of its own yet (that is P2, in progress: it can already read
+> its own stored summaries, but nothing writes them). Everything from "The shape of
+> the problem" down is design, not code.
 
 ## What P0 measures
 
@@ -23,7 +24,8 @@ watches the finished prompt on its way out and reports:
   feels slow" into "this block moved".
 - **Every writer into the prompt**, in prompt order, with placement, depth and
   token share. More than one writer is the condition the design exists to
-  remove, so the inspector says so plainly.
+  remove, so the inspector says so plainly. A block parked for a macro ("Macro
+  Only") is listed but not counted, because SillyTavern does not place it.
 - **Which lorebook entries fired** this turn.
 
 - **Whether the lorebook block was held**, and how many entries were in the
@@ -69,6 +71,9 @@ Two consequences worth knowing:
   asymmetry is the whole argument.
 - **Editing a lorebook releases Cairn's hold on that book**, so your change
   appears on the next turn instead of being masked by the held copy.
+- **Entries with a probability below 100% still roll every turn**, even while
+  held, because SillyTavern rolls for forced entries too. Those entries can still
+  drop out (`docs/decisions.md` D-0035).
 
 Eviction is not abolished, only batched: when the World Info budget genuinely
 binds, entries leave together rather than one keyword at a time.
@@ -95,25 +100,41 @@ Cairn separates the two:
   then it drops to half the budget rather than shaving off the one summary that
   overflowed, so the next rebuild is half a budget of growth away.
 
-How much room the block gets is worked out rather than configured: SillyTavern's
-own prompt budget, minus what the rest of the prompt measured last turn. There is
-no setting, because there is nothing to decide.
+How much room the block gets is the short-term memory limit you already set in
+the summarising extension — in tokens, or as a share of the prompt. Cairn does
+not measure the rest of the prompt and adjust: the same chat always gets the same
+block, so nothing it saw last turn can change this one.
 
 Two things the inspector says about this, because neither is visible in play:
 
 - **Where in the block the first change fell.** Near the end is the whole point;
-  near the beginning means the block was rebuilt and nothing was gained.
+  near the beginning means the block was rebuilt and nothing was gained. Measured
+  on a real chat, a step turn kept about 68% of the prompt cached against 42% for
+  a rebuild, and the quiet turns in between kept about 97% (`docs/decisions.md`
+  D-0034).
 - **Whether the two cadences have collapsed back into one.** The spacing between
   rebuilds is the slack a rebuild buys divided by what a step costs, so a context
   too tight to hold more than a step or two puts eviction back on every step. The
   block still looks correct while that happens, so the panel says it in words.
 
-How much room the block gets on the very first turn of a chat is the one estimate
-here: nothing has been measured yet, so it gets half the prompt budget until a
-prompt has gone out. Anything that estimate evicts is put back on the first turn
-with a real measurement behind it — a guess can shape one turn, but it cannot
-throw a summary away for the rest of the chat. The panel says when a cap is an
-estimate.
+**Where the summaries come from.** Each message holds at most one summary. Cairn
+reads the ones your summarising extension already wrote and never changes them,
+and its own summaries go in `message.extra.cairn`. If a message has both, Cairn's
+wins. Each of Cairn's summaries stores a hash of the message it summarised. If
+you edit that message, the summary stops counting: the message's own text goes
+back into the prompt, and the message is queued to be summarised again. Cairn
+summarises only the messages after the newest one your extension summarised. It
+skips hidden messages, messages under about 50 tokens, and the last message,
+which can still be swiped or edited.
+
+A step never moves past a message that is still waiting for its summary. The
+block holds where it is, so no message leaves the history without a summary in
+the block to replace it (`docs/p2-plan.md` §3).
+
+The first turn after you open a chat or reload the page always rebuilds the
+block, and it trims straight to half the limit while it is at it — that turn
+re-reads everything anyway, so the room it frees costs nothing. From the second
+turn on, the block only changes at its end until it outgrows the limit again.
 
 ## Taking over the injection
 
@@ -195,10 +216,11 @@ at all only because it sits at depth 0.
 
 ## Lorebook cooperation
 
-World Info keeps doing retrieval. Entries set to ST's `outlet` position are
-parked rather than placed, and Cairn drops them into its own block at a stable
-position — so lorebooks stop moving the prompt around underneath the memory
-system, without a fork and without a second injector.
+World Info keeps doing retrieval and placement. Cairn holds the activated set
+steady (above), which is enough to keep lore from moving the prompt around while
+the memory block stays where it is. ST's `outlet` position would let Cairn place
+lore itself, which only matters if the block ever moves (`docs/decisions.md`
+D-0035).
 
 ## Compaction
 

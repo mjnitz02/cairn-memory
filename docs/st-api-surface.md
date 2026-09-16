@@ -57,6 +57,10 @@ literally against the cited line.
 | `WORLDINFO_FORCE_ACTIVATE` | Event name | `public/scripts/events.js` | 77 |
 | `externalActivations` | Where a forced entry is parked, keyed `${world}.${uid}` | `public/scripts/world-info.js` | 1025 |
 | `getExternallyActivated` | Consulted **before** the keyword match, so a forced entry needs no key | `public/scripts/world-info.js` | 4886 |
+| `activatedNow.add(buffer.getExternallyActivated(entry))` | A forced entry joins the ordinary candidate set... | `public/scripts/world-info.js` | 4888 |
+| `newEntries = [...activatedNow]` | ...which is the list the probability and budget checks walk... | `public/scripts/world-info.js` | 4997 |
+| `entry.probability === 100` | ...so a held entry below 100% is re-rolled every turn (D-0035) | `public/scripts/world-info.js` | 5030 |
+| `const isSticky = timedEffects.isEffectActive('sticky', entry);` | Sticky entries skip the re-roll | `public/scripts/world-info.js` | 5035 |
 | `resetExternalEffects` | Clears the forced set after **every** scan — we re-push each turn | `public/scripts/world-info.js` | 5275 |
 | `sortedEntriesIndex.get(a) ?? -1` | A forced entry is not in `sortedEntries`, so it sorts at -1 | `public/scripts/world-info.js` | 5002 |
 | `structuredClone(entries)` | The scan works on a copy, so a held entry cannot track a book edit | `public/scripts/world-info.js` | 4639 |
@@ -68,7 +72,8 @@ literally against the cited line.
 | `runGenerationInterceptors` | Our push runs here... | `public/script.js` | 4564 |
 | `getWorldInfoPrompt` | ...which is before the scan reads it | `public/script.js` | 4635 |
 | `if (!dryRun) {` | Dry runs skip interceptors, so they cannot pollute the held set | `public/script.js` | 4562 |
-| `getMaxPromptTokens` | The prompt budget the memory block is capped against — context window minus the reserved response | `public/script.js` | 5981 |
+| `getMaxPromptTokens` | What a percent memory limit is a percent of — context window minus the reserved response | `public/script.js` | 5981 |
+| `getMaxPromptTokens as getMaxContextSize` | qvink's `getMaxContextSize` is the same function, so its percent limit resolves identically in ours | `public/script.js` | 333 |
 | `src="script.js"` | The URL ST loads it under, so `/script.js` is the same module however deeply we are installed | `public/index.html` | 8218 |
 | `setExtensionPrompt` | Park the memory block | `public/scripts/st-context.js` | 153 |
 | `setExtensionPrompt` | Signature: `(key, value, position, depth, scan, role, filter)` | `public/script.js` | 8926 |
@@ -83,6 +88,8 @@ literally against the cited line.
 | `let coreChat = chat.filter` | The interceptor's array is **filtered**, so its indexes are not the chat's | `public/script.js` | 4496 |
 | `...chatItem,` | Its entries are fresh objects that **share `extra` by reference** with the real chat | `public/script.js` | 4525 |
 | `index,` | The index they carry counts the *filtered* array — never use it as a chat index | `public/script.js` | 4527 |
+| `message.is_system = hide;` | Hiding a message sets `is_system`, so `summarisable()` skips hidden messages | `public/scripts/chats.js` | 157 |
+| `structuredClone(chat.slice(0, Number(mesId) + 1))` | A branch copies the messages it keeps, `extra` and all, so their scenes go with them | `public/scripts/bookmarks.js` | 173 |
 
 ## Verified, not yet called
 
@@ -103,6 +110,14 @@ does not rest on an unchecked claim; each moves up as its phase lands.
 | `doChatInject` | Where `IN_CHAT` injections are spliced into the history | `public/script.js` | 5628 |
 | `flushWIInjections` | ST clears depth and outlet injections every generation | `public/script.js` | 5678 |
 | `getOutletPrompt` | Resolves `{{outlet::key}}` from the parked injection | `public/scripts/macros.js` | 597 |
+| `static async sendRequest` | P2 summary calls; takes `ChatCompletionMessage[]`, which is what `perMessage.build` returns | `public/scripts/extensions/shared.js` | 423 |
+| `substituteParams,` | Expands ST macros on the summary template before chat text goes in | `public/scripts/st-context.js` | 163 |
+| `export function substituteParams(` | Signature; the legacy engine is the default | `public/script.js` | 2981 |
+| `experimental_macro_engine` | ST's own `{{if}}` exists only behind this switch, so Cairn renders `{{#if}}` itself | `public/script.js` | 2997 |
+| `registerMacro('if'` | ...and its syntax is not qvink's `{{#if}}` | `public/scripts/macros/definitions/core-macros.js` | 134 |
+| `Handlebars for extensions are no longer supported` | Handlebars, qvink's route, is deprecated for extensions | `public/scripts/st-context.js` | 177 |
+| `export function evaluateMacros` | The legacy engine replaces a fixed list of named macros, so an unknown `{{x}}` survives | `public/scripts/macros.js` | 610 |
+| `export function getStringHash` | Not on `getContext()`; `util/hash.js` reproduces it | `public/scripts/utils.js` | 522 |
 | `world_info_position.outlet` | The outlet branch of the placement switch | `public/scripts/world-info.js` | 5248 |
 | `WIOutletEntries` | Entries sharing an `outletName` group into one block | `public/scripts/world-info.js` | 5253 |
 

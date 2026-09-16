@@ -1,88 +1,45 @@
 import { describe, expect, it } from 'vitest';
-import { createBudget, deriveCap, estimateCap, FLOOR_FRACTION, UNMEASURED_CAP_FRACTION } from '../src/pipeline/budgeter.js';
+import { createBudget, FLOOR_FRACTION } from '../src/pipeline/budgeter.js';
 
 /** Each scene costs 10 tokens; nothing here depends on the real tokenizer. */
 const scenes = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => ({ index: from + i }));
 const tokensOf = (list) => list.length * 10;
 
-describe('deriving the cap', () => {
-    it('is what the prompt may hold, less what everything else in it cost', () => {
-        expect(deriveCap({ maxPromptTokens: 21_000, otherTokens: 6_000 })).toBe(15_000);
-    });
-
-    it('never goes negative when the rest of the prompt already overflows', () => {
-        expect(deriveCap({ maxPromptTokens: 4_000, otherTokens: 9_000 })).toBe(0);
-    });
-
-    it('treats missing measurements as zero rather than as NaN', () => {
-        expect(deriveCap({ maxPromptTokens: undefined, otherTokens: 100 })).toBe(0);
-        expect(deriveCap({ maxPromptTokens: 500, otherTokens: undefined })).toBe(500);
-    });
-});
-
-describe('the cap before anything has been measured', () => {
-    it('gives the block a share of the prompt rather than all of it', () => {
-        // otherTokens is only known after a prompt has gone out, and on the first
-        // turn of a chat there has not been one. Handing the block the whole
-        // budget there would overflow the request it is about to be part of.
-        expect(estimateCap(10_000)).toBe(10_000 * UNMEASURED_CAP_FRACTION);
-        expect(estimateCap(10_000)).toBeLessThan(deriveCap({ maxPromptTokens: 10_000, otherTokens: 0 }));
-    });
-
-    it('is never negative, whatever ST reports', () => {
-        expect(estimateCap(0)).toBe(0);
-        expect(estimateCap(-1)).toBe(0);
-        expect(estimateCap(undefined)).toBe(0);
-    });
-});
-
 /**
- * The first turn of a chat has no measurement to cap against, so it caps against
- * an estimate. An estimate may shape that turn's block; it may not throw a
- * summary away for the rest of the chat (docs/decisions.md D-0028) — which is
- * what a committed mark does, because the mark only moves forward.
+ * The first turn of a session changes the block's head whatever the budget does,
+ * so it may as well land at the floor: the rebuild is already paid for, and the
+ * slack it buys defers the next one (docs/decisions.md D-0033).
  */
-describe('an eviction against an estimated cap', () => {
-    it('cuts the block to fit without committing the mark', () => {
+describe('the first turn of a session', () => {
+    it('lands at the floor even when the block is under the cap', () => {
         const budget = createBudget();
+        const fit = budget.fit({ scenes: scenes(0, 7), cap: 100, tokensOf, rebuild: true });
 
-        const estimated = budget.fit({ scenes: scenes(0, 19), cap: 100, tokensOf, provisional: true });
-
-        // The turn's block is cut, exactly as a real eviction would cut it...
-        expect(estimated.kept.map((scene) => scene.index)).toEqual([15, 16, 17, 18, 19]);
-        expect(estimated.evicted).toBe(15);
-        expect(estimated.provisional).toBe(true);
-        // ...and nothing is lost: the mark never moved.
-        expect(budget.oldest).toBe(-Infinity);
+        expect(fit.over).toBe(false);
+        expect(fit.kept.map((scene) => scene.index)).toEqual([3, 4, 5, 6, 7]);
+        expect(budget.oldest).toBe(3);
     });
 
-    it('gives the summaries back on the first measured turn that has room', () => {
+    it('leaves a block already under the floor alone', () => {
         const budget = createBudget();
-        budget.fit({ scenes: scenes(0, 19), cap: 100, tokensOf, provisional: true });
+        const fit = budget.fit({ scenes: scenes(0, 3), cap: 100, tokensOf, rebuild: true });
 
-        const measured = budget.fit({ scenes: scenes(0, 19), cap: 300, tokensOf });
-
-        expect(measured.kept).toHaveLength(20);
-        expect(measured.evicted).toBe(0);
+        expect(fit.kept).toHaveLength(4);
+        expect(fit.evicted).toBe(0);
     });
 
-    it('still commits when the cap is a measurement', () => {
-        // The monotonic mark is what makes the deferral hold (D-0026); the
-        // estimate is the one exception to it, not a new rule.
-        const budget = createBudget();
-        budget.fit({ scenes: scenes(0, 19), cap: 100, tokensOf });
+    it('is the same answer for the same chat, however often it is asked', () => {
+        // A reload is a new budget on the same chat: nothing carried, same block.
+        const first = createBudget().fit({ scenes: scenes(0, 30), cap: 100, tokensOf, rebuild: true });
+        const again = createBudget().fit({ scenes: scenes(0, 30), cap: 100, tokensOf, rebuild: true });
 
-        const later = budget.fit({ scenes: scenes(0, 19), cap: 300, tokensOf });
-
-        expect(budget.oldest).toBe(15);
-        expect(later.kept).toHaveLength(5);
+        expect(again.kept).toEqual(first.kept);
     });
 
-    it('says nothing was provisional when nothing was evicted', () => {
-        const budget = createBudget();
-        const fit = budget.fit({ scenes: scenes(0, 4), cap: 100, tokensOf, provisional: true });
+    it('does not trim on a turn that is not a rebuild', () => {
+        const fit = createBudget().fit({ scenes: scenes(0, 7), cap: 100, tokensOf });
 
-        expect(fit.provisional).toBe(false);
+        expect(fit.kept).toHaveLength(8);
     });
 });
 
@@ -157,8 +114,8 @@ describe('fitting the block to the cap', () => {
     });
 
     it('ignores a cap of zero rather than evicting everything', () => {
-        // No measurement yet is not "no room" — it is "we do not know".
-        const fit = createBudget().fit({ scenes: scenes(0, 9), cap: 0, tokensOf });
+        // An unconfigured limit is not "no room" — it is "no limit given".
+        const fit = createBudget().fit({ scenes: scenes(0, 9), cap: 0, tokensOf, rebuild: true });
 
         expect(fit.kept).toHaveLength(10);
         expect(fit.over).toBe(false);

@@ -15,7 +15,19 @@
  *     it never reached the prompt (its index.js:113, :3521);
  *   - `include` was `"short"` on 122 and null on the one with no summary;
  *   - the last 15 messages were `lagging: true` — summarised, but still in the
- *     raw window, so held back from the injection (its index.js:3830).
+ *     raw window, so held back from the injection (its index.js:3830);
+ *   - **the prose is far longer than the summary of it.** In that chat the
+ *     summarised messages averaged ~1,650 characters against a ~353-character
+ *     summary. That ratio is the whole
+ *     economics of blanking a summarised message: a fixture with
+ *     short messages and long summaries makes holding prose look cheap and
+ *     summarising it look expensive, which is backwards;
+ *   - user turns are long too: 372-2,649 characters across the three corpus
+ *     chats, medians 1,038-1,456. (An earlier note here said ~120, which the
+ *     corpus does not show, and would put every user turn under Cairn's
+ *     summary threshold.)
+ *   - a character reply has no `is_system` key and carries `swipes` and
+ *     `swipe_info`; a user turn has `is_system: false` and neither.
  */
 
 /** qvink's index.js:45 */
@@ -51,6 +63,19 @@ export function makeQvinkData({
 }
 
 /**
+ * A message body of a given length, unique to its index. Length is the point:
+ * a fixture whose messages are placeholders makes the history it stands for look
+ * cheaper than its summary.
+ */
+export function makeMessage(index, chars) {
+    const head = `Aster speaks at turn ${index}. `;
+    const filler = `The room settles, a small thing is noticed, and turn ${index} carries on. `;
+    let text = head;
+    while (text.length < chars) text += filler;
+    return text.slice(0, Math.max(head.length, chars));
+}
+
+/**
  * A summary of a given length, unique to its index. Uniqueness matters: two
  * identical summaries would make a prefix comparison agree by accident.
  */
@@ -76,6 +101,8 @@ export function makeQvinkChat({
     length = 40,
     summarisedThrough = length - 11,
     chars = 353,
+    mesChars = 1_650,
+    userMesChars = 1_100,
     exclude = [],
     remember = [],
 } = {}) {
@@ -83,13 +110,13 @@ export function makeQvinkChat({
 
     for (let index = 0; index < length; index++) {
         const isUser = index % 2 === 0;
+        const mes = makeMessage(index, isUser ? userMesChars : mesChars);
         chat.push({
             name: isUser ? 'Wren' : 'Aster',
             is_user: isUser,
-            is_system: false,
+            ...(isUser ? { is_system: false } : swipeFields(mes)),
             send_date: '2026-01-01T00:00:00.000Z',
-            mes: `${isUser ? 'Wren' : 'Aster'} speaks at turn ${index}.`,
-            swipe_id: 0,
+            mes,
             extra: {
                 [QVINK_KEY]: makeQvinkData({
                     index,
@@ -105,6 +132,16 @@ export function makeQvinkChat({
     return chat;
 }
 
+/** What a character reply carries beside `extra`, as the corpus stores it. */
+function swipeFields(mes) {
+    const at = '2026-01-01T00:00:00.000Z';
+    return {
+        swipe_id: 0,
+        swipes: [mes],
+        swipe_info: [{ send_date: at, gen_started: at, gen_finished: at, extra: {} }],
+    };
+}
+
 /**
  * qvink's own settings bag, as `extension_settings.qvink_memory`
  * (its index.js:655). Defaults are its own (its index.js:93, :113, :133).
@@ -114,6 +151,9 @@ export function makeQvinkSettings(overrides = {}) {
         short_template: '[Following is a list of recent events]:\n{{memories}}\n',
         summary_injection_separator: '\n* ',
         show_prefill: false,
+        // The shape of a live install set to a fixed budget (its index.js:151-152).
+        short_term_context_limit: 7500,
+        short_term_context_type: 'tokens',
         ...overrides,
     };
 }
