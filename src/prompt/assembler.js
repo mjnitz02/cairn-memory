@@ -27,7 +27,7 @@
  * a measurement and nothing more (docs/decisions.md D-0020, D-0027).
  *
  * **The plan is a function of the chat, not of what was measured.** The cap is
- * qvink's own limit and every size is counted from the block itself, so the same
+ * a fixed share of the max prompt and every size is counted from the block itself, so the same
  * chat always gets the same block and nothing learned last turn can bend this one
  * (docs/decisions.md D-0033).
  */
@@ -38,11 +38,10 @@ import {
     qvinkInjected,
     qvinkInjecting,
     readScenes,
-    resolveCap,
     resolvePlacement,
     resolveRendering,
 } from '../memory/scenes.js';
-import { createBudget, recoupled } from '../pipeline/budgeter.js';
+import { createBudget, memoryCap, recoupled } from '../pipeline/budgeter.js';
 import { createSeeSaw } from '../pipeline/scheduler.js';
 import { assessHandover } from './handover.js';
 import { commonPrefixLength, comparePrompts } from '../util/prefix.js';
@@ -138,7 +137,7 @@ export function createAssembler(getContext, {
         });
 
         const maxPrompt = await maxPromptTokens(context);
-        const { cap, type: capType } = resolveCap(context.extensionSettings, maxPrompt);
+        const cap = memoryCap(maxPrompt);
 
         const pending = pendingScenes(chat);
         const step = seeSaw.advance(chat.length, { firstPending: pending[0] ?? null });
@@ -190,7 +189,8 @@ export function createAssembler(getContext, {
         }
 
         latest = {
-            source: 'qvink',
+            source: sourceOf(fit.kept),
+            cairnScenes: scenes.filter((scene) => scene.source === 'cairn').length,
             writing: gate.writing,
             handover: gate.reason,
             handoverDetail: gate.detail,
@@ -203,6 +203,8 @@ export function createAssembler(getContext, {
             summarisedThrough: step.summarisedThrough,
             stepped: step.stepped,
             stepReason: step.reason,
+            // A due step cut short by a missing summary (docs/p2-plan.md §3).
+            stepWaiting: step.waiting,
             rawWindow: seeSaw.rawWindow,
             step: seeSaw.step,
             included: fit.kept.length,
@@ -211,7 +213,6 @@ export function createAssembler(getContext, {
             evicted: fit.evicted,
             overCap: fit.over,
             cap,
-            capType,
             floor: fit.floor,
             slack: Math.max(0, cap - fit.floor),
             stepTokens,
@@ -313,6 +314,13 @@ function substitute(context, text) {
     } catch {
         return text;
     }
+}
+
+/** Who wrote the block's summaries: `qvink`, `cairn`, `mixed`, or null for no block. */
+function sourceOf(scenes) {
+    const sources = new Set(scenes.map((scene) => scene.source));
+    if (!sources.size) return null;
+    return sources.size > 1 ? 'mixed' : [...sources][0];
 }
 
 function macroToken(macro) {

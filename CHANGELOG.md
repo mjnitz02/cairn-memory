@@ -20,9 +20,27 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
   session, and the memory step waits before it. **Back up your chats before
   turning off Qvink's Auto Summarize**: this is the first version that writes to
   message data.
+- **Summary prompt** setting. `{{message}}` is the message and `{{history}}` is
+  the summaries before it, with Qvink's `{{#if history}}` syntax, so a Qvink
+  prompt can be pasted in unchanged. Left unedited, it follows the built-in
+  default. **Reset to default** restores it.
+- The inspector has a **Summaries** section that updates as summaries are written.
+  It shows what Cairn is doing or waiting on, what the open chat has cost
+  (summaries, requests, failures, time, estimated tokens), and any message it gave
+  up on. The memory block section says who wrote the summaries in it and whether
+  a step is waiting.
+- Log fields `memory_source` (now `qvink`, `cairn` or `mixed`),
+  `memory_cairn_scenes`, `memory_step_waiting`, `prompt_near_limit`, and
+  `summary_*`: gate, in flight, pending, given up, and running totals of calls,
+  writes, failures, time and tokens. `summary_prompt_default` is also new.
 
 ### Changed
 
+- **The memory block's cap is 35% of the max prompt**, with no setting. It
+  replaces Qvink's short-term limit, which Cairn no longer reads. With a
+  7,500-token Qvink limit on a 22,016-token prompt, the cap moves to 7,705 tokens.
+  That costs one rebuild on the first turn after updating. The log field
+  `memory_cap_type` is gone.
 - A memory step now waits for a missing summary. The block stays where it is
   instead of moving past a message with no summary, so no message leaves the
   history without a summary to replace it. This can't happen while your

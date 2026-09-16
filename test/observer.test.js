@@ -441,3 +441,30 @@ describe('observer — the memory plan', () => {
         expect(observer.latest.memory).toBeNull();
     });
 });
+
+describe('observer — the summarizer', () => {
+    it('carries the summarizer status as the prompt went out', async () => {
+        const context = createContext();
+        const observer = started(context, { summaries: () => ({ calls: 2, inFlight: 12 }) });
+
+        await generate(context, 'a prompt');
+
+        expect(observer.latest.summaries).toEqual({ calls: 2, inFlight: 12 });
+    });
+
+    it('still records the turn when the status throws, and null when nothing reports one', async () => {
+        const context = createContext();
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const throwing = started(context, { summaries: () => { throw new Error('no chat'); } });
+        const quiet = createContext();
+        const absent = started(quiet);
+
+        await generate(context, 'a prompt');
+        await generate(quiet, 'a prompt');
+
+        expect(throwing.latest.summaries).toBeNull();
+        expect(throwing.latest.promptTokens).toBeGreaterThan(0);
+        expect(absent.latest.summaries).toBeNull();
+        vi.restoreAllMocks();
+    });
+});

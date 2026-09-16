@@ -77,6 +77,7 @@ Without one, Cairn never calls a model.
 |---|---|
 | Enabled | Turns Cairn off without uninstalling. Existing memory is kept. |
 | Memory connection | The profile Cairn uses to write summaries. Must not be your roleplay model. |
+| Summary prompt | The instructions the memory model gets for each message. `{{message}}` is the message, and `{{history}}` is the summaries before it. **Reset to default** restores the built-in prompt. |
 | Show inspector | Shows what was injected, from where, and how stable the prompt is. |
 | Write inspector log to disk | Appends each generation to `user/files/cairn-inspector.jsonl`. |
 | Hold World Info entries | Keeps a lorebook entry in the prompt once it has activated, instead of letting it drop out when the keyword scan misses it. On by default; off restores stock SillyTavern behaviour. |

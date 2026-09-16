@@ -45,9 +45,12 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
         // Writes Cairn's own summaries after each reply. It gates itself on a memory
         // profile and a quiet qvink (src/pipeline/summarizer.js), so only `enabled`
         // starts and stops it here.
-        const summarizer = createSummarizer(getContext, { settings: () => settings });
-
         let inspector;
+        const summarizer = createSummarizer(getContext, {
+            settings: () => settings,
+            onUpdate: () => inspector?.summaries(summarizer.status),
+        });
+
         const observer = createObserver(getContext, {
             onSnapshot: (snapshot) => {
                 inspector?.render(snapshot);
@@ -57,6 +60,7 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
             // The plan the interceptor already acted on. Nothing measured here
             // flows back into the next plan (docs/decisions.md D-0033).
             memory: () => assembler.latest,
+            summaries: () => summarizer.status,
         });
 
         inspector = createInspector(await renderSettingsPanel(context, {
@@ -78,6 +82,7 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
             onMemoryProfileChange: () => summarizer.drain(),
         }));
         inspector.render(observer.latest);
+        inspector.summaries(summarizer.status);
 
         // Both follow `enabled` alone: observing is free, and holding degrades
         // to ST's own scan rather than to a broken prompt (CLAUDE.md §4.17).
@@ -94,6 +99,7 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
             assembler.reset();
             diskLog.reset();
             inspector.render(null);
+            inspector.summaries(summarizer.status);
         });
 
         info(`${DISPLAY_NAME} loaded.`);

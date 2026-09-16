@@ -291,3 +291,67 @@ describe('disk log — the memory plan', () => {
         expect(JSON.parse(writtenLines().at(-1)).memory_planned).toBe(false);
     });
 });
+
+describe('disk log — P2 summaries', () => {
+    const memory = {
+        source: 'mixed', cairnScenes: 21, stepWaiting: false, scenes: 51, included: 51,
+        summarisedThrough: 50, stepped: false, stepReason: 'held', evicted: 0, cap: 7_705,
+        floor: 3_852, maxPromptTokens: 22_016, chars: 18_000, tokens: 4_200,
+        change: { stabilityPercent: 100, divergenceAt: null, divergencePercent: null },
+    };
+    const status = {
+        gate: 'ready', inFlight: 12, pending: 2, givenUp: [9], calls: 7, written: 5, failures: 2,
+        lastReason: 'truncated', ms: 48_300, lastMs: 6_900, tokensIn: 7_084, tokensOut: 777, promptDefault: true,
+    };
+
+    async function line(overrides) {
+        const log = createDiskLog({ delayMs: 0 });
+        log.setEnabled(true);
+        log.append(snapshot(overrides), getContext);
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        return JSON.parse(writtenLines().at(-1));
+    }
+
+    it('carries the fields the cutover run is read from (docs/p2-plan.md §7)', async () => {
+        expect(await line({ memory, summaries: status, promptTokens: 17_762 })).toMatchObject({
+            memory_source: 'mixed',
+            memory_cairn_scenes: 21,
+            memory_step_waiting: false,
+            memory_cap: 7_705,
+            summary_reported: true,
+            summary_gate: 'ready',
+            summary_in_flight: true,
+            summary_pending: 2,
+            summary_given_up: [9],
+            summary_calls: 7,
+            summary_written: 5,
+            summary_failures: 2,
+            summary_last_reason: 'truncated',
+            summary_ms: 48_300,
+            summary_last_ms: 6_900,
+            summary_tokens_in: 7_084,
+            summary_tokens_out: 777,
+            summary_prompt_default: true,
+            prompt_near_limit: false,
+        });
+    });
+
+    it('no longer carries a cap type: there is only one kind of cap', async () => {
+        expect(await line({ memory })).not.toHaveProperty('memory_cap_type');
+    });
+
+    it('flags a prompt full enough that ST may have dropped raw history', async () => {
+        expect((await line({ memory, promptTokens: 21_500 })).prompt_near_limit).toBe(true);
+    });
+
+    it('does not report an overlap when no request was out', async () => {
+        expect((await line({ memory, summaries: { ...status, inFlight: null } })).summary_in_flight).toBe(false);
+    });
+
+    it('says so plainly when there was no summarizer to ask', async () => {
+        const entry = await line({});
+
+        expect(entry.summary_reported).toBe(false);
+        expect(entry.prompt_near_limit).toBeNull();
+    });
+});

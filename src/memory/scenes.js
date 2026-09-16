@@ -55,10 +55,6 @@ export const QVINK_DEFAULTS = Object.freeze({
     excludeAfterThreshold: true,
     /** its index.js:116 */
     autoSummarize: true,
-    /** its index.js:151 */
-    limit: 10,
-    /** its index.js:152 — `percent` of the prompt budget, or `tokens`. */
-    limitType: 'percent',
 });
 
 /**
@@ -204,27 +200,6 @@ export function resolveRendering(extensionSettings, { key = QVINK_KEY } = {}) {
         showPrefill: settings?.show_prefill ?? QVINK_DEFAULTS.showPrefill,
         configured: Boolean(settings),
     };
-}
-
-/**
- * The block's cap: qvink's short-term limit, resolved the way qvink resolves it
- * (its index.js:246-256). A setting the user already chose, fixed for the chat,
- * so the same chat always gets the same block (docs/decisions.md D-0033).
- *
- * @param {object} extensionSettings `context.extensionSettings`
- * @param {number} maxPromptTokens What `percent` is a percent of. qvink's
- *        `getMaxContextSize` is ST's `getMaxPromptTokens` under another name
- *        (public/script.js:333).
- * @returns {{cap: number, type: string}}
- */
-export function resolveCap(extensionSettings, maxPromptTokens, { key = QVINK_KEY } = {}) {
-    const settings = extensionSettings?.[key];
-    const limit = Math.max(0, numberOr(settings?.short_term_context_limit, QVINK_DEFAULTS.limit));
-    const type = settings?.short_term_context_type === 'tokens' ? 'tokens' : QVINK_DEFAULTS.limitType;
-
-    if (type === 'tokens') return { cap: Math.floor(limit), type };
-    const max = Number.isFinite(maxPromptTokens) ? Math.max(0, maxPromptTokens) : 0;
-    return { cap: Math.floor(max * limit / 100), type };
 }
 
 /**

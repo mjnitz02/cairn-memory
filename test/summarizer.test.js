@@ -25,7 +25,7 @@ function reply(index) {
 }
 
 /** A chat of 14 where qvink summarised 0-9, so Cairn's queue is 10, 11, 12. */
-function harness({ responses = [], settings = {}, chat, service, context: contextOptions = {}, strategy } = {}) {
+function harness({ responses = [], settings = {}, chat, service, context: contextOptions = {}, strategy, clock = () => CLOCK, onUpdate } = {}) {
     const requests = service ?? createRequestService({ responses });
     const context = createContext({
         chat: chat ?? makeMixedChat({ length: 14, qvinkThrough: 9, cairnThrough: 9 }),
@@ -36,7 +36,8 @@ function harness({ responses = [], settings = {}, chat, service, context: contex
     });
     const summarizer = createSummarizer(() => context, {
         settings: () => ({ memoryProfileId: MEMORY.id, ...settings }),
-        clock: () => CLOCK,
+        clock,
+        onUpdate,
         ...(strategy ? { strategy } : {}),
     });
     return { context, service: requests, summarizer };
@@ -578,5 +579,111 @@ describe('failure', () => {
 
         summarizer.start();
         await expect(summarizer.idle()).resolves.toBeUndefined();
+    });
+});
+
+/**
+ * What the inspector and the log read (docs/p2-plan.md §7). Counts, sizes and times for
+ * the open chat — never a summary's text, which the log would carry to disk.
+ */
+describe('what it reports', () => {
+    it('counts requests, writes, failures, tokens and time for the chat', async () => {
+        let now = CLOCK;
+        const clock = () => (now += 250);
+        const { context, summarizer } = harness({
+            clock,
+            responses: [summary(10), badOutputs.refusal(), { content: summary(11), reasoning: 'Names, not pronouns.' }, summary(12)],
+        });
+
+        summarizer.start();
+        await summarizer.idle();
+        await summarizer.drain();
+        const status = summarizer.status;
+
+        expect(status).toMatchObject({ calls: 4, written: 3, failures: 1, lastReason: 'refusal', gate: 'ready', inFlight: null });
+        expect(status.lastMs).toBeGreaterThan(0);
+        expect(status.ms).toBeGreaterThanOrEqual(status.lastMs * 4);
+        // The mock tokenizer is chars/4: every prompt carries its message, every reply its summary.
+        expect(status.tokensIn).toBeGreaterThan(Math.ceil(context.chat[10].mes.length / 4) * 4);
+        const replies = [summary(10), badOutputs.refusal(), `${summary(11)}Names, not pronouns.`, summary(12)];
+        expect(status.tokensOut).toBe(replies.reduce((total, text) => total + Math.ceil(text.length / 4), 0));
+        expect(JSON.stringify(status)).not.toContain('Wren and Aster');
+    });
+
+    it('says which message a request is out for, and tells the panel as it goes', async () => {
+        const answer = deferred();
+        const onUpdate = vi.fn();
+        const { summarizer } = harness({ responses: [answer.promise, summary(11), summary(12)], onUpdate });
+
+        summarizer.start();
+        await flush();
+        expect(summarizer.status.inFlight).toBe(10);
+        expect(onUpdate).toHaveBeenCalled();
+
+        answer.resolve(summary(10));
+        await summarizer.idle();
+        expect(summarizer.status.inFlight).toBeNull();
+        // Out and back for each of the three, at least.
+        expect(onUpdate.mock.calls.length).toBeGreaterThanOrEqual(6);
+    });
+
+    it('reports the queue: waiting, given up, and whether the prompt is the default', async () => {
+        const refusals = Array(MAX_ATTEMPTS).fill(badOutputs.refusal());
+        const { summarizer } = harness({ responses: [...refusals, summary(11), summary(12)] });
+
+        expect(summarizer.status).toMatchObject({ gate: null, pending: 3, givenUp: [], promptDefault: true });
+
+        summarizer.start();
+        await summarizer.idle();
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) await summarizer.drain();
+
+        expect(summarizer.status).toMatchObject({ pending: 1, givenUp: [10] });
+    });
+
+    it('calls a prompt edited only if the edit is what gets sent', () => {
+        const status = (summaryPrompt) => harness({ settings: { summaryPrompt } }).summarizer.status.promptDefault;
+
+        expect(status('')).toBe(true);
+        expect(status('For {{user}}: {{message}}')).toBe(false);
+        // No {{message}}: the default goes out instead (docs/p2-plan.md §4).
+        expect(status('Summarise {{history}}')).toBe(true);
+    });
+
+    it('reports why it is idle', async () => {
+        const { context, summarizer } = harness();
+        context.extensionSettings.qvink_memory = { auto_summarize: true };
+
+        summarizer.start();
+        await summarizer.idle();
+
+        expect(summarizer.status.gate).toBe('qvink-summarising');
+    });
+
+    it('starts the counts again in a new chat, and a late reply for the old one does not land in them', async () => {
+        const answer = deferred();
+        let now = CLOCK;
+        const { context, summarizer } = harness({ responses: [summary(10), answer.promise], clock: () => (now += 250) });
+        summarizer.start();
+        await flush();
+        await flush();
+        expect(summarizer.status.calls).toBe(2);
+
+        await openChat(context, { chatId: 'another-chat', messages: makeMixedChat({ length: 4, qvinkThrough: 2, cairnThrough: 2 }) });
+        answer.resolve(summary(11));
+        await summarizer.idle();
+
+        expect(summarizer.status).toMatchObject({ calls: 0, written: 0, failures: 0, ms: 0, tokensIn: 0, tokensOut: 0 });
+    });
+
+    it('keeps summarising when the panel throws', async () => {
+        const { context, summarizer } = harness({
+            responses: [summary(10), summary(11), summary(12)],
+            onUpdate: () => { throw new Error('panel gone'); },
+        });
+
+        summarizer.start();
+        await summarizer.idle();
+
+        expect(written(context.chat)).toEqual([10, 11, 12]);
     });
 });

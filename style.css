@@ -24,8 +24,14 @@
 }
 
 .cairn-settings select,
-.cairn-settings input[type="text"] {
+.cairn-settings input[type="text"],
+.cairn-settings textarea {
     width: 100%;
+}
+
+.cairn-settings textarea {
+    font-family: var(--monoFontFamily, monospace);
+    font-size: 0.85em;
 }
 
 /* Inspector (DESIGN.md §10). */

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createMaxPromptTokens, estimateMaxPromptTokens } from '../src/util/context-size.js';
+import { NEAR_LIMIT_FRACTION, createMaxPromptTokens, estimateMaxPromptTokens, nearPromptLimit } from '../src/util/context-size.js';
 import { createContext } from './mocks/sillytavern.js';
 
 describe('the prompt budget', () => {
@@ -61,5 +61,25 @@ describe('the prompt budget', () => {
     it('is zero rather than NaN with no context window to work from', () => {
         expect(estimateMaxPromptTokens({})).toBe(0);
         expect(estimateMaxPromptTokens(null)).toBe(0);
+    });
+});
+
+/**
+ * Text completion stops adding history once the next message would not fit
+ * (public/script.js:4920), so a prompt that dropped messages ends just under the
+ * limit. Testing for "at the limit" would never fire.
+ */
+describe('a prompt near its limit', () => {
+    it('is flagged within the last few percent, not only at the limit', () => {
+        expect(NEAR_LIMIT_FRACTION).toBe(0.95);
+        expect(nearPromptLimit(21_500, 22_016)).toBe(true);
+        expect(nearPromptLimit(22_016, 22_016)).toBe(true);
+        expect(nearPromptLimit(17_762, 22_016)).toBe(false);
+    });
+
+    it('says nothing when the limit is unknown', () => {
+        expect(nearPromptLimit(1_000, 0)).toBeNull();
+        expect(nearPromptLimit(1_000, undefined)).toBeNull();
+        expect(nearPromptLimit(undefined, 22_016)).toBeNull();
     });
 });

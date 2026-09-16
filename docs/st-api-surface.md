@@ -19,7 +19,7 @@ literally against the cited line.
 | `maxContext` | Prompt size as a share of the window | `public/scripts/st-context.js` | 134 |
 | `eventSource` | Hook registration | `public/scripts/st-context.js` | 138 |
 | `eventTypes` | Event name enum | `public/scripts/st-context.js` | 139 |
-| `getTokenCountAsync` | Prompt token totals | `public/scripts/st-context.js` | 151 |
+| `getTokenCountAsync` | Prompt token totals, and the estimated size of each summary request and reply | `public/scripts/st-context.js` | 151 |
 | `extensionPrompts` | Read every injection and who parked it | `public/scripts/st-context.js` | 152 |
 | `renderExtensionTemplateAsync` | Load `settings.html` from our third-party folder | `public/scripts/st-context.js` | 191 |
 | `extensionSettings` | Our settings bag, and Connection Manager's profile list | `public/scripts/st-context.js` | 201 |
@@ -72,8 +72,8 @@ literally against the cited line.
 | `runGenerationInterceptors` | Our push runs here... | `public/script.js` | 4564 |
 | `getWorldInfoPrompt` | ...which is before the scan reads it | `public/script.js` | 4635 |
 | `if (!dryRun) {` | Dry runs skip interceptors, so they cannot pollute the held set | `public/script.js` | 4562 |
-| `getMaxPromptTokens` | What a percent memory limit is a percent of — context window minus the reserved response | `public/script.js` | 5981 |
-| `getMaxPromptTokens as getMaxContextSize` | qvink's `getMaxContextSize` is the same function, so its percent limit resolves identically in ours | `public/script.js` | 333 |
+| `getMaxPromptTokens` | What the memory cap is 35% of — context window minus the reserved response | `public/script.js` | 5981 |
+| `if (tokenCount < this_max_context) {` | Text completion stops adding history at the limit, so a prompt that dropped messages ends just under it — the near-limit flag | `public/script.js` | 4920 |
 | `src="script.js"` | The URL ST loads it under, so `/script.js` is the same module however deeply we are installed | `public/index.html` | 8218 |
 | `setExtensionPrompt` | Park the memory block | `public/scripts/st-context.js` | 153 |
 | `setExtensionPrompt` | Signature: `(key, value, position, depth, scan, role, filter)` | `public/script.js` | 8926 |

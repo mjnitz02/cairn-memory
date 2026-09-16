@@ -7,6 +7,7 @@
  * of in a forensic afternoon.
  */
 import { SLUG } from '../constants.js';
+import { nearPromptLimit } from '../util/context-size.js';
 
 const STABILITY_BANDS = [
     { min: 95, className: 'good', note: 'prefix holding' },
@@ -18,9 +19,19 @@ const STABILITY_BANDS = [
  * @param {HTMLElement} host Element to render into.
  */
 export function createInspector(host) {
+    // Two parts, drawn apart: summaries land between generations, and redrawing the
+    // snapshot for each would close whatever details the reader has open.
+    host.innerHTML = `<div class="${SLUG}-snapshot"></div><div class="${SLUG}-summaries"></div>`;
+    const [snapshotPart, summariesPart] = host.children;
+
     return {
         render(snapshot) {
-            host.innerHTML = snapshot ? renderSnapshot(snapshot) : renderEmpty();
+            snapshotPart.innerHTML = snapshot ? renderSnapshot(snapshot) : renderEmpty();
+        },
+
+        /** @param {object|null} status The summarizer's `status`. */
+        summaries(status) {
+            summariesPart.innerHTML = renderSummaries(status);
         },
     };
 }
@@ -35,6 +46,7 @@ function renderSnapshot(snapshot) {
     return [
         renderStability(stability),
         renderTotals(snapshot, summary),
+        renderNearLimit(snapshot),
         renderWriters(summary),
         renderInventory(inventory),
         renderWorldInfo(worldInfo, snapshot.worldInfoOrdering, snapshot.worldInfoHeld),
@@ -72,6 +84,19 @@ function renderTotals(snapshot, summary) {
     return row('Prompt', context)
         + row('API', snapshot.api)
         + row('Injected', `${fmt(summary.tokens)} tokens across ${summary.count} injection(s)`);
+}
+
+/**
+ * Text completion drops the oldest raw messages once the prompt is full
+ * (public/script.js:4920), and the block's fixed cap cannot see it coming
+ * (docs/p2-plan.md decision 2).
+ */
+function renderNearLimit(snapshot) {
+    const max = snapshot.memory?.maxPromptTokens;
+    if (!nearPromptLimit(snapshot.promptTokens, max)) return '';
+
+    return `<div class="${SLUG}-warn">The prompt is ${fmt(snapshot.promptTokens)} of the ${fmt(max)} tokens
+        it may use, so SillyTavern may be dropping the oldest messages from the history.</div>`;
 }
 
 function renderWriters(summary) {
@@ -164,6 +189,9 @@ function renderMemory(memory) {
             : `changed ${where}% of the way into the block`);
 
     const step = memory.stepped ? `stepped (${escapeHtml(memory.stepReason)})` : 'held';
+    const waiting = memory.stepWaiting
+        ? ` <span class="${SLUG}-fair">\u2014 a step is waiting for a summary</span>`
+        : '';
     const evicted = memory.evicted
         ? `<span class="${SLUG}-poor">evicted ${memory.evicted}</span>`
         : 'no eviction';
@@ -178,10 +206,16 @@ function renderMemory(memory) {
             <summary>${title}${renderFidelity(memory.fidelity)}</summary>
             ${row('Writing', renderHandover(memory))}
             ${row('Scenes', `${fmt(memory.included)} in the block, of ${fmt(memory.scenes)} summarised (messages ${memory.oldest ?? '—'}\u2013${memory.newest ?? '—'})`)}
-            ${row('See-saw', `${step} at message ${memory.summarisedThrough}, ${memory.rawWindow} kept raw`)}
+            ${row('Written by', describeSource(memory))}
+            ${row('See-saw', `${step} at message ${memory.summarisedThrough}, ${memory.rawWindow} kept raw${waiting}`)}
             ${row('Budget', budget)}
             ${row('Block change', change)}
         </details>`;
+}
+
+function describeSource(memory) {
+    const source = { qvink: 'Qvink', cairn: 'Cairn', mixed: 'Qvink, then Cairn' }[memory.source] ?? '\u2014';
+    return `${source} <span class="dim">(${fmt(memory.cairnScenes)} of Cairn's own in the chat)</span>`;
 }
 
 /**
@@ -227,6 +261,57 @@ function renderFidelity(fidelity) {
         ? ' (compared after resolving the template\'s macros)'
         : '';
     return ` <span class="${SLUG}-poor">— diverges from qvink at ${fmt(fidelity.divergeAt)}${caveat}</span>`;
+}
+
+/** Why the summarizer is idle, in the words of the switch that would change it. */
+const GATES = {
+    'no-profile': 'off \u2014 no memory connection chosen',
+    'group-chat': 'off \u2014 group chats are not supported',
+    'no-chat': 'no chat open',
+    'no-connection-manager': 'waiting \u2014 the Connection Manager extension is disabled',
+    'profile-missing': 'waiting \u2014 the memory connection profile no longer exists',
+    'qvink-summarising': 'waiting \u2014 Qvink\'s Auto Summarize is on',
+};
+
+/**
+ * Cairn's own summaries: what it is doing now, what it has cost this chat, and what
+ * it gave up on. A given-up message holds the memory step, which is invisible in play
+ * until the raw history is visibly long (docs/p2-plan.md §2).
+ */
+function renderSummaries(status) {
+    if (!status) return '';
+
+    const failures = status.failures
+        ? `<span class="${SLUG}-poor">${fmt(status.failures)} failed</span> <span class="dim">(last: ${escapeHtml(status.lastReason)})</span>`
+        : 'none failed';
+    const average = status.calls ? `${fmt(Math.round(status.ms / status.calls))} ms a request` : '\u2014';
+
+    return renderGivenUp(status.givenUp) + `
+        <details class="${SLUG}-details">
+            <summary>Summaries: ${describeWork(status)}</summary>
+            ${row('This chat', `${fmt(status.written)} written from ${fmt(status.calls)} requests, ${failures}`)}
+            ${row('Time', average)}
+            ${row('Tokens', `${fmt(status.tokensIn)} in, ${fmt(status.tokensOut)} out <span class="dim">(estimated)</span>`)}
+            ${row('Prompt', status.promptDefault === false ? 'edited' : 'default')}
+        </details>`;
+}
+
+function describeWork(status) {
+    if (status.inFlight != null) return `writing message #${status.inFlight}`;
+    if (status.gate && status.gate !== 'ready') return escapeHtml(GATES[status.gate] ?? status.gate);
+    if (status.gate === null) return 'not started';
+    const waiting = (status.pending ?? 0) - (status.givenUp?.length ?? 0);
+    return waiting > 0 ? `${fmt(waiting)} waiting` : 'up to date';
+}
+
+function renderGivenUp(givenUp) {
+    if (!givenUp?.length) return '';
+
+    const which = givenUp.map((index) => `#${index}`).join(', ');
+    const many = givenUp.length > 1;
+    return `<div class="${SLUG}-warn">Cairn gave up summarising message${many ? 's' : ''} ${which} after
+        repeated failures. The memory step waits before ${many ? 'them' : 'it'} until you reload the page
+        or edit the message.</div>`;
 }
 
 function renderDivergence(stability, divergenceIn) {

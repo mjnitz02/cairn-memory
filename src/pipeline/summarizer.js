@@ -10,9 +10,10 @@
  * than memory being lost. Nothing here may reach ST's event path (CLAUDE.md §4.17).
  */
 import { pendingScenes, qvinkSummarising, sceneHistory } from '../memory/scenes.js';
-import { perMessage } from '../memory/scene-strategy.js';
+import { perMessage, resolveSummaryPrompt } from '../memory/scene-strategy.js';
 import { writeScene } from '../store/chat-store.js';
 import { hashString } from '../util/hash.js';
+import { countTokens } from '../util/tokens.js';
 import { debug, error, toast, toastOnce, warn } from '../util/log.js';
 
 /** Failures before a message is left alone for the rest of the session. */
@@ -49,15 +50,25 @@ export function assessSummarizing(context, { memoryProfileId } = {}) {
     return { ready: true, reason: 'ready', sameProfile: manager?.selectedProfile === memoryProfileId };
 }
 
+/** Counters for the open chat. The log keeps running totals, so a reader diffs two lines. */
+function freshStats() {
+    return { calls: 0, written: 0, failures: 0, lastReason: null, lastMs: null, ms: 0, tokensIn: 0, tokensOut: 0 };
+}
+
 /**
  * @param {() => object} getContext Returns a fresh SillyTavern.getContext()
  * @param {{settings: () => {memoryProfileId?: string, summaryPrompt?: string},
- *          strategy?: object, clock?: () => number}} options
+ *          strategy?: object, clock?: () => number, onUpdate?: () => void}} options
+ *        `onUpdate` fires when a request goes out or settles, so the panel can follow
+ *        work that happens between generations.
  */
-export function createSummarizer(getContext, { settings, strategy = perMessage, clock = Date.now } = {}) {
+export function createSummarizer(getContext, { settings, strategy = perMessage, clock = Date.now, onUpdate } = {}) {
     /** `chatId` + message hash → failures this session. An edit starts the count again. */
     const attempts = new Map();
-    const stats = { gate: null, calls: 0, failures: 0, lastReason: null, lastMs: null };
+    let stats = freshStats();
+    let gateReason = null;
+    /** The message a request is out for, or null. */
+    let inFlight = null;
     let streak = 0;
     let running = false;
     let controller = null;
@@ -91,7 +102,10 @@ export function createSummarizer(getContext, { settings, strategy = perMessage, 
             const context = getContext();
             const config = settings?.() ?? {};
             const gate = assessSummarizing(context, config);
-            stats.gate = gate.reason;
+            if (gate.reason !== gateReason) {
+                gateReason = gate.reason;
+                notify();
+            }
             if (gate.reason === 'no-connection-manager') toastOnce(NO_CONNECTION_MANAGER);
             if (gate.reason === 'profile-missing') toastOnce(PROFILE_MISSING);
             if (!gate.ready) return;
@@ -114,6 +128,8 @@ export function createSummarizer(getContext, { settings, strategy = perMessage, 
 
         let request;
         let reply;
+        // A chat change swaps `stats` while this is out; its cost belongs to the chat it was for.
+        const counting = stats;
         const started = clock();
         try {
             request = strategy.build({
@@ -123,16 +139,24 @@ export function createSummarizer(getContext, { settings, strategy = perMessage, 
                 expand: (text) => context.substituteParams(text),
             });
             if (request.fallback) toastOnce(PROMPT_FALLBACK);
-            stats.calls++;
+            counting.calls++;
+            // ST's tokenizer is the chat model's, not the memory model's: a size, not a bill.
+            counting.tokensIn += await countTokens(context, request.messages.map((m) => m.content).join('\n'));
+            inFlight = index;
+            notify();
             reply = await context.ConnectionManagerRequestService.sendRequest(
                 memoryProfileId, request.messages, request.maxTokens,
                 { stream: false, signal, includePreset: true, includeInstruct: true },
             );
+            counting.tokensOut += await countTokens(context, `${reply?.content ?? ''}${reply?.reasoning ?? ''}`);
         } catch (err) {
             if (signal.aborted) return discard(index, 'aborted');
             return fail(chatId, message, index, 'error', err);
         } finally {
-            stats.lastMs = clock() - started;
+            inFlight = null;
+            counting.lastMs = clock() - started;
+            counting.ms += counting.lastMs;
+            notify();
         }
 
         // Anything can happen in the seconds a request is out (docs/p2-plan.md §2). No
@@ -150,6 +174,7 @@ export function createSummarizer(getContext, { settings, strategy = perMessage, 
         }
 
         attempts.delete(keyOf(chatId, message));
+        stats.written++;
         streak = 0;
         debug(`Summarised message #${index}.`);
         try {
@@ -187,6 +212,20 @@ export function createSummarizer(getContext, { settings, strategy = perMessage, 
         return attempts.get(keyOf(chatId, message)) ?? 0;
     }
 
+    function givenUp() {
+        const { chat, chatId } = getContext();
+        return pendingScenes(chat).filter((index) => failuresOf(chatId, chat[index]) >= MAX_ATTEMPTS);
+    }
+
+    /** A panel that throws costs the panel, not the summary. */
+    function notify() {
+        try {
+            onUpdate?.();
+        } catch (err) {
+            warn('Could not report summarizer progress.', err);
+        }
+    }
+
     /** Not awaited: ST awaits this event before it renders the reply (public/script.js:6781-6782). */
     function onMessageReceived() {
         drain();
@@ -195,6 +234,8 @@ export function createSummarizer(getContext, { settings, strategy = perMessage, 
     /** A request for the chat being left is abandoned; the new chat's queue starts. */
     function onChatChanged() {
         controller?.abort();
+        stats = freshStats();
+        notify();
         drain();
     }
 
@@ -226,13 +267,24 @@ export function createSummarizer(getContext, { settings, strategy = perMessage, 
         },
 
         /** Messages in the open chat that have failed too often to try again this session. */
-        givenUp() {
-            const { chat, chatId } = getContext();
-            return pendingScenes(chat).filter((index) => failuresOf(chatId, chat[index]) >= MAX_ATTEMPTS);
-        },
+        givenUp,
 
+        /**
+         * Counts, sizes and timings for the open chat — never a summary's text. `gate`
+         * is the last run's verdict (`assessSummarizing`), null before the first run.
+         */
         get status() {
-            return { ...stats, streak };
+            const status = { ...stats, gate: gateReason, streak, inFlight, pending: null, givenUp: [], promptDefault: null };
+            try {
+                // The default is what goes out when the prompt is unedited *or* unusable.
+                const prompt = resolveSummaryPrompt(settings?.()?.summaryPrompt);
+                status.promptDefault = !prompt.edited || prompt.fallback;
+                status.pending = pendingScenes(getContext().chat).length;
+                status.givenUp = givenUp();
+            } catch (err) {
+                warn('Could not read the summary queue.', err);
+            }
+            return status;
         },
     };
 }

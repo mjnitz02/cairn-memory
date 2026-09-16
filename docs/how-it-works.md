@@ -99,10 +99,16 @@ Cairn separates the two:
   then it drops to half the budget rather than shaving off the one summary that
   overflowed, so the next rebuild is half a budget of growth away.
 
-How much room the block gets is the short-term memory limit you already set in
-the summarising extension — in tokens, or as a share of the prompt. Cairn does
-not measure the rest of the prompt and adjust: the same chat always gets the same
-block, so nothing it saw last turn can change this one.
+The block gets 35% of the prompt SillyTavern may send: the context window minus
+the reserved response. There is no setting for it, and Qvink's short-term limit
+no longer counts (`docs/p2-plan.md` decision 2). Cairn does not measure the rest
+of the prompt and adjust: the same chat always gets the same block, so nothing it
+saw last turn can change this one.
+
+The fixed share cannot see a large card and lorebook on a small context. On text
+completion, SillyTavern then drops the oldest raw messages without saying so. The
+inspector warns, and the log sets `prompt_near_limit`, when a prompt is within 5% of
+its limit. A prompt that lost messages ends just under the limit, not at it.
 
 Two things the inspector says about this, because neither is visible in play:
 
@@ -159,6 +165,34 @@ anything.
 Running the summaries never delays SillyTavern. It waits for every
 `MESSAGE_RECEIVED` listener before it shows the reply, so Cairn starts the work
 and returns at once.
+
+**The prompt** is the **Summary prompt** setting. `{{message}}` is the message as
+`Name: text`, and `{{history}}` is the summaries before it, one per line.
+`{{#if history}}…{{/if}}` works as it does in Qvink, so a Qvink prompt can be pasted
+in unchanged, and so do SillyTavern's own macros, such as `{{char}}`. SillyTavern's
+macros are expanded before the message goes in, so a `{{user}}` typed in the chat
+reaches the model as typed. The box shows the default until you edit it, and an
+unedited prompt keeps following the default when it changes. A prompt with no
+`{{message}}` can't summarise anything, so Cairn uses the default and warns once.
+Editing the prompt doesn't rewrite existing summaries. Each summary stores a hash
+of the prompt that wrote it.
+
+**The panel** has a **Summaries** section that updates as requests go out and come
+back, not only when a reply is generated. It shows what Cairn is doing (writing
+message #12, 2 waiting, up to date, or the switch it is waiting on), and for the open
+chat: summaries written, requests, failures and the last reason, the average time
+per request, and tokens in and out. Tokens are counted with SillyTavern's
+tokenizer, which is the chat model's, so they are estimates. A message Cairn gave
+up on gets a warning, because it holds the memory step. The memory block section
+says who wrote the summaries in the block (Qvink, Cairn, or both) and whether a
+step is waiting for a summary.
+
+**The log** records the same numbers with each generation, never a summary's text:
+`memory_source`, `memory_cairn_scenes`, `memory_step_waiting`, and the `summary_*`
+fields. The counts, times and token totals are running totals for the chat, so the
+work between two generations is the difference between two lines.
+`summary_in_flight` is true when a summary request was still out as the prompt was
+built. That is how a run shows a summary overlapping a generation.
 
 ## Taking over the injection
 

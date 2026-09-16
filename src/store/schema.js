@@ -22,6 +22,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
     enabled: true,
     /** Connection profile id used for memory work. Never the roleplay profile. */
     memoryProfileId: '',
+    /**
+     * The summary prompt. Empty means the built-in default, so an unedited install
+     * gets the default's improvements (docs/p2-plan.md §4).
+     */
+    summaryPrompt: '',
     /** Show the prompt inspector panel (DESIGN.md §10). */
     showInspector: true,
     /** Verbose console output. */

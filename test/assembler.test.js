@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { blockChars, createAssembler, renderBlock } from '../src/prompt/assembler.js';
 import { QVINK_DEFAULTS, readScenes, qvinkInjected } from '../src/memory/scenes.js';
-import { createBudget } from '../src/pipeline/budgeter.js';
+import { CAP_FRACTION, createBudget } from '../src/pipeline/budgeter.js';
 import { createSeeSaw } from '../src/pipeline/scheduler.js';
 import { createContext } from './mocks/sillytavern.js';
 import { makeQvinkChat, makeQvinkSettings, makeSummary } from './mocks/qvink.js';
@@ -27,12 +27,16 @@ function asQvinkWouldRender(scenes) {
     return `[Following is a list of recent events]:\n${body}\n`;
 }
 
+/**
+ * `cap` is sugar for the max prompt that gives it: the cap is a fixed share of the
+ * max prompt (docs/p2-plan.md decision 2), and rounding up keeps it exact.
+ */
 function harness({
     seeSaw = createSeeSaw(),
     budget = createBudget(),
-    maxPrompt = 1_000_000,
     cap = 1_000_000,
-    settings = makeQvinkSettings({ short_term_context_limit: cap, short_term_context_type: 'tokens' }),
+    maxPrompt = Math.ceil(cap / CAP_FRACTION),
+    settings = makeQvinkSettings(),
 } = {}) {
     const context = createContext({ chat: [] });
     context.extensionSettings.qvink_memory = settings;
@@ -366,6 +370,17 @@ describe('what the plan reports', () => {
         expect(plan.tokens).toBeGreaterThan(0);
     });
 
+    it('names who wrote the summaries in the block', async () => {
+        const qvinkOnly = harness();
+        qvinkOnly.context.chat = makeMixedChat({ length: 61, qvinkThrough: 59, cairnThrough: 59 });
+        const cairnOnly = harness();
+        // qvink's summaries end before the block's reach, so every scene in it is Cairn's.
+        cairnOnly.context.chat = makeMixedChat({ length: 61, qvinkThrough: -1, cairnThrough: 59 });
+
+        expect(await qvinkOnly.plan()).toMatchObject({ source: 'qvink', cairnScenes: 0 });
+        expect(await cairnOnly.plan()).toMatchObject({ source: 'cairn', cairnScenes: 60 });
+    });
+
     it('reports an empty plan rather than throwing on a chat with no summaries', async () => {
         const run = harness();
         run.context.chat = [{ name: 'Wren', is_user: true, mes: 'hello', extra: {} }];
@@ -541,27 +556,29 @@ describe('the plan is a function of the chat', () => {
         expect(b.blank).toEqual(a.blank);
     });
 
-    it('does not let the size of the prompt bend a token limit', async () => {
-        // The rest of the prompt is not an input. A budget read off the last
-        // prompt is how the block went from 99% full to half in two turns.
-        const small = harness({ cap: 6_000, maxPrompt: 8_000 });
-        const large = harness({ cap: 6_000, maxPrompt: 200_000 });
-        const chat = makeQvinkChat({ length: 200, summarisedThrough: 189 });
-        small.context.chat = chat;
-        large.context.chat = chat;
-
-        expect((await small.write()).text).toBe((await large.write()).text);
-    });
-
-    it('sizes a percent limit against the prompt budget, as qvink does', async () => {
+    it('caps the block at 35% of the max prompt, whatever qvink\'s own limit says', async () => {
+        // Esin's numbers: qvink's 7,500 tokens gave way to 35% of 22,016.
         const run = harness({
-            maxPrompt: 20_000,
-            settings: makeQvinkSettings({ short_term_context_limit: 25, short_term_context_type: 'percent' }),
+            maxPrompt: 22_016,
+            settings: makeQvinkSettings({ short_term_context_limit: 7_500, short_term_context_type: 'tokens' }),
         });
-
         const plan = await run.turn(41);
 
-        expect(plan).toMatchObject({ cap: 5_000, capType: 'percent' });
+        expect(plan).toMatchObject({ cap: 7_705, maxPromptTokens: 22_016 });
+        expect(plan).not.toHaveProperty('capType');
+    });
+
+    it('does not let what else is in the prompt bend the cap', async () => {
+        // The rest of the prompt is not an input. A budget read off the last
+        // prompt is how the block went from 99% full to half in two turns.
+        const run = harness({ cap: 6_000 });
+        run.context.chat = makeQvinkChat({ length: 200, summarisedThrough: 189 });
+        const before = await run.write();
+        run.context.setExtensionPrompt('2_floating_prompt', 'x'.repeat(40_000), 1, 4);
+        const after = await run.write();
+
+        expect(after.report.cap).toBe(before.report.cap);
+        expect(after.text).toBe(before.text);
     });
 
     it('has nothing to be told after a prompt goes out', () => {
@@ -591,7 +608,7 @@ describe('P2: a block read from qvink and Cairn together', () => {
         const qvinkPart = [...Array(30).keys()].map((i) => ({ text: makeSummary(i) }));
         const cairnPart = [...Array(21).keys()].map((i) => ({ text: cairnSummary(30 + i) }));
         const p1 = asQvinkWouldRender(qvinkPart);
-        expect(report.summarisedThrough).toBe(50);
+        expect(report).toMatchObject({ summarisedThrough: 50, source: 'mixed', cairnScenes: 30 });
         expect(text).toBe(asQvinkWouldRender([...qvinkPart, ...cairnPart]));
         // Everything but the template's closing newline is a shared prefix.
         expect(text.startsWith(p1.slice(0, -1))).toBe(true);
@@ -604,11 +621,11 @@ describe('P2: a block read from qvink and Cairn together', () => {
 
         run.context.chat = makeMixedChat({ length: 51, qvinkThrough: 19, cairnThrough: 49, gaps: [35] });
         const held = await run.write();
-        expect(held.report).toMatchObject({ summarisedThrough: 30, stepReason: 'held' });
+        expect(held.report).toMatchObject({ summarisedThrough: 30, stepReason: 'held', stepWaiting: true });
         expect(Math.max(...held.blank)).toBe(30);
 
         run.context.chat[35].extra.cairn = cairnStore(run.context.chat[35], cairnSummary(35));
-        expect(await run.plan()).toMatchObject({ summarisedThrough: 40, stepReason: 'step' });
+        expect(await run.plan()).toMatchObject({ summarisedThrough: 40, stepReason: 'step', stepWaiting: false });
     });
 
     it('is not held by a message too short or hidden to summarise', async () => {

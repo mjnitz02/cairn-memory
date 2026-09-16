@@ -1,9 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { createBudget, FLOOR_FRACTION } from '../src/pipeline/budgeter.js';
+import { CAP_FRACTION, createBudget, FLOOR_FRACTION, memoryCap } from '../src/pipeline/budgeter.js';
 
 /** Each scene costs 10 tokens; nothing here depends on the real tokenizer. */
 const scenes = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => ({ index: from + i }));
 const tokensOf = (list) => list.length * 10;
+
+/** A fixed share of the max prompt, with no setting (docs/p2-plan.md decision 2). */
+describe('how much room the block gets', () => {
+    it('is 35% of the max prompt, rounded down', () => {
+        expect(CAP_FRACTION).toBe(0.35);
+        // Esin: at least the 7,500 tokens qvink's limit gave it.
+        expect(memoryCap(22_016)).toBe(7_705);
+        expect(memoryCap(22_016)).toBeGreaterThanOrEqual(7_500);
+    });
+
+    it('is nothing when the max prompt is unknown, never negative', () => {
+        expect(memoryCap(undefined)).toBe(0);
+        expect(memoryCap(Number.NaN)).toBe(0);
+        expect(memoryCap(-100)).toBe(0);
+    });
+});
 
 /**
  * The first turn of a session changes the block's head whatever the budget does,

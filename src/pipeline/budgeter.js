@@ -12,8 +12,8 @@
  * Two numbers, both fixed for the chat rather than measured turn to turn
  * (docs/decisions.md D-0033):
  *
- *   `cap`   — qvink's own short-term limit, the budget the user already chose
- *             (memory/scenes.js, resolveCap).
+ *   `cap`   — a fixed share of the max prompt, `CAP_FRACTION` (docs/p2-plan.md
+ *             decision 2). No setting, and nothing measured feeds it.
  *   `floor` — where a rebuild lands. Half the cap, so the next rebuild is half a
  *             cap of growth away instead of one summary away (D-0026).
  *
@@ -31,6 +31,21 @@
 
 /** A rebuild drops the block to this share of the cap. */
 export const FLOOR_FRACTION = 0.5;
+
+/**
+ * The block's share of the max prompt. 35% rather than 30% keeps Esin at least the
+ * 7,500 tokens qvink's limit gave it (docs/p2-plan.md decision 2).
+ */
+export const CAP_FRACTION = 0.35;
+
+/**
+ * @param {number} maxPromptTokens ST's `getMaxPromptTokens` (util/context-size.js).
+ * @returns {number} The cap, in tokens. Fixed for the chat (docs/decisions.md D-0033).
+ */
+export function memoryCap(maxPromptTokens) {
+    const max = Number.isFinite(maxPromptTokens) ? Math.max(0, maxPromptTokens) : 0;
+    return Math.floor(max * CAP_FRACTION);
+}
 
 /**
  * Whether growth and eviction have collapsed back into one cadence.

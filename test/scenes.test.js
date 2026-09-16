@@ -10,7 +10,6 @@ import {
     qvinkInjected,
     qvinkInjecting,
     readScenes,
-    resolveCap,
     resolvePlacement,
     resolveRendering,
 } from '../src/memory/scenes.js';
@@ -292,36 +291,6 @@ describe('where the block goes', () => {
  * the *other* extension's live state, and getting either wrong means two writers
  * in one prompt with nothing on screen to say so.
  */
-/**
- * The block's cap is qvink's own limit, resolved as qvink resolves it
- * (its index.js:246-256), so the same chat always gets the same budget
- * (docs/decisions.md D-0033).
- */
-describe('how much room the block gets', () => {
-    it('takes a token limit as it is', () => {
-        const settings = { qvink_memory: makeQvinkSettings({ short_term_context_limit: 7500, short_term_context_type: 'tokens' }) };
-
-        expect(resolveCap(settings, 22_016)).toEqual({ cap: 7500, type: 'tokens' });
-    });
-
-    it('takes a percent limit as a share of the prompt budget', () => {
-        const settings = { qvink_memory: makeQvinkSettings({ short_term_context_limit: 30, short_term_context_type: 'percent' }) };
-
-        expect(resolveCap(settings, 22_016)).toEqual({ cap: 6604, type: 'percent' });
-    });
-
-    it('falls back to qvink own default when it is not configured', () => {
-        expect(resolveCap({}, 20_000)).toEqual({ cap: 20_000 * QVINK_DEFAULTS.limit / 100, type: 'percent' });
-    });
-
-    it('never goes negative, whatever the settings say', () => {
-        const settings = { qvink_memory: makeQvinkSettings({ short_term_context_limit: -5 }) };
-
-        expect(resolveCap(settings, 22_016).cap).toBe(0);
-        expect(resolveCap({}, undefined).cap).toBe(0);
-    });
-});
-
 describe('whether qvink is still writing', () => {
     it('sees a parked, placed injection', () => {
         const prompts = { qvink_memory_short: { value: '[recap]', position: 0 } };

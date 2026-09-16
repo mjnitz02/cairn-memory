@@ -1,4 +1,5 @@
 import { EXTENSION_PATH, SLUG } from '../constants.js';
+import { DEFAULT_SUMMARY_PROMPT } from '../memory/scene-strategy.js';
 import { setDebugEnabled } from '../util/log.js';
 
 /**
@@ -31,6 +32,7 @@ export async function renderSettingsPanel(context, handlers = {}) {
 
     populateProfiles(context, settings.memoryProfileId);
     bindSelect(context, 'memoryProfileId', (value) => handlers.onMemoryProfileChange?.(value));
+    bindSummaryPrompt(context);
 
     toggleInspector(settings.showInspector);
     return document.getElementById(`${SLUG}_inspector`);
@@ -56,6 +58,26 @@ function populateProfiles(context, selectedId) {
         options.push(`<option value="${escapeHtml(profile.id)}"${selected}>${escapeHtml(profile.name)}</option>`);
     }
     select.innerHTML = options.join('');
+}
+
+/**
+ * Shows the default rather than an empty box, so there is something to edit, and
+ * stores the default as empty, so an unedited prompt keeps following the default.
+ */
+function bindSummaryPrompt(context) {
+    const input = field('summaryPrompt');
+    if (!input) return;
+    const store = (value) => {
+        context.extensionSettings[SLUG].summaryPrompt = value.trim() === DEFAULT_SUMMARY_PROMPT.trim() ? '' : value;
+        context.saveSettingsDebounced();
+    };
+
+    input.value = context.extensionSettings[SLUG].summaryPrompt || DEFAULT_SUMMARY_PROMPT;
+    input.addEventListener('input', () => store(input.value));
+    field('summaryPromptReset')?.addEventListener('click', () => {
+        input.value = DEFAULT_SUMMARY_PROMPT;
+        store(input.value);
+    });
 }
 
 function bindCheckbox(context, key, onChange) {

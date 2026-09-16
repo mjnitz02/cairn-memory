@@ -3,7 +3,7 @@
  *
  * ST already answers this: `getMaxPromptTokens` (public/script.js:5981) is the
  * context window minus the reserved response length, which is the number the
- * percent memory limit is a percent of (docs/decisions.md D-0033), and not one
+ * memory cap is a share of (pipeline/budgeter.js), and not one
  * we should be re-deriving (CLAUDE.md §2.5).
  * `getContext()` does not expose it (st-context.js:115), so it comes from
  * `script.js` the way every bundled extension imports it.
@@ -69,4 +69,23 @@ export function createMaxPromptTokens({ load = () => import(/* @vite-ignore */ S
 export function estimateMaxPromptTokens(context) {
     const maxContext = Number(context?.maxContext) || 0;
     return Math.max(0, Math.floor(maxContext * (1 - FALLBACK_RESERVE_FRACTION)));
+}
+
+/**
+ * Text completion stops adding history once the count reaches the limit
+ * (public/script.js:4920), so a prompt that lost its oldest messages ends just
+ * *under* the limit, not at it. Within this share of it is the flag.
+ */
+export const NEAR_LIMIT_FRACTION = 0.95;
+
+/**
+ * Whether a prompt was full enough that ST may have dropped raw history the block's
+ * cap cannot see (docs/p2-plan.md decision 2). Null when the limit is unknown.
+ *
+ * @param {number} promptTokens What the observer counted.
+ * @param {number} maxPromptTokens What the assembler planned against.
+ */
+export function nearPromptLimit(promptTokens, maxPromptTokens) {
+    if (!(maxPromptTokens > 0) || !Number.isFinite(promptTokens)) return null;
+    return promptTokens >= maxPromptTokens * NEAR_LIMIT_FRACTION;
 }
