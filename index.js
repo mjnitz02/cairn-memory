@@ -9,6 +9,7 @@ import { createInjector } from './src/prompt/injector.js';
 import { createObserver } from './src/prompt/observer.js';
 import { createSummarizer } from './src/pipeline/summarizer.js';
 import { migrateSettings } from './src/store/schema.js';
+import { createChatMarks } from './src/ui/chat-marks.js';
 import { createInspector } from './src/ui/inspector.js';
 import { renderSettingsPanel } from './src/ui/panel.js';
 import { error, info, setDebugEnabled } from './src/util/log.js';
@@ -48,8 +49,13 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
         let inspector;
         const summarizer = createSummarizer(getContext, {
             settings: () => settings,
-            onUpdate: () => inspector?.summaries(summarizer.status),
+            onUpdate: () => {
+                inspector?.summaries(summarizer.status);
+                marks.refresh();
+            },
         });
+        // The summaries under their messages, and the only in-chat sign one is being written.
+        const marks = createChatMarks(getContext, { status: () => summarizer.status });
 
         const observer = createObserver(getContext, {
             onSnapshot: (snapshot) => {
@@ -69,10 +75,12 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
                     observer.start();
                     injector.start();
                     summarizer.start();
+                    marks.start();
                 } else {
                     observer.stop();
                     injector.stop();
                     summarizer.stop();
+                    marks.stop();
                 }
             },
             onLogToDiskChange: (enabled) => diskLog.setEnabled(enabled),
@@ -90,6 +98,7 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
             observer.start();
             injector.start();
             summarizer.start();
+            marks.start();
         }
 
         // A new chat is a new baseline — stability across chats is meaningless.

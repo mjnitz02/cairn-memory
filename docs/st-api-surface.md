@@ -106,6 +106,18 @@ literally against the cited line.
 | `await listeners[i].apply(this, args);` | ST awaits every listener in turn, so the summarizer starts its work and returns | `public/lib/eventemitter.js` | 146 |
 | `chat.splice(0, chat.length, ...data);` | Opening or reloading a chat refills the same array with **new** message objects, so a late reply's message is no longer in it | `public/script.js` | 7658 |
 | `await reloadCurrentChat();` | A rename reloads the chat too | `public/script.js` | 10713 |
+| `export const chatElement = $('#chat');` | The chat container the summary marks are drawn into | `public/script.js` | 449 |
+| `.mes[mesid=` | One element per message, addressed by its chat index | `public/script.js` | 1654 |
+| `class="mes_text"` | The message body; a summary mark goes directly after it, as qvink's does | `public/index.html` | 7461 |
+| `messageElement.find('.mes_text').html(messageHTML);` | A re-render replaces only the body, so a mark beside it survives | `public/script.js` | 2696 |
+| `await printMessages();` | Messages are in the page before `CHAT_CHANGED`, so the marks can be drawn on it | `public/script.js` | 7697 |
+| `MORE_MESSAGES_LOADED` | Event name; older messages scrolled into the page need their marks | `public/scripts/events.js` | 17 |
+| `event_types.MORE_MESSAGES_LOADED` | Emitted once those messages are in the page | `public/script.js` | 1474 |
+| `CHARACTER_MESSAGE_RENDERED` | Event name; a reply's element exists, so its neighbours' marks are redrawn | `public/scripts/events.js` | 49 |
+| `USER_MESSAGE_RENDERED` | Event name; the same for a sent message | `public/scripts/events.js` | 48 |
+| `MESSAGE_UPDATED` | Event name; an edit can invalidate a summary, so its mark is redrawn | `public/scripts/events.js` | 12 |
+| `MESSAGE_DELETED` | Event name; a deletion renumbers the messages after it | `public/scripts/events.js` | 11 |
+| `MESSAGE_SWIPED` | Event name; a swipe changes the last message | `public/scripts/events.js` | 7 |
 
 ## Verified, not yet called
 

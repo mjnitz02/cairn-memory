@@ -137,3 +137,26 @@
 .dim {
     opacity: 0.6;
 }
+
+/* Summaries under their messages (src/ui/chat-marks.js), sized like qvink's. */
+
+.cairn-scene {
+    margin: 0 0 5px 0;
+    font-size: small;
+    opacity: 0.85;
+}
+
+.cairn-scene-label {
+    font-weight: bold;
+}
+
+.cairn-scene-writing,
+.cairn-scene-waiting {
+    font-style: italic;
+    opacity: 0.7;
+}
+
+.cairn-scene-failed,
+.cairn-scene-given-up {
+    color: var(--warning, #e0a030);
+}

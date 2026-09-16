@@ -675,6 +675,28 @@ describe('what it reports', () => {
         expect(summarizer.status).toMatchObject({ calls: 0, written: 0, failures: 0, ms: 0, tokensIn: 0, tokensOut: 0 });
     });
 
+    it('keeps its counts when the same chat is reloaded (public/script.js:1710-1717)', async () => {
+        const { context, summarizer } = harness({ responses: [summary(10), summary(11), summary(12)] });
+        summarizer.start();
+        await summarizer.idle();
+
+        const reloaded = makeMixedChat({ length: 14, qvinkThrough: 9, cairnThrough: 9 });
+        reloaded.forEach((message, index) => { message.extra = context.chat[index].extra; });
+        await openChat(context, { chatId: context.chatId, messages: reloaded });
+        await summarizer.idle();
+
+        expect(summarizer.status).toMatchObject({ calls: 3, written: 3 });
+    });
+
+    it('lists each waiting message that failed, with its count and last reason', async () => {
+        const { summarizer } = harness({ responses: [badOutputs.refusal(), badOutputs.truncated(summary(10))] });
+        summarizer.start();
+        await summarizer.idle();
+        await summarizer.drain();
+
+        expect(summarizer.status.failed).toEqual([{ index: 10, attempts: 2, reason: 'truncated' }]);
+    });
+
     it('keeps summarising when the panel throws', async () => {
         const { context, summarizer } = harness({
             responses: [summary(10), summary(11), summary(12)],

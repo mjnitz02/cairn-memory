@@ -71,7 +71,8 @@ Open **Extensions → Cairn-Memory**. There is very little to configure — send
 message and read the inspector.
 
 Point **Memory connection** at a profile that is *not* your roleplay model.
-Without one, Cairn never calls a model.
+Without one, Cairn never calls a model. Each summary appears under its message,
+and Cairn never blocks sending, so you can keep chatting while it works.
 
 | Setting | What it does |
 |---|---|

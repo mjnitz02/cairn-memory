@@ -164,7 +164,16 @@ anything.
 
 Running the summaries never delays SillyTavern. It waits for every
 `MESSAGE_RECEIVED` listener before it shows the reply, so Cairn starts the work
-and returns at once.
+and returns at once. Unlike Qvink with **Block generation** on, Cairn never holds
+up your next message either, so you can keep chatting while a summary is written.
+The message you send is the newest, so it's summarised after the next reply. If
+summaries fall behind, the memory step waits for them instead of moving past.
+
+**In the chat**, each summary appears under its message, where Qvink shows its
+own. While a request is out, the message being summarised says so, and the ones
+behind it say they're waiting. A failure shows its reason under the message and
+says whether Cairn will retry after the next reply or has given up. Only Cairn's
+summaries are shown: Qvink shows its own while it is enabled.
 
 **The prompt** is the **Summary prompt** setting. `{{message}}` is the message as
 `Name: text`, and `{{history}}` is the summaries before it, one per line.
@@ -189,8 +198,9 @@ step is waiting for a summary.
 
 **The log** records the same numbers with each generation, never a summary's text:
 `memory_source`, `memory_cairn_scenes`, `memory_step_waiting`, and the `summary_*`
-fields. The counts, times and token totals are running totals for the chat, so the
-work between two generations is the difference between two lines.
+fields. The counts, times and token totals are running totals for the chat since the page
+loaded, so the work between two generations is the difference between two lines.
+Reloading the same chat keeps them, and switching chats starts them again.
 `summary_in_flight` is true when a summary request was still out as the prompt was
 built. That is how a run shows a summary overlapping a generation.
 

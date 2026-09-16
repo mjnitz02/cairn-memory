@@ -24,6 +24,9 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
   the summaries before it, with Qvink's `{{#if history}}` syntax, so a Qvink
   prompt can be pasted in unchanged. Left unedited, it follows the built-in
   default. **Reset to default** restores it.
+- Cairn's summaries appear under their messages, as Qvink's do. The message being
+  summarised shows that a request is out, the ones behind it show they're
+  waiting, and a failed summary shows why and whether it will be retried.
 - The inspector has a **Summaries** section that updates as summaries are written.
   It shows what Cairn is doing or waiting on, what the open chat has cost
   (summaries, requests, failures, time, estimated tokens), and any message it gave

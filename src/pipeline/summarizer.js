@@ -63,9 +63,11 @@ function freshStats() {
  *        work that happens between generations.
  */
 export function createSummarizer(getContext, { settings, strategy = perMessage, clock = Date.now, onUpdate } = {}) {
-    /** `chatId` + message hash → failures this session. An edit starts the count again. */
+    /** `chatId` + message hash → `{count, reason}` this session. An edit starts the count again. */
     const attempts = new Map();
     let stats = freshStats();
+    /** The chat `stats` counts for. A reload of the same chat keeps them. */
+    let statsChat = null;
     let gateReason = null;
     /** The message a request is out for, or null. */
     let inFlight = null;
@@ -114,7 +116,11 @@ export function createSummarizer(getContext, { settings, strategy = perMessage, 
             const { chat, chatId } = context;
             const index = pendingScenes(chat).find((at) => failuresOf(chatId, chat[at]) < MAX_ATTEMPTS);
             if (index === undefined) return;
-            if (!await summarise(context, config, index)) return;
+            const landed = await summarise(context, config, index);
+            // After the outcome is recorded, not when the request settles: a panel that
+            // redraws in between shows the message as neither in flight nor written.
+            notify();
+            if (!landed) return;
         }
     }
 
@@ -156,7 +162,6 @@ export function createSummarizer(getContext, { settings, strategy = perMessage, 
             inFlight = null;
             counting.lastMs = clock() - started;
             counting.ms += counting.lastMs;
-            notify();
         }
 
         // Anything can happen in the seconds a request is out (docs/p2-plan.md §2). No
@@ -192,8 +197,8 @@ export function createSummarizer(getContext, { settings, strategy = perMessage, 
 
     function fail(chatId, message, index, reason, err) {
         const key = keyOf(chatId, message);
-        const count = (attempts.get(key) ?? 0) + 1;
-        attempts.set(key, count);
+        const count = failuresOf(chatId, message) + 1;
+        attempts.set(key, { count, reason });
         stats.failures++;
         stats.lastReason = reason;
         streak++;
@@ -209,12 +214,20 @@ export function createSummarizer(getContext, { settings, strategy = perMessage, 
     }
 
     function failuresOf(chatId, message) {
-        return attempts.get(keyOf(chatId, message)) ?? 0;
+        return attempts.get(keyOf(chatId, message))?.count ?? 0;
+    }
+
+    /** Waiting messages in the open chat that have failed at least once, oldest first. */
+    function failed() {
+        const { chat, chatId } = getContext();
+        return pendingScenes(chat).flatMap((index) => {
+            const record = attempts.get(keyOf(chatId, chat[index]));
+            return record ? [{ index, attempts: record.count, reason: record.reason }] : [];
+        });
     }
 
     function givenUp() {
-        const { chat, chatId } = getContext();
-        return pendingScenes(chat).filter((index) => failuresOf(chatId, chat[index]) >= MAX_ATTEMPTS);
+        return failed().filter((entry) => entry.attempts >= MAX_ATTEMPTS).map((entry) => entry.index);
     }
 
     /** A panel that throws costs the panel, not the summary. */
@@ -234,7 +247,11 @@ export function createSummarizer(getContext, { settings, strategy = perMessage, 
     /** A request for the chat being left is abandoned; the new chat's queue starts. */
     function onChatChanged() {
         controller?.abort();
-        stats = freshStats();
+        const { chatId } = getContext();
+        if (chatId !== statsChat) {
+            stats = freshStats();
+            statsChat = chatId;
+        }
         notify();
         drain();
     }
@@ -242,9 +259,10 @@ export function createSummarizer(getContext, { settings, strategy = perMessage, 
     return {
         start() {
             if (running) return;
-            const { eventSource, eventTypes } = getContext();
+            const { eventSource, eventTypes, chatId } = getContext();
             eventSource.on(eventTypes.MESSAGE_RECEIVED, onMessageReceived);
             eventSource.on(eventTypes.CHAT_CHANGED, onChatChanged);
+            statsChat = chatId;
             running = true;
             drain();
         },
@@ -274,13 +292,16 @@ export function createSummarizer(getContext, { settings, strategy = perMessage, 
          * is the last run's verdict (`assessSummarizing`), null before the first run.
          */
         get status() {
-            const status = { ...stats, gate: gateReason, streak, inFlight, pending: null, givenUp: [], promptDefault: null };
+            const status = {
+                ...stats, gate: gateReason, streak, inFlight, pending: null, failed: [], givenUp: [], promptDefault: null,
+            };
             try {
                 // The default is what goes out when the prompt is unedited *or* unusable.
                 const prompt = resolveSummaryPrompt(settings?.()?.summaryPrompt);
                 status.promptDefault = !prompt.edited || prompt.fallback;
                 status.pending = pendingScenes(getContext().chat).length;
-                status.givenUp = givenUp();
+                status.failed = failed();
+                status.givenUp = status.failed.filter((entry) => entry.attempts >= MAX_ATTEMPTS).map((entry) => entry.index);
             } catch (err) {
                 warn('Could not read the summary queue.', err);
             }
