@@ -171,8 +171,11 @@ function renderMemory(memory) {
     const title = memory.writing
         ? `Memory block Cairn is injecting (${fmt(memory.tokens)} tokens)`
         : `Memory block Cairn would inject (${fmt(memory.tokens)} tokens)`;
+    const provisional = memory.evictedProvisionally
+        ? `, ${fmt(memory.evicted)} held back for this turn only`
+        : '';
     const budget = memory.capEstimated
-        ? `${fmt(memory.tokens)} / ${fmt(memory.cap)} tokens (estimated until the first prompt is measured)`
+        ? `${fmt(memory.tokens)} / ${fmt(memory.cap)} tokens (estimated until the first prompt is measured${provisional})`
         : `${fmt(memory.tokens)} / ${fmt(memory.cap)} tokens, floor ${fmt(memory.floor)} \u2014 ${evicted}`;
 
     return renderRecoupled(memory) + `

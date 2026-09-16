@@ -25,6 +25,11 @@
  * before anything else is dropped. Same shape as the World Info holder's add-only
  * rule (D-0023), for the same reason.
  *
+ * It moves forward only on a *measured* cap. An eviction against the estimate the
+ * first turn of a chat runs on cuts the block to fit for that turn and leaves the
+ * mark where it was, so the measurement one turn later can take those summaries
+ * back (docs/decisions.md D-0028).
+ *
  * **The deferral is conditional and the condition is checkable.** Rebuilds are
  * spaced `(cap - floor) / growth-per-step` steps apart, so a cap only a step or
  * two wide puts eviction back on every step — qvink's behaviour, reached by a
@@ -108,14 +113,20 @@ export function createBudget({ floorFraction = FLOOR_FRACTION } = {}) {
          * Choose what stays in the block.
          *
          * @param {{scenes: Array<{index: number}>, cap: number,
-         *          tokensOf: (scenes: Array<object>) => number}} input
+         *          tokensOf: (scenes: Array<object>) => number,
+         *          provisional?: boolean}} input
          *        `tokensOf` sizes a candidate list. It is called a few times per
          *        eviction and never otherwise, so it must be cheap — the assembler
          *        passes an arithmetic estimate calibrated against ST's tokenizer.
+         *        `provisional` means the cap is an estimate rather than a
+         *        measurement: the block is still cut to fit it, but the mark is
+         *        not moved, so the first measured turn can take those summaries
+         *        back (docs/decisions.md D-0028).
          * @returns {{kept: Array<object>, evicted: number, oldest: number,
-         *            tokens: number, cap: number, floor: number, over: boolean}}
+         *            tokens: number, cap: number, floor: number, over: boolean,
+         *            provisional: boolean}}
          */
-        fit({ scenes, cap, tokensOf }) {
+        fit({ scenes, cap, tokensOf, provisional = false }) {
             const all = scenes ?? [];
 
             // A branch or swipe can take the chat back past our mark, leaving
@@ -139,10 +150,12 @@ export function createBudget({ floorFraction = FLOOR_FRACTION } = {}) {
                     tokens = tokensOf(kept);
                     evicted++;
                 }
-                if (kept.length) oldest = kept[0].index;
+                // Committing the mark is what makes eviction permanent, and a
+                // permanent decision needs a real number behind it.
+                if (kept.length && !provisional) oldest = kept[0].index;
             }
 
-            return { kept, evicted, oldest, tokens, cap, floor, over };
+            return { kept, evicted, oldest, tokens, cap, floor, over, provisional: provisional && evicted > 0 };
         },
 
         /** A new chat is a new block. */

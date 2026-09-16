@@ -161,6 +161,9 @@ function memoryFields(memory) {
         memory_stepped: memory.stepped,
         memory_step_reason: memory.stepReason,
         memory_evicted: memory.evicted,
+        // An eviction against an estimated cap shapes the turn without being
+        // committed, so a run's permanent losses are the ones with this false.
+        memory_evicted_provisionally: memory.evictedProvisionally ?? false,
         memory_over_cap: memory.overCap,
         memory_cap: memory.cap,
         memory_cap_estimated: memory.capEstimated ?? false,

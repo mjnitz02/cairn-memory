@@ -158,6 +158,9 @@ export function createAssembler(getContext, {
             scenes: covered,
             cap,
             tokensOf: (list) => Math.ceil(blockChars(list, rendering) / charsPerToken),
+            // An estimated cap may shape this turn's block but may not throw a
+            // summary away for the rest of the chat (docs/decisions.md D-0028).
+            provisional: estimated,
         });
 
         const text = renderBlock(fit.kept, rendering);
@@ -180,7 +183,8 @@ export function createAssembler(getContext, {
         const stuck = recoupled({ cap, floor: fit.floor, stepTokens });
 
         if (fit.evicted) {
-            debug(`Memory block: evicted ${fit.evicted} scene(s) to the floor (${fit.tokens}/${cap} tokens).`);
+            const how = fit.provisional ? 'for this turn only' : 'to the floor';
+            debug(`Memory block: evicted ${fit.evicted} scene(s) ${how} (${fit.tokens}/${cap} tokens).`);
         }
         if (stuck) {
             debug(`Memory block: ${cap - fit.floor} tokens of slack cannot hold a ${stepTokens}-token step; every step will rebuild.`);
@@ -204,6 +208,7 @@ export function createAssembler(getContext, {
             oldest: fit.kept[0]?.index ?? null,
             newest: fit.kept[fit.kept.length - 1]?.index ?? null,
             evicted: fit.evicted,
+            evictedProvisionally: fit.provisional,
             overCap: fit.over,
             cap,
             capEstimated: estimated,

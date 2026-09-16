@@ -110,7 +110,10 @@ Two things the inspector says about this, because neither is visible in play:
 
 How much room the block gets on the very first turn of a chat is the one estimate
 here: nothing has been measured yet, so it gets half the prompt budget until a
-prompt has gone out. The panel says when a cap is an estimate.
+prompt has gone out. Anything that estimate evicts is put back on the first turn
+with a real measurement behind it — a guess can shape one turn, but it cannot
+throw a summary away for the rest of the chat. The panel says when a cap is an
+estimate.
 
 ## Taking over the injection
 

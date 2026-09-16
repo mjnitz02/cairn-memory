@@ -8,6 +8,52 @@ what we believed and why it changed.
 
 ---
 
+## D-0028 — An estimated cap may shape a turn, not the rest of the chat
+**2026-09-15.** Corrects one claim in D-0027. That entry said the first turn's
+estimated cap "is replaced by the measurement one turn later". True of the cap;
+false of what the cap did, because eviction moves a mark that only ever moves
+forward (D-0026).
+
+**The trace.** First message on Esin after loading 0.8.0, gate still shut:
+
+```
+memory_cap 11008  memory_cap_estimated true  memory_floor 5504
+memory_over_cap true  memory_evicted 46  memory_tokens 4351
+memory_scenes 94  memory_blanked 91  memory_included 45   (messages 46-96)
+```
+
+`getMaxPromptTokens` was 22016, so the unmeasured turn capped the block at half
+of it, 91 covered summaries did not fit, and 46 were dropped to reach the floor.
+The next turn's cap is measured and larger — and those 46 stay out anyway,
+because `oldest` had already been committed to 46. A guess made one turn cost the
+oldest half of the block for the session.
+
+**The rule.** `fit({provisional: true})` when the cap is an estimate: the block is
+cut to fit exactly as it would be otherwise, and the mark is not moved. The first
+measured turn starts from every candidate again and evicts — or does not — against
+a real number.
+
+**Why not simply skip eviction while estimated.** Because the gate can already be
+open when a chat is reloaded mid-session, and then an uncut block goes into a real
+prompt. ST would drop history to fit, and a block bigger than the whole budget
+would overflow the request. Cutting the block is never the wrong thing to do; only
+*remembering* the cut is.
+
+**Why not let the mark rewind whenever the cap grows.** The mark's forward-only
+rule is what spaces rebuilds apart — a mark that follows the cap up and down
+re-admits summaries on an ordinary turn, which is a rebuild at the block's head,
+which is the thing P1 exists to stop (D-0019). The estimate is one exception, at
+one known moment, not a new policy. Every measured turn still commits.
+
+Folded into 0.8.0; it never ran outside this machine.
+
+**Reopens if:** a trace shows a provisional turn's block going out oversized —
+meaning the cut is not happening where it must — or estimated caps turning out to
+be so far from the measurement that the first turn of every chat visibly loses
+memory anyway, which would make the estimate itself the thing to fix.
+
+---
+
 ## D-0027 — Cairn writes the block, behind a gate the user opens
 **2026-09-15.** P1 step 3, the handover D-0020 sequenced. Cairn now parks the
 memory block itself (`prompt/injector.js`) and holds the messages it covers out

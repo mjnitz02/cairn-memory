@@ -470,6 +470,26 @@ describe('handing the injection over', () => {
         expect(second).toMatchObject({ capEstimated: false, cap: 7_000 });
     });
 
+    it('takes back what an estimated cap evicted, once a prompt has been measured', async () => {
+        // Esin, 2026-09-15: the first turn after a reload capped at half the
+        // budget, dropped 46 of 91 summaries, and the mark held them out for the
+        // rest of the session even though the measured cap had room
+        // (docs/decisions.md D-0028).
+        const run = harness({ maxPrompt: 12_000 });
+        run.context.chat = makeQvinkChat({ length: 120, summarisedThrough: 109 });
+
+        const first = (await run.assembler.plan()).report;
+
+        expect(first).toMatchObject({ capEstimated: true, evictedProvisionally: true });
+        expect(first.evicted).toBeGreaterThan(0);
+        expect(first.oldest).toBeGreaterThan(0);
+
+        const second = await run.plan({ promptTokens: 1_000 });
+
+        expect(second).toMatchObject({ capEstimated: false, evictedProvisionally: false, oldest: 0 });
+        expect(second.included).toBeGreaterThan(first.included);
+    });
+
     it('keeps the block out of the report and in the plan', async () => {
         const run = await handedOver(harness());
 

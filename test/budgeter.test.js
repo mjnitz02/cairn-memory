@@ -36,6 +36,56 @@ describe('the cap before anything has been measured', () => {
     });
 });
 
+/**
+ * The first turn of a chat has no measurement to cap against, so it caps against
+ * an estimate. An estimate may shape that turn's block; it may not throw a
+ * summary away for the rest of the chat (docs/decisions.md D-0028) — which is
+ * what a committed mark does, because the mark only moves forward.
+ */
+describe('an eviction against an estimated cap', () => {
+    it('cuts the block to fit without committing the mark', () => {
+        const budget = createBudget();
+
+        const estimated = budget.fit({ scenes: scenes(0, 19), cap: 100, tokensOf, provisional: true });
+
+        // The turn's block is cut, exactly as a real eviction would cut it...
+        expect(estimated.kept.map((scene) => scene.index)).toEqual([15, 16, 17, 18, 19]);
+        expect(estimated.evicted).toBe(15);
+        expect(estimated.provisional).toBe(true);
+        // ...and nothing is lost: the mark never moved.
+        expect(budget.oldest).toBe(-Infinity);
+    });
+
+    it('gives the summaries back on the first measured turn that has room', () => {
+        const budget = createBudget();
+        budget.fit({ scenes: scenes(0, 19), cap: 100, tokensOf, provisional: true });
+
+        const measured = budget.fit({ scenes: scenes(0, 19), cap: 300, tokensOf });
+
+        expect(measured.kept).toHaveLength(20);
+        expect(measured.evicted).toBe(0);
+    });
+
+    it('still commits when the cap is a measurement', () => {
+        // The monotonic mark is what makes the deferral hold (D-0026); the
+        // estimate is the one exception to it, not a new rule.
+        const budget = createBudget();
+        budget.fit({ scenes: scenes(0, 19), cap: 100, tokensOf });
+
+        const later = budget.fit({ scenes: scenes(0, 19), cap: 300, tokensOf });
+
+        expect(budget.oldest).toBe(15);
+        expect(later.kept).toHaveLength(5);
+    });
+
+    it('says nothing was provisional when nothing was evicted', () => {
+        const budget = createBudget();
+        const fit = budget.fit({ scenes: scenes(0, 4), cap: 100, tokensOf, provisional: true });
+
+        expect(fit.provisional).toBe(false);
+    });
+});
+
 describe('fitting the block to the cap', () => {
     it('keeps everything while it fits', () => {
         const budget = createBudget();

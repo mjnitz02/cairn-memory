@@ -39,7 +39,10 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
   the prompt has gone out; the observer now feeds its measurement back for the
   next turn's budget.
 - On the first turn of a chat — before any prompt has been measured — the block is
-  capped at half the prompt budget rather than all of it.
+  capped at half the prompt budget rather than all of it, and any eviction that
+  cap causes is **provisional**: the block is cut to fit for that turn, but the
+  summaries come back on the first measured turn that has room for them
+  (`docs/decisions.md` D-0028). Log field `memory_evicted_provisionally`.
 - The fidelity check resolves a template's macros before comparing, so a template
   carrying `{{char}}` is no longer a permanent false divergence. Its log field
   `memory_fidelity_approximate` is now `memory_fidelity_resolved`.
