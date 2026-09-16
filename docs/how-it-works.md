@@ -5,10 +5,9 @@ A short map of the pieces. The reasoning behind them is in
 
 > **Built today: P0 and P1.** Cairn observes generations and reports on them,
 > holds the lorebook block steady, and writes the memory block from summaries your
-> existing memory extension has already made, once that extension is silenced. It
-> writes no summaries of its own yet (that is P2, in progress: it can already read
-> its own stored summaries, but nothing writes them). Everything from "The shape of
-> the problem" down is design, not code.
+> existing memory extension has already made, once that extension is silenced.
+> P2 is in progress: Cairn writes its own summaries once that extension stops
+> summarising. Everything from "The shape of the problem" down is design, not code.
 
 ## What P0 measures
 
@@ -135,6 +134,31 @@ The first turn after you open a chat or reload the page always rebuilds the
 block, and it trims straight to half the limit while it is at it — that turn
 re-reads everything anyway, so the room it frees costs nothing. From the second
 turn on, the block only changes at its end until it outgrows the limit again.
+
+## Writing summaries
+
+After each reply, Cairn summarises the messages waiting for a summary, one
+request at a time, oldest first, through the **Memory connection** profile. Each
+request carries the message and the five summaries before it. A reply that
+arrives after you have switched or reloaded the chat, edited the message or
+deleted it is thrown away. The request is cancelled when the chat changes.
+
+Cairn does nothing without a memory profile, in group chats, or while Qvink
+Memory's **Auto Summarize** is on. Two extensions summarising the same message
+would pay for it twice and race each other to store it.
+
+A failed request writes nothing. That covers an error, a refusal, and a reply
+cut off or in the wrong shape (`docs/p2-plan.md` §4). The first failure shows a
+warning, and further failures stay in the console until a summary succeeds
+again. A failure also ends the run, so an outage costs one request per reply,
+and the next reply retries. A message that fails three times is left alone for
+the rest of the session, unless you edit it. The memory step waits before that
+message rather than moving past it, so the raw history grows instead of losing
+anything.
+
+Running the summaries never delays SillyTavern. It waits for every
+`MESSAGE_RECEIVED` listener before it shows the reply, so Cairn starts the work
+and returns at once.
 
 ## Taking over the injection
 

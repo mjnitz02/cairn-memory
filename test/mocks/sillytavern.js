@@ -117,7 +117,13 @@ function makeEventSource() {
  * we actually depend on. Deliberately a subset: an unlisted field means we have
  * not declared that dependency in docs/st-api-surface.md yet.
  */
-export function createContext({ chat = makeChat(), chatMetadata = {}, profiles = [] } = {}) {
+export function createContext({
+    chat = makeChat(),
+    chatMetadata = {},
+    profiles = [],
+    selectedProfile = null,
+    requestService = null,
+} = {}) {
     const extensionPrompts = {};
     const context = {
         chat,
@@ -145,8 +151,12 @@ export function createContext({ chat = makeChat(), chatMetadata = {}, profiles =
         /** public/scripts/extensions.js:141 */
         extensionSettings: {
             disabledExtensions: [],
-            connectionManager: { profiles },
+            /** public/scripts/extensions/connection-manager/index.js:28-29 */
+            connectionManager: { profiles, selectedProfile },
         },
+
+        /** public/scripts/st-context.js:294 — a class with a static `sendRequest`. */
+        ConnectionManagerRequestService: requestService,
 
         extensionPrompts,
         /** public/script.js — setExtensionPrompt(key, value, position, depth, scan, role, filter) */
@@ -192,6 +202,7 @@ export function createContext({ chat = makeChat(), chatMetadata = {}, profiles =
 
         saveSettingsDebounced: () => { context.saved.settings++; },
         saveMetadataDebounced: () => { context.saved.metadata++; },
+        /** public/scripts/st-context.js:155 — saveChatConditional, which saves the *current* chat. */
         saveChat: async () => { context.saved.chat++; },
 
         /** Rough but monotonic — enough for budget arithmetic in tests. */
@@ -203,4 +214,25 @@ export function createContext({ chat = makeChat(), chatMetadata = {}, profiles =
         saved: { settings: 0, metadata: 0, chat: 0 },
     };
     return context;
+}
+
+/**
+ * A reply arriving: ST puts it in `chat`, then emits the message's index and the
+ * generation type, and awaits every listener before it renders the message
+ * (public/script.js:6780-6782, public/lib/eventemitter.js:146).
+ */
+export async function receiveMessage(context, message, type = 'normal') {
+    context.chat.push(message);
+    await context.eventSource.emit(context.eventTypes.MESSAGE_RECEIVED, context.chat.length - 1, type);
+}
+
+/**
+ * Opening a chat: ST refills the *same* array with new message objects
+ * (public/script.js:7658), then emits the new chat id (:7700). Reloading the
+ * current chat takes the same path with the same id (:1710-1717).
+ */
+export async function openChat(context, { chatId, messages }) {
+    context.chatId = chatId;
+    context.chat.splice(0, context.chat.length, ...messages);
+    await context.eventSource.emit(context.eventTypes.CHAT_CHANGED, chatId);
 }

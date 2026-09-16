@@ -16,8 +16,9 @@
             <select id="cairn_memoryProfileId" class="text_pole"></select>
             <div class="cairn-hint">
                 The connection profile Cairn uses to write memory. This must not be your roleplay
-                model — roleplay models write flowery summaries.
-                <b>Not used yet:</b> Cairn currently only measures, and makes no requests of its own.
+                model — roleplay models write flowery summaries. Cairn summarises each message after
+                a reply arrives, starting after the newest summary Qvink Memory wrote, and waits
+                until Qvink's <b>Auto Summarize</b> is off.
             </div>
 
             <label class="checkbox_label" for="cairn_showInspector">

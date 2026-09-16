@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createContext, extension_prompt_types, makeChat, makeMessage, world_info_position } from './mocks/sillytavern.js';
-import { badOutputs, createRequestService } from './mocks/llm.js';
+import { createContext, extension_prompt_types, makeChat, makeMessage, openChat, receiveMessage, world_info_position } from './mocks/sillytavern.js';
+import { badOutputs, createRequestService, deferred } from './mocks/llm.js';
 
 /**
  * Guards the mocks themselves. A mock that has drifted from ST is worse than no
@@ -54,6 +54,31 @@ describe('SillyTavern mock', () => {
         expect(seen).toEqual(['first', 'second']);
     });
 
+    it('emits MESSAGE_RECEIVED with the new message\'s index, after it is in the chat', async () => {
+        const context = createContext({ chat: makeChat(4) });
+        const seen = [];
+        context.eventSource.on(context.eventTypes.MESSAGE_RECEIVED, (index, type) => {
+            seen.push({ index, type, present: Boolean(context.chat[index]) });
+        });
+
+        await receiveMessage(context, makeMessage({ mes: 'reply' }));
+
+        expect(seen).toEqual([{ index: 4, type: 'normal', present: true }]);
+    });
+
+    it('opens a chat by refilling the same array, as getChat does', async () => {
+        const context = createContext({ chat: makeChat(4) });
+        const array = context.chat;
+        const ids = [];
+        context.eventSource.on(context.eventTypes.CHAT_CHANGED, (id) => ids.push(id));
+
+        await openChat(context, { chatId: 'other', messages: makeChat(2) });
+
+        expect(context.chat).toBe(array);
+        expect(context.chat).toHaveLength(2);
+        expect(ids).toEqual(['other']);
+    });
+
     it('exposes connection profiles where ConnectionManagerRequestService reads them', () => {
         const context = createContext({ profiles: [{ id: 'p1', name: 'GLM (memory)' }] });
         expect(context.extensionSettings.connectionManager.profiles[0].id).toBe('p1');
@@ -75,9 +100,35 @@ describe('memory-model mock', () => {
         await expect(service.sendRequest('p1', 'second', 64)).rejects.toThrow(/no queued response/);
     });
 
-    it('propagates transport errors', async () => {
+    it('wraps transport errors the way ST does', async () => {
         const service = createRequestService({ responses: [new Error('502 Bad Gateway')] });
-        await expect(service.sendRequest('p1', 'x', 64)).rejects.toThrow('502 Bad Gateway');
+        const failure = await service.sendRequest('p1', 'x', 64).catch((err) => err);
+
+        expect(failure.message).toBe('API request failed');
+        expect(failure.cause.message).toBe('502 Bad Gateway');
+    });
+
+    it('holds a deferred reply until the test settles it', async () => {
+        const reply = deferred();
+        const service = createRequestService({ responses: [reply.promise] });
+        let settled = false;
+        const request = service.sendRequest('p1', 'x', 64).then((result) => { settled = true; return result; });
+
+        await Promise.resolve();
+        expect(settled).toBe(false);
+        reply.resolve('late');
+        expect(await request).toEqual({ content: 'late', reasoning: '' });
+    });
+
+    it('rejects with an AbortError once the signal fires, as fetch does', async () => {
+        const controller = new AbortController();
+        const service = createRequestService({ responses: [deferred().promise] });
+        const request = service.sendRequest('p1', 'x', 64, { signal: controller.signal }).catch((err) => err);
+
+        controller.abort();
+        const failure = await request;
+        expect(failure.message).toBe('API request failed');
+        expect(failure.cause.name).toBe('AbortError');
     });
 
     it('offers the malformed shapes parsers must survive', () => {

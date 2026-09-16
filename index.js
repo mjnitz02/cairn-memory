@@ -7,6 +7,7 @@ import { createDiskLog } from './src/util/disk-log.js';
 import { createAssembler } from './src/prompt/assembler.js';
 import { createInjector } from './src/prompt/injector.js';
 import { createObserver } from './src/prompt/observer.js';
+import { createSummarizer } from './src/pipeline/summarizer.js';
 import { migrateSettings } from './src/store/schema.js';
 import { createInspector } from './src/ui/inspector.js';
 import { renderSettingsPanel } from './src/ui/panel.js';
@@ -41,6 +42,11 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
         injector.setHoldEnabled(settings.holdWorldInfo);
         globalThis.cairn_intercept = injector.intercept;
 
+        // Writes Cairn's own summaries after each reply. It gates itself on a memory
+        // profile and a quiet qvink (src/pipeline/summarizer.js), so only `enabled`
+        // starts and stops it here.
+        const summarizer = createSummarizer(getContext, { settings: () => settings });
+
         let inspector;
         const observer = createObserver(getContext, {
             onSnapshot: (snapshot) => {
@@ -58,14 +64,18 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
                 if (enabled) {
                     observer.start();
                     injector.start();
+                    summarizer.start();
                 } else {
                     observer.stop();
                     injector.stop();
+                    summarizer.stop();
                 }
             },
             onLogToDiskChange: (enabled) => diskLog.setEnabled(enabled),
             onHoldWorldInfoChange: (enabled) => injector.setHoldEnabled(enabled),
             onOwnMemoryBlockChange: (enabled) => assembler.setOwnEnabled(enabled),
+            // A newly chosen profile may have a backlog waiting for it.
+            onMemoryProfileChange: () => summarizer.drain(),
         }));
         inspector.render(observer.latest);
 
@@ -74,6 +84,7 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
         if (settings.enabled) {
             observer.start();
             injector.start();
+            summarizer.start();
         }
 
         // A new chat is a new baseline — stability across chats is meaningless.

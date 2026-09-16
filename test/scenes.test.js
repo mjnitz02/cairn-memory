@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
     QVINK_DEFAULTS,
     cairnStart,
+    SCENE_HISTORY,
     pendingScenes,
     qvinkExcluding,
+    qvinkSummarising,
+    sceneHistory,
     qvinkInjected,
     qvinkInjecting,
     readScenes,
@@ -142,6 +145,42 @@ describe('which messages are waiting for a summary', () => {
         chat[7].mes += ' An afterthought.';
 
         expect(pendingScenes(chat)).toEqual([7, 9]);
+    });
+
+    it('leaves a newer Cairn\'s store alone rather than queueing a summary it cannot write', () => {
+        const chat = makeMixedChat({ length: 14, qvinkThrough: 5, cairnThrough: 12, gaps: [9] });
+        chat[9].extra.cairn = { v: 99, scene: { text: 'from the future' } };
+
+        expect(pendingScenes(chat)).toEqual([]);
+    });
+});
+
+describe('the history sent with a summary request', () => {
+    it('is the five scenes just before the message, oldest first, from either source', () => {
+        const chat = makeMixedChat({ length: 14, qvinkThrough: 5, cairnThrough: 12 });
+
+        const history = sceneHistory(chat, 9);
+
+        expect(SCENE_HISTORY).toBe(5);
+        expect(history.map((scene) => scene.index)).toEqual([4, 5, 6, 7, 8]);
+        expect(history.map((scene) => scene.source)).toEqual(['qvink', 'qvink', 'cairn', 'cairn', 'cairn']);
+    });
+
+    it('skips gaps and edited scenes rather than sending one that no longer matches its message', () => {
+        const chat = makeMixedChat({ length: 14, qvinkThrough: 5, cairnThrough: 12, gaps: [7] });
+        chat[8].mes += ' An afterthought.';
+
+        expect(sceneHistory(chat, 10).map((scene) => scene.index)).toEqual([3, 4, 5, 6, 9]);
+    });
+
+    it('leaves out a summary the user excluded from memory', () => {
+        const chat = makeQvinkChat({ length: 10, exclude: [7] });
+
+        expect(sceneHistory(chat, 9).map((scene) => scene.index)).toEqual([3, 4, 5, 6, 8]);
+    });
+
+    it('is empty at the top of a chat', () => {
+        expect(sceneHistory(makeMixedChat({ length: 6, qvinkThrough: -1, cairnThrough: -1 }), 0)).toEqual([]);
     });
 });
 
@@ -328,5 +367,28 @@ describe('whether qvink is still taking messages out of the history', () => {
 
     it('is not excluding anything when it is not installed at all', () => {
         expect(qvinkExcluding({})).toBe(false);
+    });
+});
+
+/**
+ * Two extensions summarising the same message pay for it twice and race to
+ * write it. qvink's Auto Summarize has to be off before Cairn starts
+ * (docs/p2-plan.md §7, cutover step 1).
+ */
+describe('whether qvink is still summarising', () => {
+    it('reads its Auto Summarize setting', () => {
+        expect(qvinkSummarising({ qvink_memory: { auto_summarize: true } })).toBe(true);
+        expect(qvinkSummarising({ qvink_memory: { auto_summarize: false } })).toBe(false);
+    });
+
+    it('assumes its default, on, when it has not been configured', () => {
+        // its index.js:116, read through `?? default_settings[key]` (:655).
+        expect(QVINK_DEFAULTS.autoSummarize).toBe(true);
+        expect(qvinkSummarising({ qvink_memory: {} })).toBe(true);
+    });
+
+    it('is not summarising anything when it is not installed at all', () => {
+        expect(qvinkSummarising({})).toBe(false);
+        expect(qvinkSummarising(undefined)).toBe(false);
     });
 });

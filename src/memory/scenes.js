@@ -53,6 +53,8 @@ export const QVINK_DEFAULTS = Object.freeze({
     scan: false,
     /** its index.js:136 */
     excludeAfterThreshold: true,
+    /** its index.js:116 */
+    autoSummarize: true,
     /** its index.js:151 */
     limit: 10,
     /** its index.js:152 — `percent` of the prompt budget, or `tokens`. */
@@ -148,9 +150,27 @@ export function pendingScenes(chat, { key = QVINK_KEY } = {}) {
     const pending = [];
     for (let index = cairnStart(list, { key }); index < list.length - 1; index++) {
         const message = list[index];
-        if (summarisable(message) && readScene(message).status !== 'valid') pending.push(index);
+        if (!summarisable(message)) continue;
+        // A newer Cairn's store is not ours to overwrite (store/chat-store.js).
+        const { status } = readScene(message);
+        if (status !== 'valid' && status !== 'future') pending.push(index);
     }
     return pending;
+}
+
+/** Scenes sent back with each summary request (docs/p2-plan.md §3). */
+export const SCENE_HISTORY = 5;
+
+/**
+ * The scenes just before a message, oldest first: what Matt's qvink profile sends
+ * back as context, from either source, and never one the user excluded.
+ *
+ * @returns {Array<object>} Scenes as `readScenes` returns them.
+ */
+export function sceneHistory(chat, index, { count = SCENE_HISTORY, key = QVINK_KEY } = {}) {
+    return readScenes(chat, { key })
+        .filter((scene) => scene.index < index && scene.eligible)
+        .slice(-count);
 }
 
 /**
@@ -272,6 +292,17 @@ export function qvinkExcluding(extensionSettings, { key = QVINK_KEY } = {}) {
     const settings = extensionSettings?.[key];
     if (!settings) return false;
     return Boolean(settings.exclude_messages_after_threshold ?? QVINK_DEFAULTS.excludeAfterThreshold);
+}
+
+/**
+ * Whether qvink is still writing summaries — its Auto Summarize, read the way it
+ * reads it (its index.js:655). Cairn summarising the same messages would pay for
+ * each twice and race qvink to the store (docs/p2-plan.md §7, cutover step 1).
+ */
+export function qvinkSummarising(extensionSettings, { key = QVINK_KEY } = {}) {
+    const settings = extensionSettings?.[key];
+    if (!settings) return false;
+    return Boolean(settings.auto_summarize ?? QVINK_DEFAULTS.autoSummarize);
 }
 
 function numberOr(value, fallback) {

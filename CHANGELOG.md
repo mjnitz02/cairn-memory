@@ -9,6 +9,18 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ## [Unreleased]
 
+### Added
+
+- Cairn writes its own summaries. After each reply it summarises the messages
+  waiting for one, one request at a time, through the **Memory connection**
+  profile, and stores each summary on its message in `message.extra.cairn`. It
+  starts after the newest summary your existing extension wrote, and waits while
+  Qvink Memory's Auto Summarize is on. A failed summary writes nothing and warns
+  once per run of failures. A message that fails three times is skipped for the
+  session, and the memory step waits before it. **Back up your chats before
+  turning off Qvink's Auto Summarize**: this is the first version that writes to
+  message data.
+
 ### Changed
 
 - A memory step now waits for a missing summary. The block stays where it is
@@ -18,8 +30,7 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
   the newest one that extension summarised.
 - Cairn reads its own summaries from `message.extra.cairn` alongside your
   existing ones, and prefers its own when a message has both. A summary whose
-  message has been edited is ignored until it is written again. Nothing writes
-  Cairn summaries yet.
+  message has been edited is ignored until it is written again.
 
 ## [0.9.0] — 2026-09-16
 

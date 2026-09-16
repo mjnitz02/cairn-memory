@@ -16,8 +16,9 @@ set of retrievable past events.
 > and keeping the messages it covers out of the history — but only once that
 > extension has been silenced and Cairn has proved it renders the same block, byte
 > for byte. Until then it plans and compares and leaves the prompt alone, so it
-> stays safe to run alongside. It writes no memory of its own yet. The features
-> below are being built in phases; see [`DESIGN.md`](DESIGN.md).
+> stays safe to run alongside. Once that extension stops summarising, Cairn writes
+> its own summaries too, one per message. The features below are being built in
+> phases; see [`DESIGN.md`](DESIGN.md).
 
 ## The major choices
 
@@ -69,13 +70,13 @@ Reload SillyTavern afterwards.
 Open **Extensions → Cairn-Memory**. There is very little to configure — send a
 message and read the inspector.
 
-The **Memory connection** setting is inert until Cairn starts writing memory
-(P2). When it does, point it at a profile that is *not* your roleplay model.
+Point **Memory connection** at a profile that is *not* your roleplay model.
+Without one, Cairn never calls a model.
 
 | Setting | What it does |
 |---|---|
 | Enabled | Turns Cairn off without uninstalling. Existing memory is kept. |
-| Memory connection | The profile Cairn uses to write memory. Must not be your roleplay model. Not used yet. |
+| Memory connection | The profile Cairn uses to write summaries. Must not be your roleplay model. |
 | Show inspector | Shows what was injected, from where, and how stable the prompt is. |
 | Write inspector log to disk | Appends each generation to `user/files/cairn-inspector.jsonl`. |
 | Hold World Info entries | Keeps a lorebook entry in the prompt once it has activated, instead of letting it drop out when the keyword scan misses it. On by default; off restores stock SillyTavern behaviour. |
@@ -92,7 +93,10 @@ Memory**:
    Qvink keeps building its block, SillyTavern stops placing it;
 2. turn off **Exclude messages after threshold**.
 
-Leave the rest alone: Qvink keeps summarising, and Cairn keeps reading it.
+Qvink can keep summarising, and Cairn keeps reading what it writes. To have Cairn
+write the summaries instead, **back up your chats**, then turn off Qvink's **Auto
+Summarize**. Cairn starts after the newest summary Qvink wrote and never changes
+Qvink's. Each summary is saved on its message, so it survives uninstalling Qvink.
 
 Cairn will not take over until it has also rendered Qvink's own block byte for
 byte at least once in that chat — so send a message or two *before* flipping the

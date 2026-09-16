@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { debug, info, isDebugEnabled, resetToasts, setDebugEnabled, toastOnce } from '../src/util/log.js';
+import { debug, info, isDebugEnabled, resetToasts, setDebugEnabled, toast, toastOnce } from '../src/util/log.js';
 
 afterEach(() => {
     setDebugEnabled(false);
@@ -67,5 +67,25 @@ describe('toastOnce', () => {
 
         expect(() => toastOnce('no toastr here')).not.toThrow();
         expect(spy).toHaveBeenCalledWith('[cairn]', 'no toastr here');
+    });
+});
+
+describe('toast', () => {
+    /** The caller decides how often: the summarizer toasts once per failure streak, not once per session. */
+    it('shows every time it is called, and logs each one', () => {
+        const warning = vi.fn();
+        vi.stubGlobal('toastr', { warning });
+        const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        toast('the same failure');
+        toast('the same failure');
+
+        expect(warning).toHaveBeenCalledTimes(2);
+        expect(spy).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not throw outside SillyTavern', () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        expect(() => toast('no toastr here')).not.toThrow();
     });
 });

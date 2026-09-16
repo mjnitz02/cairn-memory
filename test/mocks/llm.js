@@ -65,10 +65,25 @@ export const badOutputs = {
 };
 
 /**
+ * A reply the test settles by hand, for anything that happens while a request is
+ * still out: a chat change, an edit, a second trigger.
+ */
+export function deferred() {
+    let resolve;
+    let reject;
+    const promise = new Promise((res, rej) => {
+        resolve = res;
+        reject = rej;
+    });
+    return { promise, resolve, reject };
+}
+
+/**
  * @param {object} [options]
- * @param {Array<string|Error|{content: string, reasoning?: string}>} [options.responses]
+ * @param {Array<string|Error|Promise|{content: string, reasoning?: string}>} [options.responses]
  *   Queued replies, consumed in order. A string becomes `{ content }`; an Error
- *   is thrown. Exhausting the queue throws, so an unexpected extra call is loud.
+ *   is thrown; a Promise (see `deferred`) settles to either. Exhausting the queue
+ *   throws, so an unexpected extra call is loud.
  */
 export function createRequestService({ responses = [] } = {}) {
     const queue = [...responses];
@@ -84,10 +99,15 @@ export function createRequestService({ responses = [] } = {}) {
                 throw new Error(`Unexpected memory-model call #${this.calls.length} (no queued response)`);
             }
 
-            const next = queue.shift();
-            if (next instanceof Error) throw next;
-            if (typeof next === 'string') return { content: next, reasoning: '' };
-            return { reasoning: '', ...next };
+            try {
+                const next = await settle(queue.shift(), custom.signal);
+                if (next instanceof Error) throw next;
+                if (typeof next === 'string') return { content: next, reasoning: '' };
+                return { reasoning: '', ...next };
+            } catch (cause) {
+                // Everything past profile validation is wrapped (extensions/shared.js:489-490).
+                throw new Error('API request failed', { cause });
+            }
         },
 
         /** Test helper: queue is drained exactly as expected. */
@@ -95,4 +115,15 @@ export function createRequestService({ responses = [] } = {}) {
             return queue.length;
         },
     };
+}
+
+/** A fetch given an aborted signal rejects with an AbortError, whatever the server does. */
+function settle(next, signal) {
+    if (!signal) return next;
+    const aborted = () => new DOMException('The operation was aborted.', 'AbortError');
+    if (signal.aborted) return Promise.reject(aborted());
+    return new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => reject(aborted()), { once: true });
+        Promise.resolve(next).then(resolve, reject);
+    });
 }

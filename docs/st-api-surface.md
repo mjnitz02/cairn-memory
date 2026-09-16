@@ -33,7 +33,7 @@ literally against the cited line.
 | `GENERATE_AFTER_COMBINE_PROMPTS` | Text-completion prompt, read-only in P0 | `public/script.js` | 5243 |
 | `CHAT_COMPLETION_PROMPT_READY` | Chat-completion prompt, read-only in P0 | `public/scripts/openai.js` | 1619 |
 | `WORLD_INFO_ACTIVATED` | Observe which WI entries fired | `public/scripts/world-info.js` | 902 |
-| `CHAT_CHANGED` | Drop the stability baseline on a new chat | `public/scripts/events.js` | 19 |
+| `CHAT_CHANGED` | Drop the stability baseline on a new chat; abandon a summary request for the chat being left | `public/scripts/events.js` | 19 |
 | `GENERATE_AFTER_COMBINE_PROMPTS` | Event name | `public/scripts/events.js` | 57 |
 | `WORLD_INFO_ACTIVATED` | Event name | `public/scripts/events.js` | 62 |
 | `CHAT_COMPLETION_PROMPT_READY` | Event name | `public/scripts/events.js` | 65 |
@@ -90,6 +90,22 @@ literally against the cited line.
 | `index,` | The index they carry counts the *filtered* array — never use it as a chat index | `public/script.js` | 4527 |
 | `message.is_system = hide;` | Hiding a message sets `is_system`, so `summarisable()` skips hidden messages | `public/scripts/chats.js` | 157 |
 | `structuredClone(chat.slice(0, Number(mesId) + 1))` | A branch copies the messages it keeps, `extra` and all, so their scenes go with them | `public/scripts/bookmarks.js` | 173 |
+| `ConnectionManagerRequestService` | Profile-routed summary calls | `public/scripts/st-context.js` | 294 |
+| `ConnectionManagerRequestService` | Class definition and `sendRequest` contract | `public/scripts/extensions/shared.js` | 392 |
+| `static async sendRequest` | Summary calls; takes `ChatCompletionMessage[]`, which is what `perMessage.build` returns | `public/scripts/extensions/shared.js` | 423 |
+| `disabledExtensions.includes('connection-manager')` | `sendRequest` refuses outright without Connection Manager, so the summarizer checks first | `public/scripts/extensions/shared.js` | 427 |
+| `throw new Error('API request failed', { cause: error });` | Every transport error, an abort included, arrives wrapped | `public/scripts/extensions/shared.js` | 490 |
+| `ExtractedData` | `{ content, reasoning }`, the non-streaming return shape | `public/scripts/custom-request.js` | 60 |
+| `selectedProfile: null` | The chat's own profile, so a memory profile that matches it gets a warning | `public/scripts/extensions/connection-manager/index.js` | 29 |
+| `substituteParams,` | Expands ST macros on the summary template before chat text goes in | `public/scripts/st-context.js` | 163 |
+| `chatId: selected_group` | Keys a message's failure count to its chat | `public/scripts/st-context.js` | 125 |
+| `saveChat: saveChatConditional` | Persist a written scene; saves the *current* chat | `public/scripts/st-context.js` | 155 |
+| `MESSAGE_RECEIVED` | Event name; the summarizer's trigger | `public/scripts/events.js` | 9 |
+| `event_types.MESSAGE_RECEIVED, chat_id, type` | Emitted for a new reply with its chat index, **before** the reply is rendered | `public/script.js` | 6781 |
+| `event_types.MESSAGE_RECEIVED, this.messageId, this.type` | ...and for a streamed one | `public/script.js` | 3799 |
+| `await listeners[i].apply(this, args);` | ST awaits every listener in turn, so the summarizer starts its work and returns | `public/lib/eventemitter.js` | 146 |
+| `chat.splice(0, chat.length, ...data);` | Opening or reloading a chat refills the same array with **new** message objects, so a late reply's message is no longer in it | `public/script.js` | 7658 |
+| `await reloadCurrentChat();` | A rename reloads the chat too | `public/script.js` | 10713 |
 
 ## Verified, not yet called
 
@@ -100,18 +116,13 @@ does not rest on an unchecked claim; each moves up as its phase lands.
 |---|---|---|---|
 | `chatMetadata` | Chat-global stores: canon, episodes, entity index | `public/scripts/st-context.js` | 135 |
 | `saveMetadataDebounced` | Persist those stores | `public/scripts/st-context.js` | 136 |
-| `ConnectionManagerRequestService` | Profile-routed memory-model calls | `public/scripts/st-context.js` | 294 |
 | `CUSTOM_WI_OUTLET` | Where ST parks outlet content, unplaced | `public/script.js` | 4676 |
 | `outlet` | `world_info_position.outlet === 7` | `public/scripts/world-info.js` | 863 |
 | `outletName` | Declared WI entry field, editable in the WI UI | `public/scripts/world-info.js` | 4108 |
 | `outlet::` | The `{{outlet::key}}` macro that places parked content | `public/scripts/macros.js` | 668 |
-| `ConnectionManagerRequestService` | Class definition and `sendRequest` contract | `public/scripts/extensions/shared.js` | 392 |
-| `ExtractedData` | `{ content, reasoning }`, the non-streaming return shape | `public/scripts/custom-request.js` | 60 |
 | `doChatInject` | Where `IN_CHAT` injections are spliced into the history | `public/script.js` | 5628 |
 | `flushWIInjections` | ST clears depth and outlet injections every generation | `public/script.js` | 5678 |
 | `getOutletPrompt` | Resolves `{{outlet::key}}` from the parked injection | `public/scripts/macros.js` | 597 |
-| `static async sendRequest` | P2 summary calls; takes `ChatCompletionMessage[]`, which is what `perMessage.build` returns | `public/scripts/extensions/shared.js` | 423 |
-| `substituteParams,` | Expands ST macros on the summary template before chat text goes in | `public/scripts/st-context.js` | 163 |
 | `export function substituteParams(` | Signature; the legacy engine is the default | `public/script.js` | 2981 |
 | `experimental_macro_engine` | ST's own `{{if}}` exists only behind this switch, so Cairn renders `{{#if}}` itself | `public/script.js` | 2997 |
 | `registerMacro('if'` | ...and its syntax is not qvink's `{{#if}}` | `public/scripts/macros/definitions/core-macros.js` | 134 |
@@ -144,3 +155,7 @@ use.** `chat` is the exception — ST mutates that array in place.
 `qvink_memory_long` / `qvink_memory_short` are Qvink Memory's injection keys
 (`SillyTavern-MessageSummarize/index.js:4022`). Cairn only reads them for
 attribution in the inspector; nothing depends on that extension being installed.
+
+`auto_summarize` is Qvink Memory's Auto Summarize setting, default on
+(`SillyTavern-MessageSummarize/index.js:116`, read through `?? default_settings[key]`
+at `:655`). Cairn does not summarise while it is on.
