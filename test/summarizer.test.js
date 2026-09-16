@@ -3,6 +3,7 @@ import { MAX_ATTEMPTS, assessSummarizing, createSummarizer } from '../src/pipeli
 import { DEFAULT_SUMMARY_PROMPT, SUMMARY_MAX_TOKENS, perMessage } from '../src/memory/scene-strategy.js';
 import { QVINK_EXTENSION, pendingScenes } from '../src/memory/scenes.js';
 import { readScene } from '../src/store/chat-store.js';
+import { STORE_VERSION } from '../src/store/schema.js';
 import { hashString } from '../src/util/hash.js';
 import { resetToasts } from '../src/util/log.js';
 import { badOutputs, createRequestService, deferred } from './mocks/llm.js';
@@ -132,7 +133,7 @@ describe('summarising the queue', () => {
 
         expect(written(context.chat)).toEqual([10, 11, 12]);
         expect(context.chat[11].extra.cairn).toEqual({
-            v: 1,
+            v: STORE_VERSION,
             scene: {
                 text: summary(11),
                 hash: hashString(context.chat[11].mes),

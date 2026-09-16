@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, SETTINGS_VERSION, applyMigrations, migrateSettings } from '../src/store/schema.js';
+import {
+    DEFAULT_SETTINGS, SETTINGS_VERSION, STORE_VERSION, applyMigrations, migrateSettings, migrateStore,
+} from '../src/store/schema.js';
+import { STORE_V1 } from './fixtures/store-v1.js';
 
 describe('migrateSettings', () => {
     it('returns defaults for a fresh install', () => {
@@ -89,5 +92,46 @@ describe('applyMigrations — the engine', () => {
     it('leaves a future version untouched so a downgrade is clean', () => {
         const future = { version: 99, somethingNew: true };
         expect(applyMigrations(future, {}, 2)).toEqual(future);
+    });
+});
+
+describe('migrateStore', () => {
+    it('reads a v1 store as a current one, with the scene untouched and no state', () => {
+        const { status, store } = migrateStore(STORE_V1);
+
+        expect(status).toBe('ok');
+        expect(store).toEqual({ ...STORE_V1, v: STORE_VERSION });
+        expect(store.state).toBeUndefined();
+    });
+
+    it('never mutates the stored object', () => {
+        const stored = structuredClone(STORE_V1);
+        migrateStore(stored);
+
+        expect(stored).toEqual(STORE_V1);
+    });
+
+    it('returns a current store as it is', () => {
+        const stored = { v: STORE_VERSION, scene: {} };
+        expect(migrateStore(stored)).toEqual({ status: 'ok', store: stored });
+    });
+
+    it('tells none, invalid and future apart', () => {
+        expect(migrateStore(undefined).status).toBe('none');
+        for (const junk of [null, 'junk', [], {}, { v: 0 }, { v: '1' }]) {
+            expect(migrateStore(junk).status, JSON.stringify(junk)).toBe('invalid');
+        }
+        expect(migrateStore({ v: STORE_VERSION + 1 })).toEqual({ status: 'future', store: null });
+    });
+
+    it('runs a chain, and treats a gap in the table as unreadable', () => {
+        const migrations = { 1: (s) => ({ ...s, v: 2, a: true }), 2: (s) => ({ ...s, v: 3, b: s.a }) };
+
+        expect(migrateStore({ v: 1 }, migrations, 3)).toEqual({ status: 'ok', store: { v: 3, a: true, b: true } });
+        expect(migrateStore({ v: 1 }, {}, 3)).toEqual({ status: 'invalid', store: null });
+    });
+
+    it('refuses a migration that does not advance the version', () => {
+        expect(() => migrateStore({ v: 1 }, { 1: (s) => ({ ...s }) }, 2)).toThrow(/did not advance the version/);
     });
 });
