@@ -111,6 +111,14 @@ describe('rendering the block', () => {
 
         expect(blockChars(scenes, rendering)).toBe(renderBlock(scenes, rendering).length);
     });
+
+    it('reads a macro name literally, regex metacharacters and all', () => {
+        const rendering = { ...BLOCK_RENDERING, template: '<{{a.b\\c}}|{{aXb\\c}}>', macro: 'a.b\\c' };
+        const scenes = [{ text: 'x', chars: 1 }];
+
+        expect(renderBlock(scenes, rendering)).toBe(`<${rendering.separator}x|{{aXb\\c}}>`);
+        expect(blockChars(scenes, rendering)).toBe(renderBlock(scenes, rendering).length);
+    });
 });
 
 /**

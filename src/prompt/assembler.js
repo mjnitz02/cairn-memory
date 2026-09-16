@@ -272,7 +272,7 @@ function macroToken(macro) {
 
 /** Case-insensitive, as ST's macro substitution is (public/script.js:3326). */
 function macroPattern(macro) {
-    return new RegExp(macroToken(macro).replace(/[{}]/g, '\\$&'), 'gi');
+    return new RegExp(macroToken(macro).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
 }
 
 function divergencePercent(change) {
