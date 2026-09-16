@@ -30,6 +30,12 @@ export const DEFAULT_SETTINGS = Object.freeze({
     logToDisk: true,
     /** Keep World Info entries in the prompt once they have activated (D-0023). */
     holdWorldInfo: true,
+    /**
+     * Write the memory block instead of leaving it to qvink (D-0027). On by
+     * default, but the handover gate still decides each turn: while qvink is
+     * injecting, Cairn plans and measures without writing anything.
+     */
+    ownMemoryBlock: true,
 });
 
 /**

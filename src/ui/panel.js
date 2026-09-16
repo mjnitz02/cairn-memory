@@ -11,7 +11,8 @@ import { setDebugEnabled } from '../util/log.js';
  * @param {object} context SillyTavern.getContext()
  * @param {{onEnabledChange?: (enabled: boolean) => void,
  *           onLogToDiskChange?: (enabled: boolean) => void,
- *           onHoldWorldInfoChange?: (enabled: boolean) => void}} [handlers]
+ *           onHoldWorldInfoChange?: (enabled: boolean) => void,
+ *           onOwnMemoryBlockChange?: (enabled: boolean) => void}} [handlers]
  * @returns {Promise<HTMLElement>} The element the inspector renders into.
  */
 export async function renderSettingsPanel(context, handlers = {}) {
@@ -24,6 +25,7 @@ export async function renderSettingsPanel(context, handlers = {}) {
     bindCheckbox(context, 'showInspector', (value) => toggleInspector(value));
     bindCheckbox(context, 'logToDisk', (value) => handlers.onLogToDiskChange?.(value));
     bindCheckbox(context, 'holdWorldInfo', (value) => handlers.onHoldWorldInfoChange?.(value));
+    bindCheckbox(context, 'ownMemoryBlock', (value) => handlers.onOwnMemoryBlockChange?.(value));
     bindCheckbox(context, 'debugLogging', (value) => setDebugEnabled(value));
 
     populateProfiles(context, settings.memoryProfileId);

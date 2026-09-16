@@ -8,6 +8,80 @@ what we believed and why it changed.
 
 ---
 
+## D-0027 — Cairn writes the block, behind a gate the user opens
+**2026-09-15.** P1 step 3, the handover D-0020 sequenced. Cairn now parks the
+memory block itself (`prompt/injector.js`) and holds the messages it covers out
+of the sent history, and the plan that decides both is made in the generate
+interceptor — the last hook still ahead of prompt assembly (`script.js:4564`
+against `:4635`).
+
+**It is a swap, and both halves have to move together.** Injecting while qvink
+injects puts the block in the prompt twice; blanking while qvink blanks means two
+extensions writing the same `Symbol.for('ignore')` from different thresholds and
+a raw window decided by whichever interceptor ran last. So there is a gate
+(`prompt/handover.js`), checked every turn, and it opens only when the setting is
+on, qvink is placing neither injection, its
+`exclude_messages_after_threshold` is off, and our render of its own selection has
+matched its live block byte for byte in this chat. Every closed state names the
+switch that would open it, in the inspector and in the log, because a gate that
+closes silently looks exactly like a gate that is open and working.
+
+**Cairn does not reach into qvink's settings to open it.** Silencing qvink is the
+user's deliberate act: its short- and long-term memory position to *Macro Only*
+and *Exclude messages after threshold* off. An extension that configures another
+extension is the "two systems, one prompt" failure this phase exists to end, and
+"Macro Only" is `extension_prompt_types.NONE` (`script.js:484`), which keeps the
+value parked for the fidelity check while nothing places it (`:3312`).
+
+**The proof is remembered, not re-earned.** It can only be earned while qvink is
+still the writer, and the moment the handover happens there is nothing left to
+compare against. It is dropped on a chat change, because it was a statement about
+this chat's configuration.
+
+**Placement is mirrored, not chosen.** Position, depth, role and scan come from
+qvink's live settings, so the handover changes exactly one thing — who writes.
+Moving the block to where DESIGN.md §6 wants it is a separate change, made and
+measured on its own. One thing does move regardless: `getExtensionPrompt` sorts
+by key (`:3310`), so `cairn_memory` sits where `qvink_memory_short` did not among
+other injections at the same position. The inspector's `locate.js` is what shows
+it.
+
+**Blanking is written in place, through the live chat.** DESIGN.md §9 forbids the
+clone qvink uses, and the interceptor's array is not the chat anyway: it is
+`coreChat`, filtered of system messages (`:4496`), rebuilt as `{...chatItem,
+index}` (`:4525`) — entries that share `extra` by reference, carrying an `index`
+that counts the *filtered* array (`:4527`). Following that index blanks the wrong
+messages on any chat containing a system message, and the prompt looks entirely
+plausible either way. So indexes are the live chat's, the write goes through the
+live chat, and `extra` being shared is what carries it into the generation. Every
+message is written every turn, set or cleared: the flag lives on the real message,
+so one left behind blanks a message nothing summarises any more. It never reaches
+the file — `JSON.stringify` drops Symbol keys, which is the same fact that made
+WTrackerLite's `structuredClone` bug silent.
+
+**A message whose summary was evicted stays blanked.** Eviction means the block
+can no longer afford that summary; putting the message's prose back would cost
+several times what the summary did, on the oldest and least useful part of the
+chat.
+
+**The first turn of a chat has nothing to measure.** The cap is
+`maxPromptTokens - otherTokens` and `otherTokens` comes from the observer, which
+only runs after a prompt has gone out. Until then the block gets half the prompt
+budget (`UNMEASURED_CAP_FRACTION`) rather than all of it, and the estimate is
+replaced by the measurement one turn later. The inspector says which of the two a
+cap is.
+
+**A failure leaves last turn's block and flags exactly as they were** rather than
+clearing either. They were coherent with each other; half-clearing them is a
+prompt that hides messages it is also not summarising (CLAUDE.md §4.17).
+
+**Reopens if:** a trace shows the gate open while the block is in the prompt
+twice — meaning qvink can inject by a route `extensionPrompts` does not show — or
+the mirrored placement turns out to be the wrong place to keep the block, which
+is DESIGN.md §6's question and gets its own entry and its own measurement.
+
+---
+
 ## D-0026 — The assembler splits growth from eviction, and the split is conditional
 **2026-09-15.** Builds what D-0019 restated: keep the memory block high, make a
 see-saw step change its **tail** rather than its head. Three modules, because the

@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
     QVINK_DEFAULTS,
+    qvinkExcluding,
     qvinkInjected,
+    qvinkInjecting,
     readScenes,
+    resolvePlacement,
     resolveRendering,
 } from '../src/memory/scenes.js';
 import { makeQvinkChat, makeQvinkData, makeQvinkSettings } from './mocks/qvink.js';
@@ -112,5 +115,79 @@ describe('the fixture itself', () => {
         expect(Math.min(...lengths)).toBeGreaterThanOrEqual(196);
         expect(Math.max(...lengths)).toBeLessThanOrEqual(641);
         expect(new Set(scenes.map((scene) => scene.text)).size).toBe(30);
+    });
+});
+
+describe('where the block goes', () => {
+    it('mirrors qvink placement, so the handover moves only the writer', () => {
+        const placement = resolvePlacement({
+            qvink_memory: makeQvinkSettings({
+                short_term_position: 1, short_term_depth: 4, short_term_role: 1, short_term_scan: true,
+            }),
+        });
+
+        expect(placement).toEqual({ position: 1, depth: 4, role: 1, scan: true });
+    });
+
+    it('falls back to qvink own defaults when it is not configured', () => {
+        expect(resolvePlacement({})).toEqual({
+            position: QVINK_DEFAULTS.position,
+            depth: QVINK_DEFAULTS.depth,
+            role: QVINK_DEFAULTS.role,
+            scan: QVINK_DEFAULTS.scan,
+        });
+    });
+});
+
+/**
+ * What the handover gate reads (src/prompt/handover.js). Both of these are about
+ * the *other* extension's live state, and getting either wrong means two writers
+ * in one prompt with nothing on screen to say so.
+ */
+describe('whether qvink is still writing', () => {
+    it('sees a parked, placed injection', () => {
+        const prompts = { qvink_memory_short: { value: '[recap]', position: 0 } };
+
+        expect(qvinkInjecting(prompts)).toEqual(['qvink_memory_short']);
+    });
+
+    it('treats "Macro Only" as silent — the value stays, nothing places it', () => {
+        // extension_prompt_types.NONE (public/script.js:484) matches no collected
+        // position, and the value is what the fidelity check compares against.
+        const prompts = { qvink_memory_short: { value: '[recap]', position: -1 } };
+
+        expect(qvinkInjecting(prompts)).toEqual([]);
+    });
+
+    it('treats an empty injection as silent, and a missing one as not installed', () => {
+        expect(qvinkInjecting({ qvink_memory_short: { value: '', position: 0 } })).toEqual([]);
+        expect(qvinkInjecting({})).toEqual([]);
+        expect(qvinkInjecting(undefined)).toEqual([]);
+    });
+
+    it('names both injections, because they are the same prompt', () => {
+        const prompts = {
+            qvink_memory_short: { value: 'a', position: 0 },
+            qvink_memory_long: { value: 'b', position: 0 },
+        };
+
+        expect(qvinkInjecting(prompts)).toEqual(['qvink_memory_long', 'qvink_memory_short']);
+    });
+});
+
+describe('whether qvink is still taking messages out of the history', () => {
+    it('reads its own setting', () => {
+        expect(qvinkExcluding({ qvink_memory: { exclude_messages_after_threshold: true } })).toBe(true);
+        expect(qvinkExcluding({ qvink_memory: { exclude_messages_after_threshold: false } })).toBe(false);
+    });
+
+    it('assumes its default when it has not been configured', () => {
+        // Its own default is on (its index.js:136), so an unconfigured install is
+        // still excluding and the gate stays shut.
+        expect(qvinkExcluding({ qvink_memory: {} })).toBe(true);
+    });
+
+    it('is not excluding anything when it is not installed at all', () => {
+        expect(qvinkExcluding({})).toBe(false);
     });
 });

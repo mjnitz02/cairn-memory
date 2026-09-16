@@ -137,6 +137,25 @@ export function createContext({ chat = makeChat(), chatMetadata = {}, profiles =
             };
         },
 
+        /**
+         * public/script.js:2815. Only the two macros anything here uses:
+         * `environment.user` is name1 and `environment.char` is name2
+         * (public/script.js:2949-2950). Enough to prove we resolve a template
+         * before comparing it; not a macro engine.
+         */
+        substituteParamsExtended(content, additionalMacro = {}) {
+            let text = String(content)
+                .replace(/\{\{user\}\}/gi, context.name1)
+                .replace(/\{\{char\}\}/gi, context.name2);
+            for (const [name, value] of Object.entries(additionalMacro)) {
+                text = text.replace(new RegExp(`\\{\\{${name}\\}\\}`, 'gi'), String(value));
+            }
+            return text;
+        },
+
+        /** public/scripts/st-context.js:302 — the ignore flag's home. */
+        symbols: { ignore: Symbol.for('ignore') },
+
         saveSettingsDebounced: () => { context.saved.settings++; },
         saveMetadataDebounced: () => { context.saved.metadata++; },
         saveChat: async () => { context.saved.chat++; },

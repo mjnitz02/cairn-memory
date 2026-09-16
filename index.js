@@ -28,16 +28,18 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
         const diskLog = createDiskLog();
         diskLog.setEnabled(settings.logToDisk);
 
-        // ST resolves the manifest's `generate_interceptor` off globalThis
-        // (extensions.js:2035), so the name here must match manifest.json.
-        const injector = createInjector(getContext);
-        injector.setHoldEnabled(settings.holdWorldInfo);
-        globalThis.cairn_holdWorldInfo = injector.intercept;
+        // Plans the memory block every turn and measures it against qvink's live
+        // one. Whether the plan is written is the handover gate's call
+        // (src/prompt/handover.js, docs/decisions.md D-0027).
+        const assembler = createAssembler(getContext, { own: settings.ownMemoryBlock });
 
-        // Plans the memory block and measures it against qvink's live one. It
-        // does not write yet — the handover waits on that comparison
-        // (docs/decisions.md D-0020, D-0026).
-        const assembler = createAssembler(getContext);
+        // ST resolves the manifest's `generate_interceptor` off globalThis
+        // (extensions.js:2035), so the name here must match manifest.json. It is
+        // the only hook still ahead of prompt assembly, so both writes happen in
+        // it: the World Info hold and the memory block.
+        const injector = createInjector(getContext, { memory: assembler });
+        injector.setHoldEnabled(settings.holdWorldInfo);
+        globalThis.cairn_intercept = injector.intercept;
 
         let inspector;
         const observer = createObserver(getContext, {
@@ -46,7 +48,12 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
                 diskLog.append(snapshot, getContext);
             },
             holding: () => (settings.holdWorldInfo ? injector.remembered.size : null),
-            memory: (turn) => assembler.plan(turn),
+            // The prompt that just went out is the other half of next turn's
+            // budget; the report is the plan the interceptor already acted on.
+            memory: (turn) => {
+                assembler.observe(turn);
+                return assembler.latest;
+            },
         });
 
         inspector = createInspector(await renderSettingsPanel(context, {
@@ -61,6 +68,7 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
             },
             onLogToDiskChange: (enabled) => diskLog.setEnabled(enabled),
             onHoldWorldInfoChange: (enabled) => injector.setHoldEnabled(enabled),
+            onOwnMemoryBlockChange: (enabled) => assembler.setOwnEnabled(enabled),
         }));
         inspector.render(observer.latest);
 

@@ -108,11 +108,44 @@ Two things the inspector says about this, because neither is visible in play:
   too tight to hold more than a step or two puts eviction back on every step. The
   block still looks correct while that happens, so the panel says it in words.
 
-Cairn does not inject any of this yet. Every turn it also renders the *existing*
-extension's own selection and compares it to the block that extension actually
-placed; until those match byte for byte, taking over would move the block and
-change its contents at the same time, and no later measurement could tell the two
-apart.
+How much room the block gets on the very first turn of a chat is the one estimate
+here: nothing has been measured yet, so it gets half the prompt budget until a
+prompt has gone out. The panel says when a cap is an estimate.
+
+## Taking over the injection
+
+Cairn writes that block itself — but only once it is the *only* thing writing it.
+Until then it plans, measures, and leaves the prompt alone.
+
+Two things have to move together. If Cairn injects while your existing memory
+extension injects, the summaries are in the prompt twice. If Cairn holds
+summarised messages back while that extension also holds them back, two different
+rules are deciding the same thing and the raw window is whichever ran last. So
+Cairn checks, every turn, that:
+
+1. the other extension is placing neither of its memory injections,
+2. it is no longer excluding messages after its threshold, and
+3. Cairn's own render of *its* selection has matched its live block byte for
+   byte in this chat.
+
+That third one is the interesting one. It has to be earned while the other
+extension is still the writer — it is the evidence that swapping writers changes
+nothing else about the prompt. Cairn remembers it for the rest of the chat, and
+forgets it when the chat changes.
+
+Cairn never flips those switches for you. Configuring another extension from
+inside this one is the same "two systems, one prompt" problem in a different
+costume, so the panel names the switch it is waiting for and stops there.
+
+With Qvink Memory the two switches are **Memory position → Macro Only** (for both
+short- and long-term) and **Exclude messages after threshold → off**. "Macro Only"
+is the useful one: the block is still built, so Cairn can keep comparing against
+it, but SillyTavern no longer places it.
+
+When the gate opens, the block goes where the other extension had it — same
+position, same depth, same role — so the handover changes exactly one thing.
+Messages whose summaries the block carries stop being sent, using SillyTavern's
+own ignore flag; the chat on screen and on disk is untouched.
 
 ## The shape of the problem
 

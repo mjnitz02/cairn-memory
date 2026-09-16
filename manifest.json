@@ -3,11 +3,11 @@
     "loading_order": 150,
     "requires": [],
     "optional": [],
-    "generate_interceptor": "cairn_holdWorldInfo",
+    "generate_interceptor": "cairn_intercept",
     "js": "index.js",
     "css": "style.css",
     "author": "mjnitz02",
-    "version": "0.7.0",
+    "version": "0.8.0",
     "homePage": "https://github.com/mjnitz02/cairn-memory",
     "auto_update": true
 }

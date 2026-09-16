@@ -148,6 +148,11 @@ function memoryFields(memory) {
     return {
         memory_planned: true,
         memory_source: memory.source,
+        // Which arm the turn is in: Cairn writing the block, or qvink still
+        // writing it and Cairn only measuring (docs/decisions.md D-0027).
+        memory_writing: memory.writing ?? false,
+        memory_handover: memory.handover ?? null,
+        memory_blanked: memory.blanked ?? null,
         memory_scenes: memory.scenes,
         memory_included: memory.included,
         memory_oldest: memory.oldest,
@@ -158,6 +163,7 @@ function memoryFields(memory) {
         memory_evicted: memory.evicted,
         memory_over_cap: memory.overCap,
         memory_cap: memory.cap,
+        memory_cap_estimated: memory.capEstimated ?? false,
         memory_floor: memory.floor,
         memory_other_tokens: memory.otherTokens,
         memory_max_prompt_tokens: memory.maxPromptTokens,
@@ -169,7 +175,7 @@ function memoryFields(memory) {
         // Whether our render of qvink's own selection is their block byte for
         // byte. The handover is gated on this (docs/decisions.md D-0020).
         memory_fidelity: memory.fidelity?.compared ? memory.fidelity.match : null,
-        memory_fidelity_approximate: memory.fidelity?.approximate ?? null,
+        memory_fidelity_resolved: memory.fidelity?.resolved ?? null,
         memory_fidelity_diverge_at: memory.fidelity?.divergeAt ?? null,
         memory_live_chars: memory.fidelity?.liveChars ?? null,
     };

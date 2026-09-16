@@ -39,6 +39,18 @@
 export const FLOOR_FRACTION = 0.5;
 
 /**
+ * The share of the prompt the block may take on a turn nobody has measured yet.
+ *
+ * The cap is `maxPromptTokens - otherTokens`, and `otherTokens` comes from the
+ * observer, which only runs *after* a prompt has gone out. The first generation
+ * of a freshly opened chat therefore has no measurement to draw on, and the
+ * arithmetic would hand the block the entire prompt budget. Half is the same
+ * judgement as the floor: the block never takes more room than everything else
+ * put together, and the next turn replaces the estimate with the measurement.
+ */
+export const UNMEASURED_CAP_FRACTION = 0.5;
+
+/**
  * Reserve when ST's own answer is unavailable (util/context-size.js). Deliberately
  * generous: overestimating the reserve costs a little memory, underestimating it
  * overflows the request, and Cairn never breaks the chat (CLAUDE.md §4.17).
@@ -58,6 +70,16 @@ export function deriveCap({ maxPromptTokens, otherTokens }) {
     const max = Number.isFinite(maxPromptTokens) ? maxPromptTokens : 0;
     const other = Number.isFinite(otherTokens) ? Math.max(0, otherTokens) : 0;
     return Math.max(0, Math.floor(max - other));
+}
+
+/**
+ * The cap before anything has been measured. See UNMEASURED_CAP_FRACTION.
+ *
+ * @param {number} maxPromptTokens ST's usable prompt size.
+ */
+export function estimateCap(maxPromptTokens, { fraction = UNMEASURED_CAP_FRACTION } = {}) {
+    const max = Number.isFinite(maxPromptTokens) ? maxPromptTokens : 0;
+    return Math.max(0, Math.floor(max * fraction));
 }
 
 /**

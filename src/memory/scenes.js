@@ -24,6 +24,9 @@ export const QVINK_KEY = 'qvink_memory';
 /** The injection it parks its short-term block under (its index.js:4023). */
 export const QVINK_SHORT_INJECTION = 'qvink_memory_short';
 
+/** And its long-term one, from the same call (its index.js:4022). */
+export const QVINK_LONG_INJECTION = 'qvink_memory_long';
+
 /**
  * qvink's own defaults, for when it is not installed or has not been configured.
  * Cited so the fallback is a known shape rather than a guess.
@@ -37,6 +40,16 @@ export const QVINK_DEFAULTS = Object.freeze({
     macro: 'memories',
     /** its index.js:113 */
     showPrefill: false,
+    /** its index.js:153 — IN_PROMPT, i.e. after the story string. */
+    position: 0,
+    /** its index.js:154 */
+    depth: 2,
+    /** its index.js:155 — extension_prompt_roles.SYSTEM */
+    role: 0,
+    /** its index.js:156 */
+    scan: false,
+    /** its index.js:136 */
+    excludeAfterThreshold: true,
 });
 
 /**
@@ -112,6 +125,66 @@ export function resolveRendering(extensionSettings, { key = QVINK_KEY } = {}) {
         showPrefill: settings?.show_prefill ?? QVINK_DEFAULTS.showPrefill,
         configured: Boolean(settings),
     };
+}
+
+/**
+ * Where qvink parks the block, so Cairn parks it in the same place.
+ *
+ * The handover has to change *one* thing — who writes — or the measurement
+ * afterwards cannot separate "the block moved" from "the block's contents
+ * changed" (docs/decisions.md D-0027). Moving it to where DESIGN.md §6 wants it
+ * is a later change, made on its own and measured on its own.
+ *
+ * @param {object} extensionSettings `context.extensionSettings`
+ * @returns {{position: number, depth: number, role: number, scan: boolean}}
+ *          `setExtensionPrompt`'s arguments (public/script.js:8926).
+ */
+export function resolvePlacement(extensionSettings, { key = QVINK_KEY } = {}) {
+    const settings = extensionSettings?.[key];
+
+    return {
+        position: numberOr(settings?.short_term_position, QVINK_DEFAULTS.position),
+        depth: numberOr(settings?.short_term_depth, QVINK_DEFAULTS.depth),
+        role: numberOr(settings?.short_term_role, QVINK_DEFAULTS.role),
+        scan: Boolean(settings?.short_term_scan ?? QVINK_DEFAULTS.scan),
+    };
+}
+
+/**
+ * Which of qvink's injections ST would still place this turn.
+ *
+ * Read from what it actually parked rather than from its settings: the parked
+ * object is the thing ST collects, and `getExtensionPrompt` takes anything with a
+ * matching position and a non-empty value (public/script.js:3310-3313). Its
+ * "Macro Only" position is `extension_prompt_types.NONE` (-1, public/script.js:484),
+ * which matches no collected position — so the value stays available for the
+ * fidelity check while nothing places it. That is the switch the handover asks
+ * for (its settings.html:244).
+ *
+ * @param {object} extensionPrompts `context.extensionPrompts`
+ * @returns {string[]} Injection keys, empty when qvink is silent.
+ */
+export function qvinkInjecting(extensionPrompts) {
+    return [QVINK_LONG_INJECTION, QVINK_SHORT_INJECTION].filter((key) => {
+        const parked = extensionPrompts?.[key];
+        return Boolean(parked?.value) && Number(parked.position) >= 0;
+    });
+}
+
+/**
+ * Whether qvink is still blanking summarised messages — its
+ * `exclude_messages_after_threshold` (its index.js:136, :3980). Two extensions
+ * writing the same ignore flag from different thresholds is D-0020's whole point.
+ */
+export function qvinkExcluding(extensionSettings, { key = QVINK_KEY } = {}) {
+    const settings = extensionSettings?.[key];
+    if (!settings) return false;
+    return Boolean(settings.exclude_messages_after_threshold ?? QVINK_DEFAULTS.excludeAfterThreshold);
+}
+
+function numberOr(value, fallback) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
 }
 
 function stringOr(value, fallback) {

@@ -32,8 +32,9 @@ const DEFAULT_HISTORY = 20;
  *           memory?: (turn: {promptTokens: number}) => Promise<object|null>}} [options]
  *        `holding` reports how many World Info entries the holder is keeping in,
  *        so a logged run says whether the fix was on (docs/decisions.md D-0024).
- *        `memory` is the assembler's plan for this turn — what Cairn would inject
- *        and how it compares to what is there now (docs/decisions.md D-0026).
+ *        `memory` is handed what this prompt cost — the other half of the next
+ *        turn's memory budget — and returns the report from the plan the
+ *        interceptor already acted on (docs/decisions.md D-0026, D-0027).
  */
 export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot, holding, memory } = {}) {
     /**
@@ -96,9 +97,9 @@ export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot
     }
 
     /**
-     * The assembler is a diagnostic here, not a writer, so it gets the same
-     * treatment as one: a plan that throws costs us the plan, not the turn
-     * (CLAUDE.md §4.17).
+     * Reporting is a diagnostic, not a write: a report that throws costs us the
+     * report, not the turn (CLAUDE.md §4.17). The plan itself was made and acted
+     * on in the interceptor, long before this runs.
      */
     async function planMemory(promptTokens) {
         if (!memory) return null;

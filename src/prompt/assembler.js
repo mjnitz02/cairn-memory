@@ -19,15 +19,29 @@
  * unchanged, and the first changed byte moves from the block's start to its end
  * — the 13% turn becomes a ~90% one, on D-0019's arithmetic.
  *
- * **Not yet the writer.** This plans and measures; qvink still injects
- * (docs/decisions.md D-0020 sequences the handover after the byte-identical
- * check). Every turn it also renders qvink's *own* selection and compares that
- * to what qvink actually parked, so the reader and the renderer are proven
- * against the live block before anything depends on them.
+ * **The plan is made before the prompt is built, and used.** It runs in the
+ * generate interceptor, the last hook that is still ahead of prompt assembly
+ * (public/script.js:4564 against :4635), and prompt/injector.js writes it. What
+ * it may write is the handover gate's decision (prompt/handover.js): until qvink
+ * is silent and our render has matched its live block byte for byte, the plan is
+ * a measurement and nothing more (docs/decisions.md D-0020, D-0027).
+ *
+ * The cap needs the rest of the prompt's cost, which is only known after a
+ * prompt has gone out — so the observer hands back what it measured, and the
+ * next turn's plan is drawn against it.
  */
-import { QVINK_SHORT_INJECTION, qvinkInjected, readScenes, resolveRendering } from '../memory/scenes.js';
-import { createBudget, deriveCap, recoupled } from '../pipeline/budgeter.js';
+import {
+    QVINK_SHORT_INJECTION,
+    qvinkExcluding,
+    qvinkInjected,
+    qvinkInjecting,
+    readScenes,
+    resolvePlacement,
+    resolveRendering,
+} from '../memory/scenes.js';
+import { createBudget, deriveCap, estimateCap, recoupled } from '../pipeline/budgeter.js';
 import { createSeeSaw } from '../pipeline/scheduler.js';
+import { assessHandover } from './handover.js';
 import { commonPrefixLength, comparePrompts } from '../util/prefix.js';
 import { createMaxPromptTokens } from '../util/context-size.js';
 import { countTokens } from '../util/tokens.js';
@@ -78,45 +92,70 @@ export function blockChars(scenes, { template, separator, macro }) {
  * Takes a *getter*, not a context (docs/st-api-surface.md, Hazards).
  *
  * @param {() => object} getContext Returns a fresh SillyTavern.getContext()
- * @param {{seeSaw?: object, budget?: object, maxPromptTokens?: Function}} [options]
+ * @param {{seeSaw?: object, budget?: object, maxPromptTokens?: Function, own?: boolean}} [options]
  */
 export function createAssembler(getContext, {
     seeSaw = createSeeSaw(),
     budget = createBudget(),
     maxPromptTokens = createMaxPromptTokens(),
+    own = false,
 } = {}) {
     let previousBlock = null;
     let charsPerToken = INITIAL_CHARS_PER_TOKEN;
+    let ownInjection = Boolean(own);
 
     /**
-     * @param {{promptTokens?: number}} [turn] What the observer measured for the
-     *        prompt that just went out — the other half of the budget arithmetic.
-     * @returns {Promise<object>} Counts and offsets only. The block text stays in
-     *          here: a snapshot is logged to disk, and the chat body is not ours
-     *          to write there.
+     * What the observer measured for the prompt that last went out. `null` means
+     * no prompt has gone out in this chat yet, which is a different thing from a
+     * prompt that measured zero.
      */
-    async function plan({ promptTokens = 0 } = {}) {
+    let measured = { promptTokens: null, blockTokens: 0, ours: false };
+    /** Has our renderer matched qvink's live block in this chat? See handover.js. */
+    let proven = false;
+    /** The report the observer logs, from the plan made earlier this turn. */
+    let latest = null;
+
+    /**
+     * @returns {Promise<{report: object, text: string, blank: number[],
+     *                    placement: object, writing: boolean}>}
+     *          `report` is what the inspector and the disk log see — counts and
+     *          offsets, never the chat's own words. `text` and `blank` are for
+     *          the injector, and go no further.
+     */
+    async function plan() {
         const context = getContext();
         const chat = Array.isArray(context.chat) ? context.chat : [];
         const rendering = resolveRendering(context.extensionSettings);
         const scenes = readScenes(chat, { showPrefill: rendering.showPrefill });
 
-        // Everything in the prompt except the memory block. Measured, not assumed:
-        // the block we are planning replaces the one qvink parked, so its cost
-        // comes out of the total before the cap is drawn.
+        // The block qvink has parked right now: the fidelity mirror while it is
+        // still the writer, and the memory cost of the last prompt while it still
+        // has one in there.
         const live = context.extensionPrompts?.[QVINK_SHORT_INJECTION]?.value ?? '';
-        const liveTokens = live ? await countTokens(context, live) : 0;
-        const otherTokens = Math.max(0, promptTokens - liveTokens);
+        const fidelity = await checkFidelity(context, live, renderBlock(qvinkInjected(scenes), rendering));
+        if (fidelity.compared && fidelity.match) proven = true;
+
+        const gate = assessHandover({
+            own: ownInjection,
+            injecting: qvinkInjecting(context.extensionPrompts),
+            excluding: qvinkExcluding(context.extensionSettings),
+            proven,
+        });
+
         const maxPrompt = await maxPromptTokens(context);
-        const cap = deriveCap({ maxPromptTokens: maxPrompt, otherTokens });
+        const { cap, otherTokens, estimated } = await deriveTurnCap(context, maxPrompt, live);
 
         const step = seeSaw.advance(chat.length);
-        const candidates = scenes.filter(
+        // Every summary the block speaks for. The budget may drop the oldest of
+        // them from the prompt, but they stay held back from the raw history
+        // either way: an evicted summary's message is older still, and putting
+        // its prose back would cost many times what the summary did.
+        const covered = scenes.filter(
             (scene) => scene.eligible && scene.index <= step.summarisedThrough,
         );
 
         const fit = budget.fit({
-            scenes: candidates,
+            scenes: covered,
             cap,
             tokensOf: (list) => Math.ceil(blockChars(list, rendering) / charsPerToken),
         });
@@ -129,6 +168,7 @@ export function createAssembler(getContext, {
 
         const change = comparePrompts(previousBlock, text);
         previousBlock = text;
+        measured = { ...measured, blockTokens: tokens, ours: gate.writing };
 
         // What the next step will add, from what this block costs per scene. One
         // scene per message is the ceiling rather than the rule, so this reads a
@@ -146,10 +186,15 @@ export function createAssembler(getContext, {
             debug(`Memory block: ${cap - fit.floor} tokens of slack cannot hold a ${stepTokens}-token step; every step will rebuild.`);
         }
 
-        return {
+        latest = {
             source: 'qvink',
+            writing: gate.writing,
+            handover: gate.reason,
+            handoverDetail: gate.detail,
+            proven,
             scenes: scenes.length,
-            candidates: candidates.length,
+            candidates: covered.length,
+            blanked: covered.length,
             summarisedThrough: step.summarisedThrough,
             stepped: step.stepped,
             stepReason: step.reason,
@@ -161,6 +206,7 @@ export function createAssembler(getContext, {
             evicted: fit.evicted,
             overCap: fit.over,
             cap,
+            capEstimated: estimated,
             floor: fit.floor,
             slack: Math.max(0, cap - fit.floor),
             stepTokens,
@@ -178,12 +224,61 @@ export function createAssembler(getContext, {
                 divergencePercent: divergencePercent(change),
                 previousChars: change.previousLength,
             },
-            fidelity: checkFidelity(live, renderBlock(qvinkInjected(scenes), rendering)),
+            fidelity,
         };
+
+        return {
+            report: latest,
+            text,
+            blank: covered.map((scene) => scene.index),
+            placement: resolvePlacement(context.extensionSettings),
+            writing: gate.writing,
+        };
+    }
+
+    /**
+     * What the finished prompt actually cost, from the observer. The other half
+     * of the cap: everything that is not the memory block has to come out of the
+     * budget before the block is drawn against it.
+     *
+     * @param {{promptTokens?: number}} snapshot
+     */
+    function observe({ promptTokens } = {}) {
+        if (!Number.isFinite(promptTokens) || promptTokens < 0) return;
+        measured = { ...measured, promptTokens };
+    }
+
+    /** The rest of the prompt, and therefore the cap, from that measurement. */
+    async function deriveTurnCap(context, maxPrompt, live) {
+        if (measured.promptTokens === null) {
+            // Nothing has been measured in this chat yet (pipeline/budgeter.js,
+            // UNMEASURED_CAP_FRACTION). One turn later this branch is gone.
+            return { cap: estimateCap(maxPrompt), otherTokens: 0, estimated: true };
+        }
+
+        // Whoever wrote the memory block into the prompt we measured — us if the
+        // gate was open, qvink if it was not.
+        const blockTokens = measured.ours
+            ? measured.blockTokens
+            : (live ? await countTokens(context, live) : 0);
+        const otherTokens = Math.max(0, measured.promptTokens - blockTokens);
+
+        return { cap: deriveCap({ maxPromptTokens: maxPrompt, otherTokens }), otherTokens, estimated: false };
     }
 
     return {
         plan,
+        observe,
+
+        /**
+         * The handover lever, separate from `enabled`, so the run can be measured
+         * with Cairn writing and with qvink writing while everything else — the
+         * observer, the holder, the log — stays exactly the same.
+         */
+        setOwnEnabled(value) {
+            ownInjection = Boolean(value);
+            debug(`Memory block writing ${ownInjection ? 'on' : 'off'}.`);
+        },
 
         /** A new chat is a new block, a new see-saw and a new baseline. */
         reset() {
@@ -191,6 +286,18 @@ export function createAssembler(getContext, {
             budget.reset();
             previousBlock = null;
             charsPerToken = INITIAL_CHARS_PER_TOKEN;
+            measured = { promptTokens: null, blockTokens: 0, ours: false };
+            proven = false;
+            latest = null;
+        },
+
+        /** This turn's report, for the observer's snapshot. */
+        get latest() {
+            return latest;
+        },
+
+        get proven() {
+            return proven;
         },
     };
 }
@@ -203,27 +310,39 @@ export function createAssembler(getContext, {
  * the block *and* silently change its contents, and no measurement afterwards
  * could tell the two apart.
  *
- * `approximate` is the honest part. qvink renders through
- * `substituteParamsExtended` (its index.js:3973), so a template carrying other ST
- * macros resolves there and not here — a mismatch then says nothing about the
- * reader.
+ * qvink renders through `substituteParamsExtended` (its index.js:3973) and we do
+ * not — our block is parked with its macros intact, because ST resolves them
+ * when it collects the injections (public/script.js:3326), so the *prompt* is the
+ * same either way. The comparison is the exception: a template carrying
+ * `{{char}}` would diverge here for a reason that says nothing about the reader,
+ * so the mirror is resolved before comparing and `resolved` records that it was.
  */
-function checkFidelity(live, mirror) {
+async function checkFidelity(context, live, mirror) {
     if (!live) {
-        return { compared: false, match: null, approximate: false, divergeAt: null, liveChars: 0, ourChars: mirror.length };
+        return { compared: false, match: null, resolved: false, divergeAt: null, liveChars: 0, ourChars: mirror.length };
     }
 
-    const approximate = /\{\{.+?\}\}/.test(mirror);
-    const match = live === mirror;
+    const hasMacros = /\{\{.+?\}\}/.test(mirror);
+    const compared = hasMacros ? substitute(context, mirror) : mirror;
+    const match = live === compared;
 
     return {
         compared: true,
         match,
-        approximate,
-        divergeAt: match ? null : commonPrefixLength(live, mirror),
+        resolved: hasMacros,
+        divergeAt: match ? null : commonPrefixLength(live, compared),
         liveChars: live.length,
-        ourChars: mirror.length,
+        ourChars: compared.length,
     };
+}
+
+/** public/scripts/st-context.js:164. Absent in an older ST: compare unresolved. */
+function substitute(context, text) {
+    try {
+        return context.substituteParamsExtended?.(text) ?? text;
+    } catch {
+        return text;
+    }
 }
 
 function macroToken(macro) {

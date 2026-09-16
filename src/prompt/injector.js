@@ -1,6 +1,7 @@
 /**
  * The write side: everything Cairn puts into someone else's prompt goes through
- * here (DESIGN.md §11). P1 step 1 is the World Info holder.
+ * here (DESIGN.md §11). Two writes, both in the generate interceptor: the World
+ * Info holder (P1 step 1) and the memory block (P1 step 3).
  *
  * ST re-derives the activated set from a two-message keyword scan every turn.
  * When that scan happens to seed nothing the whole lore block vanishes and comes
@@ -32,19 +33,38 @@
  * Cairn never breaks the chat (CLAUDE.md §4.17): every path here degrades to
  * "let ST do what it would have done anyway".
  */
+import { SLUG } from '../constants.js';
 import { createRememberedSet } from './lorebook.js';
 import { debug, toastOnce, warn } from '../util/log.js';
+
+/**
+ * Our injection key. `getExtensionPrompt` sorts the keys (public/script.js:3310),
+ * so this name decides where the block sits among other injections at the same
+ * position — it is not the same slot qvink's `qvink_memory_short` held, and the
+ * inspector's locate.js is what shows the difference (docs/decisions.md D-0027).
+ */
+export const MEMORY_INJECTION = `${SLUG}_memory`;
 
 /**
  * Takes a *getter*, not a context — `SillyTavern.getContext()` is a snapshot
  * (docs/st-api-surface.md, Hazards).
  *
  * @param {() => object} getContext Returns a fresh SillyTavern.getContext()
- * @param {{remembered?: object}} [options]
+ * @param {{remembered?: object, memory?: {plan: () => Promise<object>}}} [options]
+ *        `memory` is the assembler. It is asked for a plan every turn and the
+ *        plan says whether Cairn may write it (prompt/handover.js).
  */
-export function createInjector(getContext, { remembered = createRememberedSet() } = {}) {
+export function createInjector(getContext, { remembered = createRememberedSet(), memory = null } = {}) {
     let running = false;
     let enabled = true;
+    /** Whether our block is parked right now, so it is cleared exactly once. */
+    let parked = false;
+    /**
+     * The `extra` objects we set the ignore flag on last turn. Identity, not
+     * index: it survives a branch, and it is what makes clearing our own flags
+     * different from clearing everyone's.
+     */
+    let flagged = new Set();
 
     /** Add-only: learn every entry ST activated, including ones we forced. */
     function onWorldInfoActivated(entries) {
@@ -79,7 +99,15 @@ export function createInjector(getContext, { remembered = createRememberedSet() 
         //
         // A quiet prompt is someone else's utility call, not the roleplay turn
         // whose prefix we are protecting (vectors does the same, its index.js:778).
-        if (!running || !enabled || type === 'quiet' || remembered.size === 0) return;
+        if (!running || type === 'quiet') return;
+
+        await holdWorldInfo();
+        await applyMemory();
+    }
+
+    /** P1 step 1 — push the held lore back in before ST's scan reads it. */
+    async function holdWorldInfo() {
+        if (!enabled || remembered.size === 0) return;
 
         try {
             const { eventSource, eventTypes } = getContext();
@@ -90,6 +118,98 @@ export function createInjector(getContext, { remembered = createRememberedSet() 
             // a broken generation.
             warn('Failed to hold the World Info block; falling back to ST\'s own scan.', err);
             toastOnce('Cairn could not hold the World Info block this turn. Lore is unaffected.');
+        }
+    }
+
+    /**
+     * P1 step 3 — the handover. Park the block and hold back the messages it
+     * speaks for, or park nothing and hold back nothing.
+     *
+     * A failure here leaves *last* turn's injection and flags exactly as they
+     * were. That is the honest degrade: they were coherent with each other, and
+     * a turn's worth of staleness is a stale sentence, where clearing half of it
+     * would be a prompt that says the model has not seen messages it is also not
+     * being shown (CLAUDE.md §4.17).
+     */
+    async function applyMemory() {
+        if (!memory) return;
+
+        try {
+            const plan = await memory.plan();
+
+            if (!plan?.writing) {
+                release();
+                return;
+            }
+
+            park(plan);
+            blank(plan.blank);
+        } catch (err) {
+            warn('Failed to assemble the memory block; leaving the prompt as it was.', err);
+            toastOnce('Cairn could not rebuild the memory block this turn. The previous one is still in the prompt.');
+        }
+    }
+
+    /** public/script.js:8926 — (key, value, position, depth, scan, role). */
+    function park({ text, placement }) {
+        const { setExtensionPrompt } = getContext();
+        setExtensionPrompt(MEMORY_INJECTION, text, placement.position, placement.depth, placement.scan, placement.role);
+        parked = true;
+        debug(`Memory block: parked ${text.length} chars at position ${placement.position}.`);
+    }
+
+    /**
+     * Drop the messages the block speaks for out of the sent history.
+     *
+     * `Symbol.for('ignore')` on `message.extra` (public/scripts/constants.js:25)
+     * blanks a message in both prompt paths — text completion at
+     * public/script.js:5841 and chat completion at public/scripts/openai.js:584 —
+     * without changing the chat's length.
+     *
+     * Written **in place, through the live chat**, never through the array the
+     * interceptor is handed (DESIGN.md §9). Two reasons, and the second is a trap:
+     * ST's `coreChat` entries are fresh objects that share `extra` by reference
+     * (public/script.js:4525), so writing to the live message reaches them; and
+     * `coreChat` is a *filtered* copy whose own `index` field counts the filtered
+     * array (:4496, :4525), so a system message anywhere earlier in the chat
+     * shifts it away from ours. Indexes here are the live chat's own.
+     *
+     * Every message we flagged is written every turn, set or cleared. The flag
+     * lives on the real `extra` object, so one left behind from a previous turn
+     * would blank a message nothing is summarising any more.
+     */
+    function blank(indexes) {
+        const { chat, symbols } = getContext();
+        const ignore = symbols?.ignore ?? Symbol.for('ignore');
+        const next = new Set();
+
+        for (const index of indexes ?? []) {
+            const extra = chat?.[index]?.extra;
+            if (!extra) continue;
+            extra[ignore] = true;
+            next.add(extra);
+        }
+
+        // Only ever our own flags: the symbol is `Symbol.for('ignore')`, shared
+        // with whoever else is hiding a message, and clearing theirs would put
+        // their message back in the prompt on our schedule.
+        for (const extra of flagged) {
+            if (!next.has(extra)) delete extra[ignore];
+        }
+        flagged = next;
+    }
+
+    /** Un-write both halves: no block of ours in the prompt, no message held back. */
+    function release() {
+        try {
+            if (parked) {
+                getContext().setExtensionPrompt(MEMORY_INJECTION, '');
+                parked = false;
+                debug('Memory block: released the injection.');
+            }
+            blank([]);
+        } catch (err) {
+            warn('Failed to release the memory block.', err);
         }
     }
 
@@ -112,6 +232,9 @@ export function createInjector(getContext, { remembered = createRememberedSet() 
             // Whatever we were holding is stale by the time we are switched back
             // on, and a stale hold is worse than a rebuild.
             remembered.clear();
+            // Switching Cairn off has to take the block and the blanking with it,
+            // or the chat keeps generating against a prompt nobody is maintaining.
+            release();
             debug('Injector stopped.');
         },
 
@@ -127,10 +250,15 @@ export function createInjector(getContext, { remembered = createRememberedSet() 
         /** A new chat is a new set — another character's lore is not ours to hold. */
         reset() {
             remembered.clear();
+            release();
         },
 
         intercept,
         remembered,
+
+        get parked() {
+            return parked;
+        },
 
         get running() {
             return running;

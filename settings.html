@@ -45,6 +45,17 @@
                 tokens of stale lore; saves a full prompt rebuild each time an entry flickers.
             </div>
 
+            <label class="checkbox_label" for="cairn_ownMemoryBlock">
+                <input id="cairn_ownMemoryBlock" type="checkbox">
+                <span>Write the memory block</span>
+            </label>
+            <div class="cairn-hint">
+                Lets Cairn put the summaries into the prompt and keep the messages they cover out
+                of it, instead of Qvink Memory doing both. Cairn waits until Qvink is silent —
+                set its short- and long-term memory position to <b>Macro Only</b> and turn off
+                <b>Exclude messages after threshold</b> — and says below what it is waiting for.
+            </div>
+
             <label class="checkbox_label" for="cairn_debugLogging">
                 <input id="cairn_debugLogging" type="checkbox">
                 <span>Debug logging</span>

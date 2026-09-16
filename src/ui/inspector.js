@@ -168,14 +168,34 @@ function renderMemory(memory) {
         ? `<span class="${SLUG}-poor">evicted ${memory.evicted}</span>`
         : 'no eviction';
 
+    const title = memory.writing
+        ? `Memory block Cairn is injecting (${fmt(memory.tokens)} tokens)`
+        : `Memory block Cairn would inject (${fmt(memory.tokens)} tokens)`;
+    const budget = memory.capEstimated
+        ? `${fmt(memory.tokens)} / ${fmt(memory.cap)} tokens (estimated until the first prompt is measured)`
+        : `${fmt(memory.tokens)} / ${fmt(memory.cap)} tokens, floor ${fmt(memory.floor)} \u2014 ${evicted}`;
+
     return renderRecoupled(memory) + `
         <details class="${SLUG}-details">
-            <summary>Memory block Cairn would inject (${fmt(memory.tokens)} tokens)${renderFidelity(memory.fidelity)}</summary>
+            <summary>${title}${renderFidelity(memory.fidelity)}</summary>
+            ${row('Writing', renderHandover(memory))}
             ${row('Scenes', `${fmt(memory.included)} in the block, of ${fmt(memory.scenes)} summarised (messages ${memory.oldest ?? '—'}\u2013${memory.newest ?? '—'})`)}
             ${row('See-saw', `${step} at message ${memory.summarisedThrough}, ${memory.rawWindow} kept raw`)}
-            ${row('Budget', `${fmt(memory.tokens)} / ${fmt(memory.cap)} tokens, floor ${fmt(memory.floor)} \u2014 ${evicted}`)}
+            ${row('Budget', budget)}
             ${row('Block change', change)}
         </details>`;
+}
+
+/**
+ * Whether Cairn is the prompt's writer this turn, and if not, which switch would
+ * make it one (src/prompt/handover.js). A gate that closes silently would look
+ * exactly like a gate that is open and working.
+ */
+function renderHandover(memory) {
+    if (memory.writing) {
+        return `yes \u2014 ${fmt(memory.blanked)} summarised messages held out of the history`;
+    }
+    return `<span class="${SLUG}-fair">no \u2014 ${escapeHtml(memory.handoverDetail ?? '')}</span>`;
 }
 
 /**
@@ -202,8 +222,8 @@ function renderFidelity(fidelity) {
     if (!fidelity?.compared) return '';
     if (fidelity.match) return ` <span class="dim">— matches qvink byte for byte</span>`;
 
-    const caveat = fidelity.approximate
-        ? ' (template uses macros we do not resolve)'
+    const caveat = fidelity.resolved
+        ? ' (compared after resolving the template\'s macros)'
         : '';
     return ` <span class="${SLUG}-poor">— diverges from qvink at ${fmt(fidelity.divergeAt)}${caveat}</span>`;
 }

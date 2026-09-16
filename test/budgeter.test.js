@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createBudget, deriveCap, FLOOR_FRACTION } from '../src/pipeline/budgeter.js';
+import { createBudget, deriveCap, estimateCap, FLOOR_FRACTION, UNMEASURED_CAP_FRACTION } from '../src/pipeline/budgeter.js';
 
 /** Each scene costs 10 tokens; nothing here depends on the real tokenizer. */
 const scenes = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => ({ index: from + i }));
@@ -17,6 +17,22 @@ describe('deriving the cap', () => {
     it('treats missing measurements as zero rather than as NaN', () => {
         expect(deriveCap({ maxPromptTokens: undefined, otherTokens: 100 })).toBe(0);
         expect(deriveCap({ maxPromptTokens: 500, otherTokens: undefined })).toBe(500);
+    });
+});
+
+describe('the cap before anything has been measured', () => {
+    it('gives the block a share of the prompt rather than all of it', () => {
+        // otherTokens is only known after a prompt has gone out, and on the first
+        // turn of a chat there has not been one. Handing the block the whole
+        // budget there would overflow the request it is about to be part of.
+        expect(estimateCap(10_000)).toBe(10_000 * UNMEASURED_CAP_FRACTION);
+        expect(estimateCap(10_000)).toBeLessThan(deriveCap({ maxPromptTokens: 10_000, otherTokens: 0 }));
+    });
+
+    it('is never negative, whatever ST reports', () => {
+        expect(estimateCap(0)).toBe(0);
+        expect(estimateCap(-1)).toBe(0);
+        expect(estimateCap(undefined)).toBe(0);
     });
 });
 

@@ -375,8 +375,10 @@ is free and the chat history stays usable. Fixes symptom A on its own.
 *Landed:* the World Info holder (0.6.0) — the lore block is add-only, so a keyword-scan miss can
 no longer evict it (`docs/decisions.md` D-0023, D-0024). The assembler (0.7.0) — growth and
 eviction are separate cadences, so a see-saw step appends at the block's tail and the head keeps
-its offsets (`docs/decisions.md` D-0026). *Next:* the handover, once the fidelity check says our
-render of qvink's own selection is its block byte for byte (D-0020).
+its offsets (D-0026). The handover (0.8.0) — Cairn parks the block and owns the blanking
+threshold, behind a gate that stays shut until qvink is silent and our render of its block has
+matched it byte for byte (D-0020, D-0027). *Next:* the measured run — P1's numbers on a real
+chat with Cairn as the writer, which is what says whether §4's prediction holds.
 
 The measured target is *where* a see-saw step breaks the prefix, not moving the block below the
 history — the history is the part that grows, so anything under it shifts every turn. Keep the

@@ -9,6 +9,43 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-09-15
+
+### Added
+
+- **Cairn writes the memory block** (`src/prompt/injector.js`). The plan is made
+  in the generate interceptor, ahead of prompt assembly, and parked with
+  `setExtensionPrompt` at the same position, depth and role the existing memory
+  extension used — so the handover changes who writes and nothing else
+  (`docs/decisions.md` D-0027).
+- **Cairn holds summarised messages out of the sent history**, taking over the
+  blanking threshold as well as the injection (D-0020). Written in place on the
+  live chat with SillyTavern's own ignore flag; nothing is cloned and nothing
+  reaches the saved chat.
+- **The handover gate** (`src/prompt/handover.js`). Cairn writes only when the
+  setting is on, the other extension is placing neither of its injections and has
+  stopped excluding messages, and our render of its own block has matched it byte
+  for byte in this chat. Otherwise it plans and measures as before, and the
+  inspector names the switch it is waiting for.
+- **Setting: "Write the memory block"** (on by default; the gate still decides
+  each turn).
+- Inspector: a "Writing" line saying whether Cairn is the writer this turn and,
+  when it is not, why; log fields `memory_writing`, `memory_handover`,
+  `memory_blanked`, `memory_cap_estimated`.
+
+### Changed
+
+- The memory block is planned once per turn in the interceptor rather than after
+  the prompt has gone out; the observer now feeds its measurement back for the
+  next turn's budget.
+- On the first turn of a chat — before any prompt has been measured — the block is
+  capped at half the prompt budget rather than all of it.
+- The fidelity check resolves a template's macros before comparing, so a template
+  carrying `{{char}}` is no longer a permanent false divergence. Its log field
+  `memory_fidelity_approximate` is now `memory_fidelity_resolved`.
+- The generate interceptor is now `cairn_intercept` (it was
+  `cairn_holdWorldInfo`); it carries both writes.
+
 ## [0.7.0] — 2026-09-15
 
 ### Added

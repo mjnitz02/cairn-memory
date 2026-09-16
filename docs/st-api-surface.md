@@ -70,6 +70,19 @@ literally against the cited line.
 | `if (!dryRun) {` | Dry runs skip interceptors, so they cannot pollute the held set | `public/script.js` | 4562 |
 | `getMaxPromptTokens` | The prompt budget the memory block is capped against — context window minus the reserved response | `public/script.js` | 5981 |
 | `src="script.js"` | The URL ST loads it under, so `/script.js` is the same module however deeply we are installed | `public/index.html` | 8218 |
+| `setExtensionPrompt` | Park the memory block | `public/scripts/st-context.js` | 153 |
+| `setExtensionPrompt` | Signature: `(key, value, position, depth, scan, role, filter)` | `public/script.js` | 8926 |
+| `.sort()` | `getExtensionPrompt` sorts the keys, so our key name decides order within a position | `public/script.js` | 3310 |
+| `.filter(x => x.position == position && x.value)` | An injection is placed only with a matching position and a non-empty value — how "Macro Only" silences one | `public/script.js` | 3312 |
+| `substituteParamsExtended` | Resolve a template's macros before comparing it to qvink's block | `public/scripts/st-context.js` | 164 |
+| `export function substituteParamsExtended` | Signature and semantics | `public/script.js` | 2815 |
+| `symbols: {` | Where `getContext()` exposes the ignore flag | `public/scripts/st-context.js` | 302 |
+| `IGNORE_SYMBOL` | The flag that drops a message from the sent history | `public/scripts/constants.js` | 25 |
+| `if (chatItem.extra?.[IGNORE_SYMBOL]) {` | Honoured on the text-completion path | `public/script.js` | 5841 |
+| `if (chat[j].extra?.[IGNORE_SYMBOL]) {` | ...and on the chat-completion path | `public/scripts/openai.js` | 584 |
+| `let coreChat = chat.filter` | The interceptor's array is **filtered**, so its indexes are not the chat's | `public/script.js` | 4496 |
+| `...chatItem,` | Its entries are fresh objects that **share `extra` by reference** with the real chat | `public/script.js` | 4525 |
+| `index,` | The index they carry counts the *filtered* array — never use it as a chat index | `public/script.js` | 4527 |
 
 ## Verified, not yet called
 
@@ -80,17 +93,13 @@ does not rest on an unchecked claim; each moves up as its phase lands.
 |---|---|---|---|
 | `chatMetadata` | Chat-global stores: canon, episodes, entity index | `public/scripts/st-context.js` | 135 |
 | `saveMetadataDebounced` | Persist those stores | `public/scripts/st-context.js` | 136 |
-| `setExtensionPrompt` | Our own injections | `public/scripts/st-context.js` | 153 |
 | `ConnectionManagerRequestService` | Profile-routed memory-model calls | `public/scripts/st-context.js` | 294 |
-| `setExtensionPrompt` | Signature and stored shape | `public/script.js` | 8926 |
 | `CUSTOM_WI_OUTLET` | Where ST parks outlet content, unplaced | `public/script.js` | 4676 |
 | `outlet` | `world_info_position.outlet === 7` | `public/scripts/world-info.js` | 863 |
 | `outletName` | Declared WI entry field, editable in the WI UI | `public/scripts/world-info.js` | 4108 |
 | `outlet::` | The `{{outlet::key}}` macro that places parked content | `public/scripts/macros.js` | 668 |
 | `ConnectionManagerRequestService` | Class definition and `sendRequest` contract | `public/scripts/extensions/shared.js` | 392 |
 | `ExtractedData` | `{ content, reasoning }`, the non-streaming return shape | `public/scripts/custom-request.js` | 60 |
-| `coreChat` | Entries are fresh objects but **share `extra` by reference** with the real chat | `public/script.js` | 4539 |
-| `IGNORE_SYMBOL` | The flag that drops a message from the sent history | `public/scripts/constants.js` | 25 |
 | `doChatInject` | Where `IN_CHAT` injections are spliced into the history | `public/script.js` | 5628 |
 | `flushWIInjections` | ST clears depth and outlet injections every generation | `public/script.js` | 5678 |
 | `getOutletPrompt` | Resolves `{{outlet::key}}` from the parked injection | `public/scripts/macros.js` | 597 |
@@ -98,6 +107,14 @@ does not rest on an unchecked claim; each moves up as its phase lands.
 | `WIOutletEntries` | Entries sharing an `outletName` group into one block | `public/scripts/world-info.js` | 5253 |
 
 ## Hazards
+
+**The generate interceptor's `chat` is not `context.chat`.** It is `coreChat`:
+system messages filtered out (`public/script.js:4496`), the last message popped
+on a swipe (`:4498`), and every entry rebuilt as `{...chatItem, index}` (`:4525`)
+— a fresh object whose `index` counts the *filtered* array. The objects share
+`extra` by reference, so a flag written through the live chat reaches them.
+Address messages by the live chat's index and write through the live chat;
+`coreChat`'s own index is a different number that usually agrees.
 
 **`SillyTavern.getContext()` is a snapshot, not a handle.** It copies primitives
 (`maxContext`) and captures object references (`extensionPrompts`,
