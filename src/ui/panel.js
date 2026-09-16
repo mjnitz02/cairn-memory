@@ -1,4 +1,5 @@
 import { EXTENSION_PATH, SLUG } from '../constants.js';
+import { DEFAULT_SUMMARY_PROMPT } from '../memory/scene-strategy.js';
 import { setDebugEnabled } from '../util/log.js';
 
 /**
@@ -11,7 +12,9 @@ import { setDebugEnabled } from '../util/log.js';
  * @param {object} context SillyTavern.getContext()
  * @param {{onEnabledChange?: (enabled: boolean) => void,
  *           onLogToDiskChange?: (enabled: boolean) => void,
- *           onHoldWorldInfoChange?: (enabled: boolean) => void}} [handlers]
+ *           onHoldWorldInfoChange?: (enabled: boolean) => void,
+ *           onOwnMemoryBlockChange?: (enabled: boolean) => void,
+ *           onMemoryProfileChange?: (profileId: string) => void}} [handlers]
  * @returns {Promise<HTMLElement>} The element the inspector renders into.
  */
 export async function renderSettingsPanel(context, handlers = {}) {
@@ -24,10 +27,12 @@ export async function renderSettingsPanel(context, handlers = {}) {
     bindCheckbox(context, 'showInspector', (value) => toggleInspector(value));
     bindCheckbox(context, 'logToDisk', (value) => handlers.onLogToDiskChange?.(value));
     bindCheckbox(context, 'holdWorldInfo', (value) => handlers.onHoldWorldInfoChange?.(value));
+    bindCheckbox(context, 'ownMemoryBlock', (value) => handlers.onOwnMemoryBlockChange?.(value));
     bindCheckbox(context, 'debugLogging', (value) => setDebugEnabled(value));
 
     populateProfiles(context, settings.memoryProfileId);
-    bindSelect(context, 'memoryProfileId');
+    bindSelect(context, 'memoryProfileId', (value) => handlers.onMemoryProfileChange?.(value));
+    bindSummaryPrompt(context);
 
     toggleInspector(settings.showInspector);
     return document.getElementById(`${SLUG}_inspector`);
@@ -53,6 +58,26 @@ function populateProfiles(context, selectedId) {
         options.push(`<option value="${escapeHtml(profile.id)}"${selected}>${escapeHtml(profile.name)}</option>`);
     }
     select.innerHTML = options.join('');
+}
+
+/**
+ * Shows the default rather than an empty box, so there is something to edit, and
+ * stores the default as empty, so an unedited prompt keeps following the default.
+ */
+function bindSummaryPrompt(context) {
+    const input = field('summaryPrompt');
+    if (!input) return;
+    const store = (value) => {
+        context.extensionSettings[SLUG].summaryPrompt = value.trim() === DEFAULT_SUMMARY_PROMPT.trim() ? '' : value;
+        context.saveSettingsDebounced();
+    };
+
+    input.value = context.extensionSettings[SLUG].summaryPrompt || DEFAULT_SUMMARY_PROMPT;
+    input.addEventListener('input', () => store(input.value));
+    field('summaryPromptReset')?.addEventListener('click', () => {
+        input.value = DEFAULT_SUMMARY_PROMPT;
+        store(input.value);
+    });
 }
 
 function bindCheckbox(context, key, onChange) {

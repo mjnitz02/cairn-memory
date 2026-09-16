@@ -55,6 +55,16 @@ export function error(...args) {
 export function toastOnce(message) {
     if (toasted.has(message)) return;
     toasted.add(message);
+    toast(message);
+}
+
+/**
+ * A user-visible warning, every time. For a caller that counts for itself — a
+ * failure streak, say — where once per session would hide the next streak.
+ *
+ * @param {string} message
+ */
+export function toast(message) {
     warn(message);
     if (typeof toastr !== 'undefined') toastr.warning(message, DISPLAY_NAME);
 }

@@ -9,6 +9,157 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ## [Unreleased]
 
+### Added
+
+- Cairn writes its own summaries. After each reply it summarises the messages
+  waiting for one, one request at a time, through the **Memory connection**
+  profile, and stores each summary on its message in `message.extra.cairn`. It
+  starts after the newest summary your existing extension wrote, and waits while
+  Qvink Memory is enabled with Auto Summarize on. A failed summary writes nothing and warns
+  once per run of failures. A message that fails three times is skipped for the
+  session, and the memory step waits before it. **Back up your chats before
+  turning off Qvink's Auto Summarize**: this is the first version that writes to
+  message data.
+- **Summary prompt** setting. `{{message}}` is the message and `{{history}}` is
+  the summaries before it, with Qvink's `{{#if history}}` syntax, so a Qvink
+  prompt can be pasted in unchanged. Left unedited, it follows the built-in
+  default. **Reset to default** restores it.
+- Cairn's summaries appear under their messages, as Qvink's do. The message being
+  summarised shows that a request is out, the ones behind it show they're
+  waiting, and a failed summary shows why and whether it will be retried.
+- The inspector has a **Summaries** section that updates as summaries are written.
+  It shows what Cairn is doing or waiting on, what the open chat has cost
+  (summaries, requests, failures, time, estimated tokens), and any message it gave
+  up on. The memory block section says who wrote the summaries in it and whether
+  a step is waiting.
+- Log fields `memory_source` (now `qvink`, `cairn` or `mixed`),
+  `memory_cairn_scenes`, `memory_step_waiting`, `prompt_near_limit`, and
+  `summary_*`: gate, in flight, pending, given up, and running totals of calls,
+  writes, failures, time and tokens. `summary_prompt_default` is also new.
+
+### Changed
+
+- **Cairn no longer mirrors Qvink Memory.** The block uses Qvink's default
+  template, separator and placement as Cairn's own, whatever Qvink's settings
+  say, and Cairn no longer waits to match Qvink's block byte for byte before
+  taking over. A disabled or uninstalled Qvink counts as silent: its leftover
+  **Auto Summarize** and **Exclude messages after threshold** settings are
+  ignored, so Cairn writes the block and the summaries straight after a reload.
+  If your Qvink template, separator or prefill display wasn't the default, the
+  block's wording changes and the first turn rebuilds. The inspector no longer
+  shows the byte-for-byte match, and the handover reasons `unproven` and
+  `unplaced` are gone. Log fields `memory_placement`,
+  `memory_placement_defaulted`, `memory_fidelity`, `memory_fidelity_resolved`,
+  `memory_fidelity_diverge_at` and `memory_live_chars` are gone.
+- **The memory block's cap is 35% of the max prompt**, with no setting. It
+  replaces Qvink's short-term limit, which Cairn no longer reads. With a
+  7,500-token Qvink limit on a 22,016-token prompt, the cap moves to 7,705 tokens.
+  That costs one rebuild on the first turn after updating. The log field
+  `memory_cap_type` is gone.
+- A memory step now waits for a missing summary. The block stays where it is
+  instead of moving past a message with no summary, so no message leaves the
+  history without a summary to replace it. This can't happen while your
+  summarising extension keeps up, because Cairn only waits on messages after
+  the newest one that extension summarised.
+- Cairn reads its own summaries from `message.extra.cairn` alongside your
+  existing ones, and prefers its own when a message has both. A summary whose
+  message has been edited is ignored until it is written again.
+
+## [0.9.0] — 2026-09-16
+
+### Changed
+
+- **The memory block is a function of the chat.** Its cap is the short-term limit
+  already set in the summarising extension (tokens, or percent of the prompt), and
+  nothing measured from a previous prompt feeds back into the next plan. The first
+  turn of a session rebuilds the block and trims it to half the limit; from the
+  second turn on it is byte-identical until a step appends to its end
+  (`docs/decisions.md` D-0033). This replaces the measured budget, the growth
+  projection and the half-budget first-turn estimate, which together took a
+  reloaded page four turns to reach a stable prefix. Log fields
+  `memory_cap_estimated`, `memory_evicted_provisionally` and `memory_other_tokens`
+  are gone; `memory_cap_type` is new.
+- The recommended memory model is now a strong one, GLM-4.7 class or better
+  (`docs/decisions.md` D-0036).
+
+### Fixed
+
+- The inspector no longer counts a block parked for a macro ("Macro Only") as a
+  second writer. SillyTavern never places it, so after a handover the panel
+  warned about two writers and the log said `writers: 2` while Cairn was the only
+  one writing. Parked injections are still listed.
+
+## [0.8.0] — 2026-09-15
+
+### Added
+
+- **Cairn writes the memory block** (`src/prompt/injector.js`). The plan is made
+  in the generate interceptor, ahead of prompt assembly, and parked with
+  `setExtensionPrompt` at the same position, depth and role the existing memory
+  extension used — so the handover changes who writes and nothing else
+  (`docs/decisions.md` D-0027).
+- **Cairn holds summarised messages out of the sent history**, taking over the
+  blanking threshold as well as the injection (D-0020). Written in place on the
+  live chat with SillyTavern's own ignore flag; nothing is cloned and nothing
+  reaches the saved chat.
+- The block's placement is mirrored from the other extension only when it names a
+  position SillyTavern actually collects. "Macro Only" — the setting the handover
+  asks you to change — is not a placement, so Cairn uses its own default and says
+  so in the panel. It refuses to hold messages back at all if its block would not
+  be placed (`docs/decisions.md` D-0029). Log fields `memory_placement`,
+  `memory_placement_defaulted`.
+- **The handover gate** (`src/prompt/handover.js`). Cairn writes only when the
+  setting is on, the other extension is placing neither of its injections and has
+  stopped excluding messages, and our render of its own block has matched it byte
+  for byte in this chat. Otherwise it plans and measures as before, and the
+  inspector names the switch it is waiting for.
+- **Setting: "Write the memory block"** (on by default; the gate still decides
+  each turn).
+- Inspector: a "Writing" line saying whether Cairn is the writer this turn and,
+  when it is not, why; log fields `memory_writing`, `memory_handover`,
+  `memory_blanked`, `memory_cap_estimated`.
+
+### Changed
+
+- The memory block is planned once per turn in the interceptor rather than after
+  the prompt has gone out; the observer now feeds its measurement back for the
+  next turn's budget.
+- On the first turn of a chat — before any prompt has been measured — the block is
+  capped at half the prompt budget rather than all of it, and any eviction that
+  cap causes is **provisional**: the block is cut to fit for that turn, but the
+  summaries come back on the first measured turn that has room for them
+  (`docs/decisions.md` D-0028). Log field `memory_evicted_provisionally`.
+- The fidelity check resolves a template's macros before comparing, so a template
+  carrying `{{char}}` is no longer a permanent false divergence. Its log field
+  `memory_fidelity_approximate` is now `memory_fidelity_resolved`.
+- The generate interceptor is now `cairn_intercept` (it was
+  `cairn_holdWorldInfo`); it carries both writes.
+
+## [0.7.0] — 2026-09-15
+
+### Added
+
+- **Cairn now plans the memory block, and the inspector shows what it would
+  inject.** It reads the summaries Qvink Memory has already written and works out
+  which of them belong in the prompt — but it does not inject anything yet. The
+  panel and the log carry the plan beside the block that is actually there, so
+  the change can be measured before it is made.
+- **The block's two cadences are separated.** Summaries enter the block in steps,
+  and old ones are dropped only when the prompt genuinely cannot hold them —
+  where today both happen at once. The point is where the prompt breaks: a step
+  now adds to the *end* of the block, leaving the beginning where the model
+  already has it cached, instead of rewriting the block from its first character
+  and everything below it with it. Simulated over 170 turns, that is 2 full
+  rebuilds instead of 90.
+- **How much room the block gets is worked out, not configured.** Cairn asks
+  SillyTavern how large the prompt may be and subtracts what the rest of the
+  prompt measured last turn. No new setting.
+- The inspector reports where in the block the first change fell — near the end is
+  the whole point of this release — and warns when the context is too tight for
+  the two cadences to stay apart, which otherwise looks exactly like working.
+- The inspector also says whether Cairn's version of the block matches Qvink's
+  byte for byte. Cairn will not take over the injection until it does.
+
 ## [0.6.0] — 2026-09-15
 
 ### Added

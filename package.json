@@ -1,6 +1,6 @@
 {
     "name": "cairn-memory",
-    "version": "0.6.0",
+    "version": "0.9.0",
     "description": "SillyTavern extension: typed, compacted memory with a single writer to the prompt.",
     "private": true,
     "type": "module",

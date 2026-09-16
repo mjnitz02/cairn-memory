@@ -27,6 +27,16 @@ export default [
         },
     },
     {
+        // DESIGN.md §9: a clone silently drops other extensions' Symbol-keyed flags.
+        files: ['src/**/*.js', 'index.js'],
+        rules: {
+            'no-restricted-globals': ['error', {
+                name: 'structuredClone',
+                message: 'Never clone chat data (DESIGN.md §9). Mutate in place.',
+            }],
+        },
+    },
+    {
         // The logger is the one place allowed to touch console.
         files: ['src/util/log.js'],
         rules: { 'no-console': 'off' },

@@ -16,8 +16,21 @@
             <select id="cairn_memoryProfileId" class="text_pole"></select>
             <div class="cairn-hint">
                 The connection profile Cairn uses to write memory. This must not be your roleplay
-                model — roleplay models write flowery summaries.
-                <b>Not used yet:</b> Cairn currently only measures, and makes no requests of its own.
+                model — roleplay models write flowery summaries. Cairn summarises each message after
+                a reply arrives, starting after the newest summary Qvink Memory wrote, and waits
+                while Qvink is enabled with <b>Auto Summarize</b> on.
+            </div>
+
+            <label for="cairn_summaryPrompt">Summary prompt</label>
+            <textarea id="cairn_summaryPrompt" class="text_pole textarea_compact" rows="8"></textarea>
+            <div class="cairn-hint">
+                The instructions the memory model gets for summarising one message:
+                <code>{{message}}</code> is the message, <code>{{history}}</code> the summaries just
+                before it. Editing it does not rewrite summaries already written.
+            </div>
+            <div id="cairn_summaryPromptReset" class="menu_button menu_button_icon">
+                <i class="fa-solid fa-rotate-left"></i>
+                <span>Reset to default</span>
             </div>
 
             <label class="checkbox_label" for="cairn_showInspector">
@@ -43,6 +56,18 @@
                 Keeps a lorebook entry in the prompt once it has activated, instead of letting it
                 drop out on a turn whose keyword scan happens to miss it. Costs a few hundred
                 tokens of stale lore; saves a full prompt rebuild each time an entry flickers.
+            </div>
+
+            <label class="checkbox_label" for="cairn_ownMemoryBlock">
+                <input id="cairn_ownMemoryBlock" type="checkbox">
+                <span>Write the memory block</span>
+            </label>
+            <div class="cairn-hint">
+                Lets Cairn put the summaries into the prompt and keep the messages they cover out
+                of it, instead of Qvink Memory doing both. Cairn waits until Qvink is silent —
+                disable it, or set its short- and long-term memory position to <b>Macro Only</b>
+                and turn off <b>Exclude messages after threshold</b> — and says below what it is
+                waiting for.
             </div>
 
             <label class="checkbox_label" for="cairn_debugLogging">

@@ -263,3 +263,228 @@ describe('the holder when Cairn is switched off', () => {
         expect(injector.remembered.size).toBe(6);
     });
 });
+
+/**
+ * P1 step 3 — the handover (docs/decisions.md D-0027).
+ *
+ * The injector is the only thing that writes, so these are the tests that say
+ * what lands in someone else's prompt: the block goes where the plan says, the
+ * messages it speaks for stop being sent, and both come back off together.
+ */
+const IGNORE = Symbol.for('ignore');
+
+/** The plan the assembler hands over. Placement mirrors qvink's (its index.js:153). */
+function makePlan({ text = 'BLOCK', blank = [], writing = true } = {}) {
+    return {
+        text,
+        blank,
+        writing,
+        placement: { position: 0, depth: 2, role: 0, scan: false },
+        report: {},
+    };
+}
+
+function withMemory({ chat, plan = makePlan() } = {}) {
+    const context = createContext({ chat });
+    const calls = [];
+    const memory = {
+        plan: async () => {
+            calls.push(true);
+            return typeof plan === 'function' ? plan() : plan;
+        },
+    };
+    const injector = createInjector(() => context, { memory });
+    injector.start();
+    return { context, injector, calls };
+}
+
+/**
+ * ST's `coreChat` (public/script.js:4496-4528): system messages filtered out,
+ * then each entry rebuilt as `{...chatItem, index}` — a fresh object that shares
+ * `extra` by reference, carrying an index that counts the *filtered* array.
+ */
+function asCoreChat(chat) {
+    return chat.filter((message) => !message.is_system)
+        .map((message, index) => ({ ...message, index }));
+}
+
+function summarised(count, { system = [] } = {}) {
+    return Array.from({ length: count }, (_, i) => ({
+        name: i % 2 ? 'Aster' : 'Wren',
+        is_user: i % 2 === 0,
+        is_system: system.includes(i),
+        mes: `line ${i}`,
+        extra: { qvink_memory: { memory: `summary ${i}` } },
+    }));
+}
+
+describe('writing the memory block', () => {
+    it('parks the block where the plan says to', async () => {
+        const { context, injector } = withMemory({ chat: summarised(4) });
+
+        await injector.intercept([], 4096, () => {}, undefined);
+
+        expect(context.extensionPrompts.cairn_memory).toMatchObject({
+            value: 'BLOCK', position: 0, depth: 2, role: 0, scan: false,
+        });
+    });
+
+    it('holds back exactly the messages the block speaks for', async () => {
+        const chat = summarised(6);
+        const { injector } = withMemory({ chat, plan: makePlan({ blank: [0, 1, 2] }) });
+
+        await injector.intercept(asCoreChat(chat), 4096, () => {}, undefined);
+
+        expect(chat.map((message) => Boolean(message.extra[IGNORE]))).toEqual([
+            true, true, true, false, false, false,
+        ]);
+    });
+
+    it('blanks by the live chat index, not the index coreChat carries', async () => {
+        // A system message earlier in the chat shifts every coreChat index after
+        // it. Following coreChat's own `index` here would blank the wrong
+        // messages, and the prompt would look entirely plausible either way.
+        const chat = summarised(6, { system: [1] });
+        const core = asCoreChat(chat);
+        const { injector } = withMemory({ chat, plan: makePlan({ blank: [4] }) });
+
+        await injector.intercept(core, 4096, () => {}, undefined);
+
+        expect(chat[4].extra[IGNORE]).toBe(true);
+        // ...and the entry ST will actually render sees it, because `extra` is
+        // shared by reference (public/script.js:4525).
+        expect(core.find((entry) => entry.mes === 'line 4').extra[IGNORE]).toBe(true);
+        expect(core.filter((entry) => entry.extra[IGNORE]).length).toBe(1);
+    });
+
+    it('mutates in place and never clones a message', async () => {
+        // DESIGN.md §9: structuredClone drops Symbol-keyed flags with no error,
+        // which is how WTrackerLite silently undid qvink's blanking.
+        const chat = summarised(3);
+        const identities = chat.map((message) => message.extra);
+        const { injector } = withMemory({ chat, plan: makePlan({ blank: [0] }) });
+
+        await injector.intercept(asCoreChat(chat), 4096, () => {}, undefined);
+
+        expect(chat.map((message) => message.extra)).toEqual(identities);
+    });
+
+    it('clears a flag from a turn that no longer covers that message', async () => {
+        const chat = summarised(4);
+        let blanked = [0, 3];
+        const { injector } = withMemory({ chat, plan: () => makePlan({ blank: blanked }) });
+
+        await injector.intercept(asCoreChat(chat), 4096, () => {}, undefined);
+        blanked = [0];
+        await injector.intercept(asCoreChat(chat), 4096, () => {}, undefined);
+
+        expect(chat[3].extra[IGNORE]).toBeUndefined();
+        expect(chat[0].extra[IGNORE]).toBe(true);
+    });
+
+    it('leaves a flag it did not set alone', async () => {
+        // `Symbol.for('ignore')` is shared: /hide and any other extension use the
+        // same key. Clearing theirs would put their message back in the prompt.
+        const chat = summarised(4);
+        chat[3].extra[IGNORE] = true;
+        const { injector } = withMemory({ chat, plan: makePlan({ blank: [0] }) });
+
+        await injector.intercept(asCoreChat(chat), 4096, () => {}, undefined);
+
+        expect(chat[3].extra[IGNORE]).toBe(true);
+    });
+
+    it('leaves nothing behind in the saved chat', async () => {
+        // The flag lives on the real message, so the one thing that must be true
+        // is that it cannot reach the file: JSON.stringify drops Symbol keys.
+        const chat = summarised(2);
+        const { injector } = withMemory({ chat, plan: makePlan({ blank: [0, 1] }) });
+
+        await injector.intercept(asCoreChat(chat), 4096, () => {}, undefined);
+
+        expect(JSON.stringify(chat)).not.toContain('ignore');
+    });
+});
+
+describe('when the handover gate is shut', () => {
+    it('writes nothing and holds nothing back', async () => {
+        const chat = summarised(3);
+        const { context, injector } = withMemory({ chat, plan: makePlan({ writing: false }) });
+
+        await injector.intercept(asCoreChat(chat), 4096, () => {}, undefined);
+
+        expect(context.extensionPrompts.cairn_memory).toBeUndefined();
+        expect(chat.some((message) => message.extra[IGNORE])).toBe(false);
+    });
+
+    it('takes back a block it had already parked', async () => {
+        const chat = summarised(3);
+        let writing = true;
+        const { context, injector } = withMemory({
+            chat,
+            plan: () => makePlan({ blank: [0], writing }),
+        });
+
+        await injector.intercept(asCoreChat(chat), 4096, () => {}, undefined);
+        writing = false;
+        await injector.intercept(asCoreChat(chat), 4096, () => {}, undefined);
+
+        expect(context.extensionPrompts.cairn_memory.value).toBe('');
+        expect(chat[0].extra[IGNORE]).toBeUndefined();
+    });
+
+    it('leaves a quiet prompt alone entirely', async () => {
+        const chat = summarised(3);
+        const { context, injector, calls } = withMemory({ chat, plan: makePlan({ blank: [0] }) });
+
+        await injector.intercept(asCoreChat(chat), 4096, () => {}, 'quiet');
+
+        expect(calls).toHaveLength(0);
+        expect(context.extensionPrompts.cairn_memory).toBeUndefined();
+    });
+});
+
+describe('the memory block when Cairn is switched off', () => {
+    it('releases the injection and the held-back messages on stop', async () => {
+        const chat = summarised(3);
+        const { context, injector } = withMemory({ chat, plan: makePlan({ blank: [0, 1] }) });
+
+        await injector.intercept(asCoreChat(chat), 4096, () => {}, undefined);
+        injector.stop();
+
+        expect(context.extensionPrompts.cairn_memory.value).toBe('');
+        expect(chat.some((message) => message.extra[IGNORE])).toBe(false);
+    });
+
+    it('releases them on a chat change too — another chat is not ours to blank', async () => {
+        const chat = summarised(3);
+        const { context, injector } = withMemory({ chat, plan: makePlan({ blank: [0] }) });
+
+        await injector.intercept(asCoreChat(chat), 4096, () => {}, undefined);
+        injector.reset();
+
+        expect(context.extensionPrompts.cairn_memory.value).toBe('');
+        expect(chat[0].extra[IGNORE]).toBeUndefined();
+    });
+
+    it('keeps last turn state rather than half of it when planning fails', async () => {
+        // CLAUDE.md §4.17. A stale block is a stale sentence; a cleared block with
+        // the messages still held back is a prompt with a hole in it.
+        const chat = summarised(3);
+        let fail = false;
+        const { context, injector } = withMemory({
+            chat,
+            plan: () => {
+                if (fail) throw new Error('assembler exploded');
+                return makePlan({ blank: [0] });
+            },
+        });
+
+        await injector.intercept(asCoreChat(chat), 4096, () => {}, undefined);
+        fail = true;
+        await expect(injector.intercept(asCoreChat(chat), 4096, () => {}, undefined)).resolves.toBeUndefined();
+
+        expect(context.extensionPrompts.cairn_memory.value).toBe('BLOCK');
+        expect(chat[0].extra[IGNORE]).toBe(true);
+    });
+});

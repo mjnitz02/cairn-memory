@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildInventory, classifySource, summarizeInventory } from '../src/prompt/inventory.js';
-import { extension_prompt_types } from './mocks/sillytavern.js';
+import { collectedKeys, extension_prompt_types } from './mocks/sillytavern.js';
 
 describe('classifySource', () => {
     it.each([
@@ -74,6 +74,23 @@ describe('summarizeInventory', () => {
         expect(summary.writers).toBe(2);
         expect(summary.byOwner[0].owner).toBe('qvink'); // ordered by weight
         expect(summary.tokens).toBe(summary.byOwner.reduce((t, o) => t + o.tokens, 0));
+    });
+
+    it('counts only writers ST places — a parked injection is not in the prompt', async () => {
+        // Esin, 2026-09-16, after the handover: qvink set to Macro Only still parks
+        // its block at NONE for the fidelity check, and every log line said
+        // `writers: 2` while Cairn was the only thing in the prompt.
+        const bag = {
+            cairn_memory: { value: 'our block', position: extension_prompt_types.IN_PROMPT, depth: 2, role: 0 },
+            qvink_memory_short: { value: 'their parked block', position: extension_prompt_types.NONE, depth: 2, role: 0 },
+            customWIOutlet_canon: { value: 'outlet lore', position: extension_prompt_types.NONE, depth: 0, role: 0 },
+        };
+        const inventory = await buildInventory(bag);
+        const placedOwners = new Set(collectedKeys(bag).map((key) => classifySource(key).owner));
+
+        expect(inventory.map((entry) => entry.key)).toContain('qvink_memory_short'); // still visible
+        expect(summarizeInventory(inventory).writers).toBe(placedOwners.size);
+        expect(summarizeInventory(inventory).writers).toBe(1);
     });
 
     it('is empty-safe', () => {

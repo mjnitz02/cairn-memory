@@ -14,6 +14,30 @@ export const extension_prompt_types = {
     BEFORE_PROMPT: 2,
 };
 
+/**
+ * The positions ST asks `getExtensionPrompt` for when it builds a prompt:
+ * BEFORE_PROMPT and IN_PROMPT around the story string (public/script.js:4700-4701),
+ * IN_CHAT per depth (:5647, and public/scripts/openai.js:856). NONE is never asked for.
+ */
+export const COLLECTED_POSITIONS = [
+    extension_prompt_types.BEFORE_PROMPT,
+    extension_prompt_types.IN_PROMPT,
+    extension_prompt_types.IN_CHAT,
+];
+
+/**
+ * Keys ST would place on its own — getExtensionPrompt's filter,
+ * `x.position == position && x.value` (public/script.js:3312), over every
+ * position it collects. Anything else reaches the prompt only through a macro.
+ */
+export function collectedKeys(extensionPrompts) {
+    return Object.keys(extensionPrompts ?? {})
+        .filter((key) => {
+            const prompt = extensionPrompts[key];
+            return prompt.value && COLLECTED_POSITIONS.some((position) => prompt.position == position);
+        });
+}
+
 /** public/scripts/world-info.js:863 */
 export const world_info_position = {
     before: 0,
@@ -93,7 +117,14 @@ function makeEventSource() {
  * we actually depend on. Deliberately a subset: an unlisted field means we have
  * not declared that dependency in docs/st-api-surface.md yet.
  */
-export function createContext({ chat = makeChat(), chatMetadata = {}, profiles = [] } = {}) {
+export function createContext({
+    chat = makeChat(),
+    chatMetadata = {},
+    profiles = [],
+    selectedProfile = null,
+    requestService = null,
+    extensions = [],
+} = {}) {
     const extensionPrompts = {};
     const context = {
         chat,
@@ -121,8 +152,22 @@ export function createContext({ chat = makeChat(), chatMetadata = {}, profiles =
         /** public/scripts/extensions.js:141 */
         extensionSettings: {
             disabledExtensions: [],
-            connectionManager: { profiles },
+            /** public/scripts/extensions/connection-manager/index.js:28-29 */
+            connectionManager: { profiles, selectedProfile },
         },
+
+        /**
+         * public/scripts/extensions.js:524, exposed at public/scripts/st-context.js:300.
+         * `extensions` holds internal names, `third-party/<folder>` for a user install
+         * (src/endpoints/extensions.js:518); the prefix may be left off, as ST allows.
+         */
+        getExtensionManifest(name) {
+            const found = extensions.find((id) => id === name || id === `third-party/${name}`);
+            return found ? { display_name: found } : null;
+        },
+
+        /** public/scripts/st-context.js:294 — a class with a static `sendRequest`. */
+        ConnectionManagerRequestService: requestService,
 
         extensionPrompts,
         /** public/script.js — setExtensionPrompt(key, value, position, depth, scan, role, filter) */
@@ -137,8 +182,38 @@ export function createContext({ chat = makeChat(), chatMetadata = {}, profiles =
             };
         },
 
+        /**
+         * public/script.js:2815. Only the two macros anything here uses:
+         * `environment.user` is name1 and `environment.char` is name2
+         * (public/script.js:2949-2950). Enough to prove we resolve a template
+         * before comparing it; not a macro engine.
+         */
+        substituteParamsExtended(content, additionalMacro = {}) {
+            let text = String(content)
+                .replace(/\{\{user\}\}/gi, context.name1)
+                .replace(/\{\{char\}\}/gi, context.name2);
+            for (const [name, value] of Object.entries(additionalMacro)) {
+                text = text.replace(new RegExp(`\\{\\{${name}\\}\\}`, 'gi'), String(value));
+            }
+            return text;
+        },
+
+        /**
+         * public/script.js:2981, exposed at public/scripts/st-context.js:163. The
+         * same two macros as above. An unknown `{{macro}}` is left as it is: the
+         * legacy engine (the default, public/script.js:2997) replaces a fixed list
+         * of named patterns (public/scripts/macros.js:610).
+         */
+        substituteParams(content) {
+            return context.substituteParamsExtended(content);
+        },
+
+        /** public/scripts/st-context.js:302 — the ignore flag's home. */
+        symbols: { ignore: Symbol.for('ignore') },
+
         saveSettingsDebounced: () => { context.saved.settings++; },
         saveMetadataDebounced: () => { context.saved.metadata++; },
+        /** public/scripts/st-context.js:155 — saveChatConditional, which saves the *current* chat. */
         saveChat: async () => { context.saved.chat++; },
 
         /** Rough but monotonic — enough for budget arithmetic in tests. */
@@ -150,4 +225,25 @@ export function createContext({ chat = makeChat(), chatMetadata = {}, profiles =
         saved: { settings: 0, metadata: 0, chat: 0 },
     };
     return context;
+}
+
+/**
+ * A reply arriving: ST puts it in `chat`, then emits the message's index and the
+ * generation type, and awaits every listener before it renders the message
+ * (public/script.js:6780-6782, public/lib/eventemitter.js:146).
+ */
+export async function receiveMessage(context, message, type = 'normal') {
+    context.chat.push(message);
+    await context.eventSource.emit(context.eventTypes.MESSAGE_RECEIVED, context.chat.length - 1, type);
+}
+
+/**
+ * Opening a chat: ST refills the *same* array with new message objects
+ * (public/script.js:7658), then emits the new chat id (:7700). Reloading the
+ * current chat takes the same path with the same id (:1710-1717).
+ */
+export async function openChat(context, { chatId, messages }) {
+    context.chatId = chatId;
+    context.chat.splice(0, context.chat.length, ...messages);
+    await context.eventSource.emit(context.eventTypes.CHAT_CHANGED, chatId);
 }

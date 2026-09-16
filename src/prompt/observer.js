@@ -28,11 +28,18 @@ const DEFAULT_HISTORY = 20;
  *
  * @param {() => object} getContext Returns a fresh SillyTavern.getContext()
  * @param {{limit?: number, onSnapshot?: (snapshot: object) => void,
- *           holding?: () => (number|null)}} [options]
+ *           holding?: () => (number|null),
+ *           memory?: (turn: {promptTokens: number}) => Promise<object|null>,
+ *           summaries?: () => (object|null)}} [options]
  *        `holding` reports how many World Info entries the holder is keeping in,
  *        so a logged run says whether the fix was on (docs/decisions.md D-0024).
+ *        `memory` returns the report from the plan the interceptor already
+ *        acted on (docs/decisions.md D-0027). It is handed what this prompt cost
+ *        for reporting only; the plan never reads it back (D-0033).
+ *        `summaries` is the summarizer's status as the prompt goes out, which is how
+ *        a log says whether a summary request overlapped a generation.
  */
-export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot, holding } = {}) {
+export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot, holding, memory, summaries } = {}) {
     /**
      * Previous flattened prompt per API path — the baseline the meter compares
      * against. Keyed by API because a text-completion string and a flattened
@@ -78,6 +85,8 @@ export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot
             worldInfo: pendingWorldInfo,
             worldInfoOrdering: assessOrdering(pendingWorldInfo),
             worldInfoHeld: holding?.() ?? null,
+            memory: await planMemory(promptTokens),
+            summaries: readSummaries(),
         };
 
         previousPrompts.set(api, flat);
@@ -89,6 +98,21 @@ export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot
         debug(`${api}: ${promptTokens} tokens, stability ${stability.stabilityPercent ?? '—'}%`);
         onSnapshot?.(snapshot);
         return snapshot;
+    }
+
+    /**
+     * Reporting is a diagnostic, not a write: a report that throws costs us the
+     * report, not the turn (CLAUDE.md §4.17). The plan itself was made and acted
+     * on in the interceptor, long before this runs.
+     */
+    async function planMemory(promptTokens) {
+        if (!memory) return null;
+        try {
+            return await memory({ promptTokens });
+        } catch (err) {
+            warn('Observer failed to plan the memory block.', err);
+            return null;
+        }
     }
 
     /**
@@ -137,6 +161,16 @@ export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot
         } catch (err) {
             warn('Observer failed to record World Info activations.', err);
             pendingWorldInfo = [];
+        }
+    }
+
+    function readSummaries() {
+        if (!summaries) return null;
+        try {
+            return summaries() ?? null;
+        } catch (err) {
+            warn('Observer failed to read the summarizer status.', err);
+            return null;
         }
     }
 

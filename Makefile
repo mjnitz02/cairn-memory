@@ -46,7 +46,7 @@ secrets: ## Scan history for leaked secrets (needs gitleaks on PATH)
 verify-st: ## Re-check docs/st-api-surface.md against a local SillyTavern checkout
 	ST_PATH=$(ST_PATH) npm run verify-st
 
-verify-rules: ## Check every CLAUDE.md rule reference still resolves
+verify-rules: ## Check every rule, docs page and decision reference still resolves
 	npm run verify-rules
 
 check: lint version-check verify-rules test secrets verify-st ## Full local gate (CI runs all but verify-st)

@@ -9,6 +9,7 @@
  *
  * Lands in `data/<user>/user/files/`.
  */
+import { nearPromptLimit } from './context-size.js';
 import { warn, debug } from './log.js';
 
 /** Fixed name so the path is predictable between sessions. */
@@ -130,6 +131,84 @@ function toEntry(snapshot) {
         // How many entries the holder is keeping in; null when it is off, which is
         // what tells a control run apart from a treatment run.
         world_info_held: snapshot.worldInfoHeld ?? null,
+        // Full enough that text completion may have dropped the oldest raw messages,
+        // which the block's cap cannot see (util/context-size.js).
+        prompt_near_limit: nearPromptLimit(snapshot.promptTokens, snapshot.memory?.maxPromptTokens),
+        ...memoryFields(snapshot.memory),
+        ...summaryFields(snapshot.summaries),
+    };
+}
+
+/**
+ * The assembler's plan for this turn, flattened.
+ *
+ * `memory_change_percent` is the number P1 is aimed at: how far into the block
+ * the first changed byte fell. Near 100 means a step changed the block's tail,
+ * which is the whole of docs/decisions.md D-0019. Near 0 on a step turn means it
+ * changed the head and nothing was gained.
+ */
+function memoryFields(memory) {
+    if (!memory) return { memory_planned: false };
+
+    return {
+        memory_planned: true,
+        // Who wrote the summaries in the block: qvink, cairn, mixed, or null.
+        memory_source: memory.source,
+        memory_cairn_scenes: memory.cairnScenes ?? null,
+        // A due step held back by a summary not yet written. Stays false in normal play.
+        memory_step_waiting: memory.stepWaiting ?? null,
+        // Which arm the turn is in: Cairn writing the block, or qvink still
+        // writing it and Cairn only measuring (docs/decisions.md D-0027).
+        memory_writing: memory.writing ?? false,
+        memory_handover: memory.handover ?? null,
+        memory_blanked: memory.blanked ?? null,
+        memory_scenes: memory.scenes,
+        memory_included: memory.included,
+        memory_oldest: memory.oldest,
+        memory_newest: memory.newest,
+        memory_summarised_through: memory.summarisedThrough,
+        memory_stepped: memory.stepped,
+        memory_step_reason: memory.stepReason,
+        memory_evicted: memory.evicted,
+        memory_over_cap: memory.overCap,
+        // A fixed share of the max prompt (docs/decisions.md D-0038).
+        memory_cap: memory.cap,
+        memory_floor: memory.floor,
+        memory_max_prompt_tokens: memory.maxPromptTokens,
+        memory_chars: memory.chars,
+        memory_tokens: memory.tokens,
+        memory_stability_percent: memory.change?.stabilityPercent ?? null,
+        memory_change_at: memory.change?.divergenceAt ?? null,
+        memory_change_percent: memory.change?.divergencePercent ?? null,
+    };
+}
+
+/**
+ * The summarizer as the prompt went out. Counts, sizes and times are running totals
+ * for the chat, so the work between two generations is the difference of two lines.
+ * Never a summary's text.
+ */
+function summaryFields(status) {
+    if (!status) return { summary_reported: false };
+
+    return {
+        summary_reported: true,
+        // Why Cairn is or is not summarising (src/pipeline/summarizer.js).
+        summary_gate: status.gate ?? null,
+        // A request was out while this prompt was built: the overlap docs/decisions.md D-0041 counts.
+        summary_in_flight: status.inFlight != null,
+        summary_pending: status.pending ?? null,
+        summary_given_up: status.givenUp ?? [],
+        summary_calls: status.calls,
+        summary_written: status.written,
+        summary_failures: status.failures,
+        summary_last_reason: status.lastReason ?? null,
+        summary_ms: status.ms,
+        summary_last_ms: status.lastMs ?? null,
+        // Counted with ST's tokenizer, which is the chat model's: close, not billed.
+        summary_tokens_in: status.tokensIn,
+        summary_tokens_out: status.tokensOut,
+        summary_prompt_default: status.promptDefault ?? null,
     };
 }
 

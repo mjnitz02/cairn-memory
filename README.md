@@ -8,12 +8,17 @@ which degrades uniformly until everything is equally vague, and still develops
 holes. Cairn treats memory as **state**: what is true right now, plus a sparse
 set of retrievable past events.
 
-> **Status: pre-alpha, early P1.** Cairn *measures* — it reports what your prompt
-> is made of and how stable it is — and makes one change to it: lorebook entries
-> are held in place once they have activated, so a keyword-scan miss cannot make
-> the whole lore block vanish and come back. It still writes no memory of its
-> own, so it remains safe to run alongside your existing memory extension. The
-> features below are being built in phases; see [`DESIGN.md`](DESIGN.md).
+> **Status: pre-alpha, P1.** Cairn *measures* — it reports what your prompt is
+> made of and how stable it is — and makes two changes to it. Lorebook entries are
+> held in place once they have activated, so a keyword-scan miss cannot make the
+> whole lore block vanish and come back. And it assembles the memory block from
+> the summaries your existing memory extension has already written, injecting it
+> and keeping the messages it covers out of the history — but only once that
+> extension has been silenced and Cairn has proved it renders the same block, byte
+> for byte. Until then it plans and compares and leaves the prompt alone, so it
+> stays safe to run alongside. Once that extension stops summarising, Cairn writes
+> its own summaries too, one per message. The features below are being built in
+> phases; see [`DESIGN.md`](DESIGN.md).
 
 ## The major choices
 
@@ -24,8 +29,8 @@ set of retrievable past events.
   into a single ordered block with one budget. Two extensions injecting
   independently is how prompts quietly destabilise.
 - **It cooperates with lorebooks rather than replacing them.** World Info keeps
-  doing retrieval; Cairn takes over placement and budgeting, via ST's own
-  outlet and force-activate mechanisms. An entry that has activated stays in
+  doing retrieval; Cairn keeps it steady, via ST's own force-activate
+  mechanism. An entry that has activated stays in
   until the budget genuinely evicts it, rather than flickering with the keywords
   in the last two messages.
 - **A separate model writes memory.** Your roleplay model is tuned to be
@@ -39,8 +44,8 @@ set of retrievable past events.
 ## Requirements
 
 - SillyTavern **1.19.0** or newer
-- A second connection profile for memory work — any competent non-roleplay
-  model. It does not need to be large.
+- A second connection profile for memory work: a strong non-roleplay model,
+  GLM-4.7 class or better.
 - Single-character chats. Group chats are not supported.
 
 ## Install
@@ -65,17 +70,39 @@ Reload SillyTavern afterwards.
 Open **Extensions → Cairn-Memory**. There is very little to configure — send a
 message and read the inspector.
 
-The **Memory connection** setting is inert until Cairn starts writing memory
-(P2). When it does, point it at a profile that is *not* your roleplay model.
+Point **Memory connection** at a profile that is *not* your roleplay model.
+Without one, Cairn never calls a model. Each summary appears under its message,
+and Cairn never blocks sending, so you can keep chatting while it works.
 
 | Setting | What it does |
 |---|---|
 | Enabled | Turns Cairn off without uninstalling. Existing memory is kept. |
-| Memory connection | The profile Cairn uses to write memory. Must not be your roleplay model. Not used yet. |
+| Memory connection | The profile Cairn uses to write summaries. Must not be your roleplay model. |
+| Summary prompt | The instructions the memory model gets for each message. `{{message}}` is the message, and `{{history}}` is the summaries before it. **Reset to default** restores the built-in prompt. |
 | Show inspector | Shows what was injected, from where, and how stable the prompt is. |
 | Write inspector log to disk | Appends each generation to `user/files/cairn-inspector.jsonl`. |
 | Hold World Info entries | Keeps a lorebook entry in the prompt once it has activated, instead of letting it drop out when the keyword scan misses it. On by default; off restores stock SillyTavern behaviour. |
+| Write the memory block | Lets Cairn inject the summaries and keep the messages they cover out of the history. On by default, but Cairn waits until your existing memory extension is silent — see below. |
 | Debug logging | Verbose browser-console output. Only needed for bug reports. |
+
+### Handing over from Qvink Memory
+
+Cairn reads the summaries Qvink Memory has already written, so nothing is
+migrated and nothing is lost. To let Cairn take over the prompt, in **Qvink
+Memory**:
+
+1. set **short-term** and **long-term memory position** to **Macro Only** —
+   Qvink keeps building its block, SillyTavern stops placing it;
+2. turn off **Exclude messages after threshold**.
+
+Qvink can keep summarising, and Cairn keeps reading what it writes. To have Cairn
+write the summaries instead, **back up your chats**, then turn off Qvink's **Auto
+Summarize**. Cairn starts after the newest summary Qvink wrote and never changes
+Qvink's. Each summary is saved on its message, so it survives uninstalling Qvink.
+
+Disabling or uninstalling Qvink does all of the above at once. The inspector's
+**Writing** line says whether Cairn is the writer and, if not, exactly what it is
+waiting for.
 
 ## Documentation
 

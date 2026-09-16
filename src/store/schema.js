@@ -22,6 +22,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
     enabled: true,
     /** Connection profile id used for memory work. Never the roleplay profile. */
     memoryProfileId: '',
+    /**
+     * The summary prompt. Empty means the built-in default, so an unedited install
+     * gets the default's improvements (docs/decisions.md D-0039).
+     */
+    summaryPrompt: '',
     /** Show the prompt inspector panel (DESIGN.md §10). */
     showInspector: true,
     /** Verbose console output. */
@@ -30,6 +35,12 @@ export const DEFAULT_SETTINGS = Object.freeze({
     logToDisk: true,
     /** Keep World Info entries in the prompt once they have activated (D-0023). */
     holdWorldInfo: true,
+    /**
+     * Write the memory block instead of leaving it to qvink (D-0027). On by
+     * default, but the handover gate still decides each turn: while qvink is
+     * injecting, Cairn plans and measures without writing anything.
+     */
+    ownMemoryBlock: true,
 });
 
 /**
