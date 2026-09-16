@@ -29,7 +29,7 @@ describe('the summary prompt renderer', () => {
 
     /**
      * ST's macros run on the template *before* chat text goes in
-     * (docs/p2-plan.md §4), so text a user typed is never expanded.
+     * (docs/decisions.md D-0039), so text a user typed is never expanded.
      */
     it('expands ST macros in the template but never in the chat text', () => {
         const context = createContext();

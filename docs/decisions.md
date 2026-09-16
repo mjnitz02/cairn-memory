@@ -8,6 +8,209 @@ what we believed and why it changed.
 
 ---
 
+## D-0041 — P2 is measured and closed: Cairn summarises, and qvink can go
+**2026-09-16.** Closes P2 (`DESIGN.md` §13). The plan's four decisions are
+D-0037 to D-0040, and the plan page is deleted.
+
+**Two runs on Esin**, text completion on oMLX, memory model GLM-4.7 through
+OpenRouter. Stability is the share of each prompt already cached.
+
+```
+cutover, qvink enabled with Auto Summarize off (7 turns)
+turn     1           2     3     4     5     6     7
+reason   first-turn  held  held  held  held  step  held
+stab     —           95.0  96.4  97.0  96.8  65.5  96.8
+
+qvink disabled, after D-0040 (7 turns)
+turn     1           2     3     4     5     6     7
+reason   first-turn  held  held  held  held  step  held
+stab     —           96.9  96.7  96.7  97.3  67.3  97.1
+```
+
+- **A step still breaks at the block's tail.** On the disabled run's step turn,
+  `memory_change_at` was 20,441, exactly the old block's length: 5 summaries were
+  appended (38 → 43, 3,978 → 4,560 tokens) and nothing was evicted. The cycle mean
+  is (96.9 + 96.7 + 96.7 + 97.3 + 67.3) / 5 ≈ **91%**, the same as P1 (D-0034).
+- **Disabling qvink cost nothing extra.** The first turn after the reload was
+  `writing` with the summarizer `ready`, and its rebuild is the one every reload
+  pays (D-0033). Before D-0040 that turn would have stayed `unproven`.
+- **Uninstalling was not run separately.** To Cairn an uninstalled qvink differs
+  from a disabled one only in which check says so (no manifest instead of the
+  disabled list), and both are unit-tested.
+- **Summaries:** 14 written across both runs, 0 failures, no given-up message, and
+  `memory_step_waiting` never true. Requests averaged about 1,200 tokens in and 110
+  out (the chat model's tokenizer, so estimates), against qvink's 1,012 and 111;
+  times ran from 3.6 to 17.7 s.
+- **The qvink part of the block stayed byte-identical** through the cutover, and
+  `prompt_near_limit` never fired (80% at most).
+
+**One target was missed, and is accepted.** The plan said no summary would overlap
+a generation. One turn in seven did in each run, both times when a continue was
+sent within seconds of a reply: that reply's arrival starts the queue, and the next
+generation starts before it finishes. On a remote memory model beside a local chat
+model the two don't compete, and the block only changes on a step, so a summary
+landing mid-generation doesn't touch a prompt already sent. It would compete on a
+shared backend.
+
+**What these runs cannot show.** Esin's chat had derailed into "continue" messages,
+which are too short to summarise. So each turn made one summary call where a real
+chat makes two, and the overlap rate here is optimistic. **Summary quality is
+deferred** (Matt, 2026-09-16): it is judged after P4 or P5, as a final test in a
+real roleplay, and until then phases close on mechanics.
+
+**Reopens if:** a step waits in normal play (`memory_step_waiting` true without
+failures), summary calls measurably slow generation on a shared backend, or the
+quality test fails.
+
+---
+
+## D-0040 — The qvink mirror is retired
+**2026-09-16.** P2 step 6. Supersedes the byte-for-byte gate (D-0020, D-0027) and
+placement mirroring (D-0027, D-0029).
+
+**The decision.** Cairn reads nothing from qvink's settings to build the block.
+The template, the `\n* ` separator, and `IN_PROMPT` at depth 2 with the system role
+are Cairn constants equal to qvink's defaults (`BLOCK_RENDERING`,
+`BLOCK_PLACEMENT` in `prompt/assembler.js`). The fidelity check and its proof are
+gone. What stays is the read-only reader of `extra.qvink_memory`, and a gate that
+qvink is neither placing a block nor, while it runs, excluding messages.
+
+**Why.** The mirror existed so the handover changed only who writes, and the
+proof could only be earned while qvink was still the writer. Both had done their
+job. What they cost was qvink itself: a disabled qvink parks no block to compare
+against, so after a reload Cairn never took the block over.
+
+**Discovery: an extension's settings outlive it.** A disabled or uninstalled qvink
+still says Auto Summarize is on in `extension_settings`, so the summarising gate
+kept waiting on an extension that wasn't running. The gate now asks whether qvink
+is loaded first (`qvinkRunning` in `memory/scenes.js`). ST never loads a disabled
+extension (`extensions.js:626`) and disabling one reloads the page (`:490`). An
+uninstalled one has no manifest (`:524`). qvink parks both of its injection keys on
+every chat refresh (its `index.js:4004-4005`), so a parked key also counts, which
+catches an install under another folder name.
+
+**Cost.** Anyone whose qvink template, separator or prefill display wasn't the
+default gets one rebuild, as the block's wording changes. Esin's settings were all
+defaults, and its position was Macro Only, which Cairn had already stopped
+mirroring (D-0029), so its prompt did not change by a byte.
+
+**Reopens if:** the `DESIGN.md` §6 block move, which chooses a placement rather
+than keeping qvink's default. Or a qvink install that runs without either sign, so
+Cairn summarises alongside it.
+
+---
+
+## D-0039 — The summary prompt is editable, and defaults to the qvink prompt proven in play
+**2026-09-16.** P2 plan decision 3. Settles what D-0036 left open.
+
+**The decision.** One setting, **Summary prompt**. Empty means the built-in
+default, so an unedited install follows improvements to the default. The default
+is Matt's qvink prompt, verbatim. `{{message}}` is the message as `Name: text`,
+`{{history}}` is the 5 summaries before it, one per line, and
+`{{#if history}}…{{/if}}` uses qvink's syntax, so a qvink prompt pastes in
+unchanged. A prompt with no `{{message}}` falls back to the default with one
+warning. Each summary stores a hash of the template that wrote it, and editing the
+prompt rewrites nothing.
+
+**Why editable now.** It passes CLAUDE.md §4.15's one-sentence test, and adding it
+later would mean a settings migration for a knob people already expect.
+
+**Why this default.** A prompt measured in play on the D-0036 model floor beats
+one written to rules, so `DESIGN.md` §12's structure is not applied to it.
+
+**How it renders.** ST's macros (`substituteParams`, `st-context.js:163`) are
+expanded on the template before the message goes in, so a `{{user}}` typed in chat
+reaches the model as typed. Cairn's three macros go through its own small renderer
+(`util/template.js`): ST's `{{if}}` exists only behind the experimental macro
+engine (`script.js:2997`) with different syntax, and Handlebars, qvink's route, is
+deprecated for extensions (`st-context.js:177`).
+
+**Reopens if:** edited prompts routinely break summaries, or a strategy other than
+one-per-message needs a prompt of a different shape.
+
+---
+
+## D-0038 — The memory block's cap is a fixed 35% of the max prompt
+**2026-09-16.** P2 plan decision 2.
+
+**The decision.** The cap is 35% of what SillyTavern may send (the context window
+minus the reserved response, `getMaxPromptTokens`, `script.js:5981`), with no
+setting. It replaces qvink's `short_term_context_limit`, which goes away with qvink.
+
+**Why 35%, not 30%.** Esin's qvink limit was 7,500 tokens, 34% of 22,016. 35% gives
+7,705 and keeps at least the history it had, where 30% would drop it to 6,605. A
+share scales with context size. The move cost one rebuild, on the same turn as the
+update's first-turn rebuild.
+
+**What it can't see.** On a small context with a large card and lorebook, text
+completion silently drops the oldest raw messages (`script.js:4920`). The log sets
+`prompt_near_limit` when a prompt is within 5% of its limit.
+
+**Known behaviour.** The cap follows the response length. Lowering Esin's from
+2,048 to 1,024 during the cutover raised the max prompt to 23,040 and the cap to
+8,063. Raising it shrinks the cap and costs one rebuild if the block is over the
+new cap.
+
+**Reopens if:** P6, a budget worked out from the chat's own parts (`DESIGN.md` §13).
+
+---
+
+## D-0037 — One plain-text summary per message, stored on the message
+**2026-09-16.** P2 plan decision 1. Reverses the first draft, which proposed one
+JSON delta summary per step.
+
+**The decision.** Each summarisable message gets its own summary, in plain text,
+written by one request carrying the message and the 5 summaries before it. It is
+stored on the message itself as `extra.cairn.scene`: `text`, a hash of the
+message's `mes`, a hash of the prompt, and `at`.
+
+**Why.** The prompt is small, the reply short, and there is nothing to unpack.
+Batching risks blending summaries and losing detail, builds a backlog paid off in
+one lump each step, and needs a format the model can get wrong. The block grows at
+the rate it already did, because qvink wrote one summary per message too, so
+D-0034's numbers held and the assembler's input kept its shape.
+
+**Evidence.** Matt's OpenRouter export, 2026-09-12 to 09-16: 105 qvink summary calls
+to GLM-4.7. Median 1,012 tokens in and 111 out, p90 2,408 and 161, longest reply
+199, no reasoning tokens. A call took 6.9 s at the median and 21.2 s at most; all
+105 cost $0.08 and finished with `stop`. Calls ran one at a time, in bursts of 2–3
+after each turn, and no burst in 30 outlasted the pause after it.
+
+**How it holds together.**
+- **Validity is checked on read.** A scene counts only while its message's hash
+  matches, so an edit sends the message back to raw and requeues it. A deletion
+  takes its scene with it; a branch copies the messages it keeps, scenes included
+  (`bookmarks.js:173`). Only the last message can be swiped (`script.js:9195`),
+  and it is never summarised.
+- **Summarisable** is a pure rule: not hidden or system, and at least 50 tokens,
+  Matt's qvink `message_length_threshold`. Nothing is stored for a skipped message.
+- **Migration is a read.** qvink's summaries are read as they are, a Cairn scene
+  wins where both exist, and Cairn starts after qvink's newest summary, so it
+  never inserts scenes mid-block.
+- **Queue.** Starts on `MESSAGE_RECEIVED` and `CHAT_CHANGED`, never on
+  `MESSAGE_SENT`, when the chat model starts generating. Oldest first, one request
+  at a time, never the last message.
+- **A missing summary holds the step.** The threshold never moves past a
+  summarisable message without a valid scene, so nothing is blanked without its
+  summary.
+- **A failure writes nothing.** A throw, refusal, parse failure or abort stores
+  nothing, toasts once per streak, and a message that fails 3 times is left alone
+  for the session. A reply for a chat, message or text that has changed since the
+  request went out is discarded.
+
+**Cost we accept.** ST returns no finish reason (`custom-request.js:60`), and JSON
+would have caught a cut-off reply by failing to parse. The parser checks instead:
+after stripping `<think>` blocks, fences, a `Summary:` label and list markers, it
+rejects a reply that is empty, opens like a refusal, looks like JSON, runs past
+1,500 characters, or doesn't end in sentence-ending punctuation. A refusal worded
+in a way it misses gets stored; it stays visible, and editing the message
+replaces it.
+
+**Reopens if:** truncated or refused summaries get past the parser in play, or
+per-message cost stops being negligible on the D-0036 model floor.
+
+---
+
 ## D-0036 — The memory model is a strong one, and the prompts may assume it
 **2026-09-16.** Closes `DESIGN.md` §14.3.
 
@@ -1087,6 +1290,10 @@ Things that cost us time once. We pay for them once (CLAUDE.md §6.27).
   the real chat (`public/script.js:4539`), so mutating `extra` in place persists
   into the saved chat file. qvink reaches for `structuredClone` here
   (`index.js:3993`) and gets away with it only because it runs first.
+- **An extension's settings outlive the extension.** A disabled or uninstalled
+  qvink still said Auto Summarize was on, and Cairn kept waiting on it. A gate
+  that reads another extension's settings must first ask whether that extension
+  is loaded. See D-0040.
 - **ST line citations rot across releases.** Four of `DESIGN.md` §7's citations
   moved between 1.18.0 and 1.19.0 while every mechanism stayed intact. The
   mechanism surviving is not evidence the citation did. See D-0009.

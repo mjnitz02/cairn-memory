@@ -15,7 +15,7 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
   waiting for one, one request at a time, through the **Memory connection**
   profile, and stores each summary on its message in `message.extra.cairn`. It
   starts after the newest summary your existing extension wrote, and waits while
-  Qvink Memory's Auto Summarize is on. A failed summary writes nothing and warns
+  Qvink Memory is enabled with Auto Summarize on. A failed summary writes nothing and warns
   once per run of failures. A message that fails three times is skipped for the
   session, and the memory step waits before it. **Back up your chats before
   turning off Qvink's Auto Summarize**: this is the first version that writes to
@@ -39,6 +39,18 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ### Changed
 
+- **Cairn no longer mirrors Qvink Memory.** The block uses Qvink's default
+  template, separator and placement as Cairn's own, whatever Qvink's settings
+  say, and Cairn no longer waits to match Qvink's block byte for byte before
+  taking over. A disabled or uninstalled Qvink counts as silent: its leftover
+  **Auto Summarize** and **Exclude messages after threshold** settings are
+  ignored, so Cairn writes the block and the summaries straight after a reload.
+  If your Qvink template, separator or prefill display wasn't the default, the
+  block's wording changes and the first turn rebuilds. The inspector no longer
+  shows the byte-for-byte match, and the handover reasons `unproven` and
+  `unplaced` are gone. Log fields `memory_placement`,
+  `memory_placement_defaulted`, `memory_fidelity`, `memory_fidelity_resolved`,
+  `memory_fidelity_diverge_at` and `memory_live_chars` are gone.
 - **The memory block's cap is 35% of the max prompt**, with no setting. It
   replaces Qvink's short-term limit, which Cairn no longer reads. With a
   7,500-token Qvink limit on a 22,016-token prompt, the cap moves to 7,705 tokens.

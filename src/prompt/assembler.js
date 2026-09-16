@@ -23,31 +23,40 @@
  * generate interceptor, the last hook that is still ahead of prompt assembly
  * (public/script.js:4564 against :4635), and prompt/injector.js writes it. What
  * it may write is the handover gate's decision (prompt/handover.js): until qvink
- * is silent and our render has matched its live block byte for byte, the plan is
- * a measurement and nothing more (docs/decisions.md D-0020, D-0027).
+ * is silent, the plan is a measurement and nothing more (docs/decisions.md D-0020,
+ * D-0027).
  *
  * **The plan is a function of the chat, not of what was measured.** The cap is
  * a fixed share of the max prompt and every size is counted from the block itself, so the same
  * chat always gets the same block and nothing learned last turn can bend this one
  * (docs/decisions.md D-0033).
  */
-import {
-    QVINK_SHORT_INJECTION,
-    pendingScenes,
-    qvinkExcluding,
-    qvinkInjected,
-    qvinkInjecting,
-    readScenes,
-    resolvePlacement,
-    resolveRendering,
-} from '../memory/scenes.js';
+import { pendingScenes, qvinkExcluding, qvinkInjecting, readScenes } from '../memory/scenes.js';
 import { createBudget, memoryCap, recoupled } from '../pipeline/budgeter.js';
 import { createSeeSaw } from '../pipeline/scheduler.js';
 import { assessHandover } from './handover.js';
-import { commonPrefixLength, comparePrompts } from '../util/prefix.js';
+import { comparePrompts } from '../util/prefix.js';
 import { createMaxPromptTokens } from '../util/context-size.js';
 import { countTokens } from '../util/tokens.js';
 import { debug } from '../util/log.js';
+
+/**
+ * How the block reads: qvink's default template and separator (its index.js:93,
+ * :133), so a chat handed over from qvink keeps the block it had, byte for byte
+ * (docs/decisions.md D-0040).
+ */
+export const BLOCK_RENDERING = Object.freeze({
+    template: '[Following is a list of recent events]:\n{{memories}}\n',
+    separator: '\n* ',
+    macro: 'memories',
+});
+
+/**
+ * Where it goes: qvink's default placement (its index.js:153-156), `IN_PROMPT`
+ * after the story string (public/script.js:486) with the system role.
+ * `setExtensionPrompt`'s arguments (public/script.js:8926).
+ */
+export const BLOCK_PLACEMENT = Object.freeze({ position: 0, depth: 2, role: 0, scan: false });
 
 /**
  * Render the block, the way qvink renders it (its index.js:3963-3974):
@@ -57,10 +66,10 @@ import { debug } from '../util/log.js';
  * Oldest first. That is the load-bearing choice — see the file header.
  *
  * @param {Array<{text: string}>} scenes Chronological.
- * @param {{template: string, separator: string, macro: string}} rendering
+ * @param {{template: string, separator: string, macro: string}} [rendering]
  * @returns {string}
  */
-export function renderBlock(scenes, { template, separator, macro }) {
+export function renderBlock(scenes, { template, separator, macro } = BLOCK_RENDERING) {
     if (!scenes?.length) return '';
 
     const body = scenes.map((scene) => `${separator}${scene.text}`).join('');
@@ -76,7 +85,7 @@ export function renderBlock(scenes, { template, separator, macro }) {
  *
  * @returns {number} Exactly `renderBlock(scenes, rendering).length`.
  */
-export function blockChars(scenes, { template, separator, macro }) {
+export function blockChars(scenes, { template, separator, macro } = BLOCK_RENDERING) {
     if (!scenes?.length) return 0;
 
     const slots = template.match(macroPattern(macro))?.length ?? 0;
@@ -101,8 +110,6 @@ export function createAssembler(getContext, {
 } = {}) {
     let previousBlock = null;
     let ownInjection = Boolean(own);
-    /** Has our renderer matched qvink's live block in this chat? See handover.js. */
-    let proven = false;
     /** The report the observer logs, from the plan made earlier this turn. */
     let latest = null;
 
@@ -116,24 +123,12 @@ export function createAssembler(getContext, {
     async function plan() {
         const context = getContext();
         const chat = Array.isArray(context.chat) ? context.chat : [];
-        const rendering = resolveRendering(context.extensionSettings);
-        const scenes = readScenes(chat, { showPrefill: rendering.showPrefill });
+        const scenes = readScenes(chat);
 
-        // The block qvink has parked right now: the fidelity mirror while it is
-        // still the writer.
-        const live = context.extensionPrompts?.[QVINK_SHORT_INJECTION]?.value ?? '';
-        const fidelity = await checkFidelity(context, live, renderBlock(qvinkInjected(scenes), rendering));
-        if (fidelity.compared && fidelity.match) proven = true;
-
-        const placement = resolvePlacement(context.extensionSettings);
         const gate = assessHandover({
             own: ownInjection,
             injecting: qvinkInjecting(context.extensionPrompts),
-            excluding: qvinkExcluding(context.extensionSettings),
-            proven,
-            // ST collects an injection by position (public/script.js:3312), so a
-            // block parked outside those positions is written and never read.
-            placed: placement.position >= 0,
+            excluding: qvinkExcluding(context),
         });
 
         const maxPrompt = await maxPromptTokens(context);
@@ -152,10 +147,10 @@ export function createAssembler(getContext, {
         // Size candidates by this turn's own block, counted once: a ratio from
         // the text in hand, never one carried over from an earlier turn.
         const candidate = covered.filter((scene) => scene.index >= budget.oldest);
-        const candidateText = renderBlock(candidate, rendering);
+        const candidateText = renderBlock(candidate);
         const candidateTokens = candidateText ? await countTokens(context, candidateText) : 0;
         const charsPerToken = candidateTokens > 0 ? candidateText.length / candidateTokens : 1;
-        const tokensOf = (list) => Math.ceil(blockChars(list, rendering) / charsPerToken);
+        const tokensOf = (list) => Math.ceil(blockChars(list) / charsPerToken);
 
         const fit = budget.fit({
             scenes: covered,
@@ -164,7 +159,7 @@ export function createAssembler(getContext, {
             rebuild: step.reason === 'first-turn',
         });
 
-        const text = renderBlock(fit.kept, rendering);
+        const text = renderBlock(fit.kept);
         const tokens = text === candidateText
             ? candidateTokens
             : (text ? await countTokens(context, text) : 0);
@@ -194,16 +189,13 @@ export function createAssembler(getContext, {
             writing: gate.writing,
             handover: gate.reason,
             handoverDetail: gate.detail,
-            proven,
-            placement: placement.position,
-            placementDefaulted: placement.defaulted,
             scenes: scenes.length,
             candidates: covered.length,
             blanked: covered.length,
             summarisedThrough: step.summarisedThrough,
             stepped: step.stepped,
             stepReason: step.reason,
-            // A due step cut short by a missing summary (docs/p2-plan.md §3).
+            // A due step cut short by a missing summary (docs/decisions.md D-0037).
             stepWaiting: step.waiting,
             rawWindow: seeSaw.rawWindow,
             step: seeSaw.step,
@@ -228,14 +220,13 @@ export function createAssembler(getContext, {
                 divergencePercent: divergencePercent(change),
                 previousChars: change.previousLength,
             },
-            fidelity,
         };
 
         return {
             report: latest,
             text,
             blank: covered.map((scene) => scene.index),
-            placement,
+            placement: BLOCK_PLACEMENT,
             writing: gate.writing,
         };
     }
@@ -258,7 +249,6 @@ export function createAssembler(getContext, {
             seeSaw.reset();
             budget.reset();
             previousBlock = null;
-            proven = false;
             latest = null;
         },
 
@@ -266,54 +256,7 @@ export function createAssembler(getContext, {
         get latest() {
             return latest;
         },
-
-        get proven() {
-            return proven;
-        },
     };
-}
-
-/**
- * Our renderer against qvink's live injection, on qvink's own selection.
- *
- * This is the gate D-0020 sequences the handover behind: until our render of
- * their set is their block byte for byte, taking over the injection would move
- * the block *and* silently change its contents, and no measurement afterwards
- * could tell the two apart.
- *
- * qvink renders through `substituteParamsExtended` (its index.js:3973) and we do
- * not — our block is parked with its macros intact, because ST resolves them
- * when it collects the injections (public/script.js:3326), so the *prompt* is the
- * same either way. The comparison is the exception: a template carrying
- * `{{char}}` would diverge here for a reason that says nothing about the reader,
- * so the mirror is resolved before comparing and `resolved` records that it was.
- */
-async function checkFidelity(context, live, mirror) {
-    if (!live) {
-        return { compared: false, match: null, resolved: false, divergeAt: null, liveChars: 0, ourChars: mirror.length };
-    }
-
-    const hasMacros = /\{\{.+?\}\}/.test(mirror);
-    const compared = hasMacros ? substitute(context, mirror) : mirror;
-    const match = live === compared;
-
-    return {
-        compared: true,
-        match,
-        resolved: hasMacros,
-        divergeAt: match ? null : commonPrefixLength(live, compared),
-        liveChars: live.length,
-        ourChars: compared.length,
-    };
-}
-
-/** public/scripts/st-context.js:164. Absent in an older ST: compare unresolved. */
-function substitute(context, text) {
-    try {
-        return context.substituteParamsExtended?.(text) ?? text;
-    } catch {
-        return text;
-    }
 }
 
 /** Who wrote the block's summaries: `qvink`, `cairn`, `mixed`, or null for no block. */

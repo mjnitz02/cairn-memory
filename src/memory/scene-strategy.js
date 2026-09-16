@@ -1,6 +1,6 @@
 /**
  * The summarisation strategy: one plain-text summary per message
- * (docs/p2-plan.md decision 1, §2, §4).
+ * (docs/decisions.md D-0037, D-0039).
  *
  * This is the interface boundary DESIGN.md §11 names. What the prompt says and
  * how a reply is read live here; the queue, the transport and the store never
@@ -30,7 +30,7 @@ Message to summarize:
 
 /**
  * Enough for a reasoning model's thinking plus a paragraph. The longest of 105
- * measured replies was 199 tokens (docs/p2-plan.md decision 1).
+ * measured replies was 199 tokens (docs/decisions.md D-0037).
  */
 export const SUMMARY_MAX_TOKENS = 2048;
 
@@ -94,7 +94,7 @@ const FINISHED = /[.!?…。！？]["'”’»)\]*]*$/;
  * Clean a reply into one paragraph, or reject it. ST returns no finish reason
  * (public/scripts/custom-request.js:60), so an unfinished last sentence is the
  * truncation check. A refusal worded in a way REFUSAL misses is stored — the
- * known weakness in docs/p2-plan.md §4.
+ * known weakness in docs/decisions.md D-0037.
  *
  * @param {string} content
  * @returns {{ok: true, text: string} | {ok: false, reason: 'empty'|'refusal'|'format'|'too-long'|'truncated'}}

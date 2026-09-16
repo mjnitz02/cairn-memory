@@ -5,7 +5,7 @@ import { CAP_FRACTION, createBudget, FLOOR_FRACTION, memoryCap } from '../src/pi
 const scenes = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => ({ index: from + i }));
 const tokensOf = (list) => list.length * 10;
 
-/** A fixed share of the max prompt, with no setting (docs/p2-plan.md decision 2). */
+/** A fixed share of the max prompt, with no setting (docs/decisions.md D-0038). */
 describe('how much room the block gets', () => {
     it('is 35% of the max prompt, rounded down', () => {
         expect(CAP_FRACTION).toBe(0.35);

@@ -89,7 +89,7 @@ function renderTotals(snapshot, summary) {
 /**
  * Text completion drops the oldest raw messages once the prompt is full
  * (public/script.js:4920), and the block's fixed cap cannot see it coming
- * (docs/p2-plan.md decision 2).
+ * (docs/decisions.md D-0038).
  */
 function renderNearLimit(snapshot) {
     const max = snapshot.memory?.maxPromptTokens;
@@ -203,7 +203,7 @@ function renderMemory(memory) {
 
     return renderRecoupled(memory) + `
         <details class="${SLUG}-details">
-            <summary>${title}${renderFidelity(memory.fidelity)}</summary>
+            <summary>${title}</summary>
             ${row('Writing', renderHandover(memory))}
             ${row('Scenes', `${fmt(memory.included)} in the block, of ${fmt(memory.scenes)} summarised (messages ${memory.oldest ?? '—'}\u2013${memory.newest ?? '—'})`)}
             ${row('Written by', describeSource(memory))}
@@ -225,10 +225,7 @@ function describeSource(memory) {
  */
 function renderHandover(memory) {
     if (memory.writing) {
-        const where = memory.placementDefaulted
-            ? ' (placed at Cairn\'s own default, not where qvink had it)'
-            : '';
-        return `yes \u2014 ${fmt(memory.blanked)} summarised messages held out of the history${where}`;
+        return `yes \u2014 ${fmt(memory.blanked)} summarised messages held out of the history`;
     }
     return `<span class="${SLUG}-fair">no \u2014 ${escapeHtml(memory.handoverDetail ?? '')}</span>`;
 }
@@ -248,21 +245,6 @@ function renderRecoupled(memory) {
         rebuilds the block. There is not enough context here to keep the two apart.</div>`;
 }
 
-/**
- * Whether our render of qvink's own selection is qvink's block byte for byte.
- * Taking over the injection before this is true would move the block and change
- * its contents in one go, and no later measurement could separate the two.
- */
-function renderFidelity(fidelity) {
-    if (!fidelity?.compared) return '';
-    if (fidelity.match) return ` <span class="dim">— matches qvink byte for byte</span>`;
-
-    const caveat = fidelity.resolved
-        ? ' (compared after resolving the template\'s macros)'
-        : '';
-    return ` <span class="${SLUG}-poor">— diverges from qvink at ${fmt(fidelity.divergeAt)}${caveat}</span>`;
-}
-
 /** Why the summarizer is idle, in the words of the switch that would change it. */
 const GATES = {
     'no-profile': 'off \u2014 no memory connection chosen',
@@ -276,7 +258,7 @@ const GATES = {
 /**
  * Cairn's own summaries: what it is doing now, what it has cost this chat, and what
  * it gave up on. A given-up message holds the memory step, which is invisible in play
- * until the raw history is visibly long (docs/p2-plan.md §2).
+ * until the raw history is visibly long (docs/decisions.md D-0037).
  */
 function renderSummaries(status) {
     if (!status) return '';

@@ -1,6 +1,6 @@
 /**
  * A small string hash for telling whether a message changed since it was
- * summarised (docs/p2-plan.md §1).
+ * summarised (docs/decisions.md D-0037).
  *
  * ST's `getStringHash` (public/scripts/utils.js:522) is not on `getContext()`
  * (public/scripts/st-context.js:115-309), so this is the same public-domain

@@ -359,7 +359,7 @@ profile. Prompts may assume that floor (`docs/decisions.md` D-0036).
   though an explicit prohibition still earns its place as a secondary guard.
 - **Exception: the default summary prompt** does not follow this structure. It is Matt's qvink
   prompt, verbatim, because a prompt measured in play beats one written to these rules
-  (`docs/p2-plan.md` §4).
+  (`docs/decisions.md` D-0039).
 - Bake guidance into the prompt rather than making it selectable.
 - Anything reported back to the user must reflect the **actual change**, not the model's claimed
   output. Capture pre-state before applying, so counts are real.
@@ -392,8 +392,15 @@ block high; make a step change its tail rather than its head. See `docs/decision
 D-0034 for why the ~90% step figure it predicted is layout-dependent.
 
 **P2 — Scenes.** Own summarisation, one plain-text summary per message, with an editable prompt
-and the see-saw scheduler ported from qvink. Now independent of qvink. Plan:
-`docs/p2-plan.md`.
+and the see-saw scheduler ported from qvink. Now independent of qvink.
+
+*Landed:* summaries stored on their messages and hash-checked against edits, a queue that never
+blocks the chat, and a step that waits for a missing summary (`docs/decisions.md` D-0037). The
+cap is a fixed 35% of the max prompt (D-0038), the summary prompt is editable (D-0039), and the
+qvink mirror is retired, so qvink can be disabled or uninstalled (D-0040). *Measured* (D-0041):
+on Esin with qvink disabled, held turns at 96.7–97.3% and a step breaking at the block's tail
+for 67.3%, about 91% over a cycle, as in P1. Summary quality is deferred to a real-roleplay test
+after P4 or P5.
 
 **P3 — State.** Structured, diffed, per-message. Replaces WTrackerLite.
 
@@ -402,7 +409,7 @@ and the see-saw scheduler ported from qvink. Now independent of qvink. Plan:
 **P5 — Episodes + entity retrieval.** The long tail.
 
 **P6 — A budget worked out from the chat.** Until P6, the block's cap is a fixed 35% of the max
-prompt (`docs/p2-plan.md` decision 2). P6 works the cap out from the chat's own parts, so the
+prompt (`docs/decisions.md` D-0038). P6 works the cap out from the chat's own parts, so the
 block uses the room the chat actually leaves, and P4 and P5 get more space to work with. The
 prompt splits into four parts:
 

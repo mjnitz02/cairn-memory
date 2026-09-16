@@ -12,7 +12,7 @@
 
 /**
  * Realistic malformed replies to the summary prompt, which asks for one plain
- * paragraph (docs/p2-plan.md §4). Each takes the summary the model *meant* to
+ * paragraph (docs/decisions.md D-0037). Each takes the summary the model *meant* to
  * give. Named so a failing test says what shape broke, and every one of them has
  * a case in test/scene-strategy.test.js (CLAUDE.md §3.12).
  */

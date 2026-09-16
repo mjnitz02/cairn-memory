@@ -4,7 +4,7 @@
  * The message envelopes come from `makeQvinkChat`, whose shape is checked against
  * the corpus. The `extra.cairn` stores are written out here by hand, never by
  * src/store/chat-store.js, so the reader is tested against the shape in
- * docs/p2-plan.md §1 rather than against whatever the writer happens to emit.
+ * docs/decisions.md D-0037 rather than against whatever the writer happens to emit.
  * The v1 literal lives in test/fixtures/store-v1.js.
  */
 import { hashString } from '../../src/util/hash.js';

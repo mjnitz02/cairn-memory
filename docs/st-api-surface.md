@@ -25,6 +25,11 @@ literally against the cited line.
 | `extensionSettings` | Our settings bag, and Connection Manager's profile list | `public/scripts/st-context.js` | 201 |
 | `renderExtensionTemplateAsync` | Template loader definition | `public/scripts/extensions.js` | 137 |
 | `extension_settings` | Settings bag definition | `public/scripts/extensions.js` | 141 |
+| `getExtensionManifest,` | Whether Qvink Memory is installed | `public/scripts/st-context.js` | 300 |
+| `export function getExtensionManifest` | Matches the internal name, with or without `third-party/`; null when not installed | `public/scripts/extensions.js` | 524 |
+| `const isDisabled = extension_settings.disabledExtensions.includes(name);` | A disabled extension is never loaded, so its leftover settings are ignored | `public/scripts/extensions.js` | 626 |
+| `export async function disableExtension` | Disabling reloads the page, so "disabled" and "not running" agree | `public/scripts/extensions.js` | 490 |
+| `type: 'local', name:` | A user extension's internal name is `third-party/<folder>` | `src/endpoints/extensions.js` | 518 |
 | `getProfile` | Shape of a connection profile (`id`, `name`) | `public/scripts/extensions/shared.js` | 546 |
 | `getRequestHeaders` | Auth headers for the file-upload call | `public/scripts/st-context.js` | 129 |
 | `/upload` | Data Bank write endpoint, for the inspector log | `src/endpoints/files.js` | 28 |
@@ -79,8 +84,6 @@ literally against the cited line.
 | `setExtensionPrompt` | Signature: `(key, value, position, depth, scan, role, filter)` | `public/script.js` | 8926 |
 | `.sort()` | `getExtensionPrompt` sorts the keys, so our key name decides order within a position | `public/script.js` | 3310 |
 | `.filter(x => x.position == position && x.value)` | An injection is placed only with a matching position and a non-empty value — how "Macro Only" silences one | `public/script.js` | 3312 |
-| `substituteParamsExtended` | Resolve a template's macros before comparing it to qvink's block | `public/scripts/st-context.js` | 164 |
-| `export function substituteParamsExtended` | Signature and semantics | `public/script.js` | 2815 |
 | `symbols: {` | Where `getContext()` exposes the ignore flag | `public/scripts/st-context.js` | 302 |
 | `IGNORE_SYMBOL` | The flag that drops a message from the sent history | `public/scripts/constants.js` | 25 |
 | `if (chatItem.extra?.[IGNORE_SYMBOL]) {` | Honoured on the text-completion path | `public/script.js` | 5841 |
@@ -165,9 +168,13 @@ use.** `chat` is the exception — ST mutates that array in place.
 ## Not from SillyTavern
 
 `qvink_memory_long` / `qvink_memory_short` are Qvink Memory's injection keys
-(`SillyTavern-MessageSummarize/index.js:4022`). Cairn only reads them for
-attribution in the inspector; nothing depends on that extension being installed.
+(`SillyTavern-MessageSummarize/index.js:4022`). Cairn reads them for attribution
+in the inspector, to see whether Qvink still places a block, and as a sign that
+Qvink is loaded: it parks both on every chat refresh, empty or not (`:4004-4005`).
+Nothing depends on that extension being installed.
 
-`auto_summarize` is Qvink Memory's Auto Summarize setting, default on
-(`SillyTavern-MessageSummarize/index.js:116`, read through `?? default_settings[key]`
-at `:655`). Cairn does not summarise while it is on.
+Cairn looks for Qvink under `third-party/SillyTavern-MessageSummarize`, the folder
+its repository clones into. Its `auto_summarize` (default on, `index.js:116`, read
+through `?? default_settings[key]` at `:655`) and `exclude_messages_after_threshold`
+(default on, `:136`) are read only while it is loaded. A disabled or uninstalled
+Qvink leaves both in the settings, and Cairn ignores them.

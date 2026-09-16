@@ -1,19 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { blockChars, createAssembler, renderBlock } from '../src/prompt/assembler.js';
-import { QVINK_DEFAULTS, readScenes, qvinkInjected } from '../src/memory/scenes.js';
+import { BLOCK_PLACEMENT, BLOCK_RENDERING, blockChars, createAssembler, renderBlock } from '../src/prompt/assembler.js';
+import { QVINK_EXTENSION, readScenes } from '../src/memory/scenes.js';
 import { CAP_FRACTION, createBudget } from '../src/pipeline/budgeter.js';
 import { createSeeSaw } from '../src/pipeline/scheduler.js';
-import { createContext } from './mocks/sillytavern.js';
+import { collectedKeys, createContext, extension_prompt_types } from './mocks/sillytavern.js';
 import { makeQvinkChat, makeQvinkSettings, makeSummary } from './mocks/qvink.js';
 import { cairnStore, cairnSummary, makeMixedChat } from './mocks/cairn.js';
 import { pendingScenes } from '../src/memory/scenes.js';
 import { hashString } from '../src/util/hash.js';
-
-const RENDERING = {
-    template: QVINK_DEFAULTS.template,
-    separator: QVINK_DEFAULTS.separator,
-    macro: QVINK_DEFAULTS.macro,
-};
 
 /**
  * qvink's own rendering, re-derived here rather than by calling ours: template
@@ -29,7 +23,7 @@ function asQvinkWouldRender(scenes) {
 
 /**
  * `cap` is sugar for the max prompt that gives it: the cap is a fixed share of the
- * max prompt (docs/p2-plan.md decision 2), and rounding up keeps it exact.
+ * max prompt (docs/decisions.md D-0038), and rounding up keeps it exact.
  */
 function harness({
     seeSaw = createSeeSaw(),
@@ -37,8 +31,9 @@ function harness({
     cap = 1_000_000,
     maxPrompt = Math.ceil(cap / CAP_FRACTION),
     settings = makeQvinkSettings(),
+    qvink = true,
 } = {}) {
-    const context = createContext({ chat: [] });
+    const context = createContext({ chat: [], extensions: qvink ? [QVINK_EXTENSION] : [] });
     context.extensionSettings.qvink_memory = settings;
 
     const assembler = createAssembler(() => context, {
@@ -70,55 +65,48 @@ function harness({
 }
 
 /**
- * A run where the gate is open: qvink is installed and silent, and our render has
- * already matched its live block once (docs/decisions.md D-0020, D-0027).
+ * A run where the gate is open: qvink is installed, set to "Macro Only" and no
+ * longer excluding (docs/decisions.md D-0020, D-0027).
  */
-async function handedOver(run, { length = 40 } = {}) {
+function handedOver(run, { length = 40 } = {}) {
     const chat = makeQvinkChat({ length, summarisedThrough: length - 11 });
     run.context.chat = chat;
     run.assembler.setOwnEnabled(true);
-
-    // qvink injecting, and our mirror of its selection matching it: the proof.
-    run.context.setExtensionPrompt(
-        'qvink_memory_short', asQvinkWouldRender(qvinkInjected(readScenes(chat))), 0, 2,
-    );
     run.context.extensionSettings.qvink_memory.exclude_messages_after_threshold = false;
-    await run.plan();
-
-    // Then qvink goes quiet: "Macro Only" keeps the value and unplaces it
+    // "Macro Only" keeps the value and unplaces it
     // (extension_prompt_types.NONE, public/script.js:484).
-    const parked = run.context.extensionPrompts.qvink_memory_short;
-    parked.position = -1;
+    run.context.setExtensionPrompt('qvink_memory_short', asQvinkWouldRender(readScenes(chat)), -1, 2);
     return run;
 }
 
 describe('rendering the block', () => {
-    it('leads each summary with the separator, oldest first', () => {
+    it('renders what qvink renders by default, oldest first, so a handed-over block keeps its bytes', () => {
         const scenes = readScenes(makeQvinkChat({ length: 3 }));
 
-        expect(renderBlock(scenes, RENDERING)).toBe(asQvinkWouldRender(scenes));
+        expect(renderBlock(scenes)).toBe(asQvinkWouldRender(scenes));
+        expect(renderBlock(scenes, BLOCK_RENDERING)).toBe(asQvinkWouldRender(scenes));
     });
 
     it('is nothing at all when there is nothing to say (qvink index.js:3965)', () => {
-        expect(renderBlock([], RENDERING)).toBe('');
-        expect(blockChars([], RENDERING)).toBe(0);
+        expect(renderBlock([], BLOCK_RENDERING)).toBe('');
+        expect(blockChars([], BLOCK_RENDERING)).toBe(0);
     });
 
     it('treats a summary containing $& as text, not as a substitution pattern', () => {
         const scenes = [{ text: 'She said $& and then $` happened.', chars: 33 }];
 
-        expect(renderBlock(scenes, RENDERING)).toContain('$& and then $`');
+        expect(renderBlock(scenes, BLOCK_RENDERING)).toContain('$& and then $`');
     });
 
     it('sizes the block without building it', () => {
         for (const length of [1, 2, 7, 40]) {
             const scenes = readScenes(makeQvinkChat({ length }));
-            expect(blockChars(scenes, RENDERING)).toBe(renderBlock(scenes, RENDERING).length);
+            expect(blockChars(scenes, BLOCK_RENDERING)).toBe(renderBlock(scenes, BLOCK_RENDERING).length);
         }
     });
 
     it('sizes a template with several macro slots the way it renders it', () => {
-        const rendering = { ...RENDERING, template: 'A{{memories}}B{{MEMORIES}}C' };
+        const rendering = { ...BLOCK_RENDERING, template: 'A{{memories}}B{{MEMORIES}}C' };
         const scenes = readScenes(makeQvinkChat({ length: 3 }));
 
         expect(blockChars(scenes, rendering)).toBe(renderBlock(scenes, rendering).length);
@@ -276,59 +264,34 @@ describe('detecting the two cadences collapsing back into one', () => {
     });
 });
 
-describe('the fidelity check against qvink live block', () => {
-    it('matches qvink own injection byte for byte', async () => {
-        const run = harness();
-        const chat = makeQvinkChat({ length: 40, summarisedThrough: 29 });
-        const expected = asQvinkWouldRender(qvinkInjected(readScenes(chat)));
+describe('the block is Cairn\'s own, not a mirror of qvink', () => {
+    it('ignores qvink\'s template, separator, prefill and position settings', async () => {
+        const run = handedOver(harness({
+            settings: makeQvinkSettings({
+                short_template: '[Recap]\n{{memories}}',
+                summary_injection_separator: '\n- ',
+                show_prefill: true,
+                short_term_position: 1,
+                short_term_depth: 16,
+                short_term_role: 1,
+            }),
+        }));
 
-        run.context.chat = chat;
-        run.context.setExtensionPrompt('qvink_memory_short', expected, 0, 2);
-        const plan = await run.plan();
+        const plan = await run.write();
 
-        expect(plan.fidelity).toMatchObject({ compared: true, match: true, divergeAt: null });
-        expect(plan.fidelity.liveChars).toBe(expected.length);
+        expect(plan.writing).toBe(true);
+        expect(plan.text.startsWith('[Following is a list of recent events]:\n\n* Scene 0: ')).toBe(true);
+        expect(plan.text).not.toContain('Summary: ');
+        expect(plan.placement).toEqual(BLOCK_PLACEMENT);
     });
 
-    it('says where it diverges when qvink block is not what we would build', async () => {
-        const run = harness();
-        const chat = makeQvinkChat({ length: 40, summarisedThrough: 29 });
-        const scenes = readScenes(chat);
-        // qvink dropped one; we would not have.
-        const theirs = asQvinkWouldRender(qvinkInjected(scenes).filter((s) => s.index !== 4));
+    it('parks the block where ST collects it, since writing is also blanking (D-0029)', () => {
+        const context = createContext({ chat: [] });
+        const { position, depth, scan, role } = BLOCK_PLACEMENT;
+        context.setExtensionPrompt('cairn_memory', 'block', position, depth, scan, role);
 
-        run.context.chat = chat;
-        run.context.setExtensionPrompt('qvink_memory_short', theirs, 0, 2);
-        const plan = await run.plan();
-
-        expect(plan.fidelity.match).toBe(false);
-        expect(plan.fidelity.divergeAt).toBeGreaterThan(0);
-    });
-
-    it('resolves the template macros before comparing, so a macro is not a divergence', async () => {
-        // qvink renders through substituteParamsExtended (its index.js:3973); we
-        // park ours with the macro intact and let ST resolve it when it collects
-        // the injections (public/script.js:3326). Same prompt, different bytes at
-        // rest — so the check resolves ours before comparing.
-        const run = harness({
-            settings: makeQvinkSettings({ short_template: '{{char}} recalls:\n{{memories}}\n' }),
-        });
-        const chat = makeQvinkChat({ length: 20, summarisedThrough: 9 });
-        const scenes = qvinkInjected(readScenes(chat));
-        const body = scenes.map((scene) => `\n* ${scene.text}`).join('');
-
-        run.context.chat = chat;
-        run.context.setExtensionPrompt('qvink_memory_short', `Aster recalls:\n${body}\n`, 0, 2);
-
-        const plan = await run.plan();
-
-        expect(plan.fidelity).toMatchObject({ compared: true, resolved: true, match: true });
-    });
-
-    it('does not claim a comparison when qvink is not injecting', async () => {
-        const plan = await harness().turn(40);
-
-        expect(plan.fidelity).toMatchObject({ compared: false, match: null });
+        expect(position).toBe(extension_prompt_types.IN_PROMPT);
+        expect(collectedKeys(context.extensionPrompts)).toEqual(['cairn_memory']);
     });
 });
 
@@ -396,7 +359,7 @@ describe('what the plan reports', () => {
  *
  * The assembler decides; prompt/injector.js acts. What matters here is that the
  * decision is made from the live state of the other extension every turn, and
- * that the proof it depends on is earned while qvink is still the writer.
+ * from whether it runs at all rather than from settings it left behind.
  */
 describe('handing the injection over', () => {
     it('plans but does not write while qvink is still injecting', async () => {
@@ -405,7 +368,7 @@ describe('handing the injection over', () => {
         const chat = makeQvinkChat({ length: 40, summarisedThrough: 29 });
         run.context.chat = chat;
         run.context.setExtensionPrompt(
-            'qvink_memory_short', asQvinkWouldRender(qvinkInjected(readScenes(chat))), 0, 2,
+            'qvink_memory_short', asQvinkWouldRender(readScenes(chat)), 0, 2,
         );
 
         const plan = await run.plan();
@@ -417,47 +380,56 @@ describe('handing the injection over', () => {
         expect(plan.included).toBeGreaterThan(0);
     });
 
-    it('writes once qvink is silent and the block has been matched', async () => {
-        const run = await handedOver(harness());
+    it('writes once qvink is silent', async () => {
+        const run = handedOver(harness());
 
         const plan = await run.write();
 
         expect(plan.writing).toBe(true);
         expect(plan.report.handover).toBe('writing');
         expect(plan.text).toContain('Scene 0:');
-        expect(plan.placement).toMatchObject({ position: 0, depth: 2, role: 0, scan: false });
-        expect(plan.report.placement).toBe(0);
+        expect(plan.placement).toEqual({ position: 0, depth: 2, role: 0, scan: false });
     });
 
     it('will not write while qvink is still taking messages out of the history', async () => {
-        const run = await handedOver(harness());
+        const run = handedOver(harness());
         run.context.extensionSettings.qvink_memory.exclude_messages_after_threshold = true;
 
         expect((await run.plan()).handover).toBe('qvink-excluding');
     });
 
-    it('remembers the proof when qvink stops parking a block to compare against', async () => {
-        // Disabling qvink for the chat empties its injection, so there is nothing
-        // left to check against. The check already passed; it is not re-earned.
-        const run = await handedOver(harness());
-        run.context.extensionPrompts.qvink_memory_short.value = '';
+    it('writes with qvink uninstalled, whatever its saved settings still say', async () => {
+        // ST keeps an extension's settings after it is removed. They describe
+        // nothing that runs, so they must not hold the gate shut.
+        const run = harness({ qvink: false, settings: makeQvinkSettings({ exclude_messages_after_threshold: true }) });
+        run.assembler.setOwnEnabled(true);
+        run.context.chat = makeQvinkChat({ length: 40, summarisedThrough: 29 });
 
-        const plan = await run.plan();
-
-        expect(plan.fidelity.compared).toBe(false);
-        expect(plan.writing).toBe(true);
+        expect(await run.plan()).toMatchObject({ writing: true, handover: 'writing' });
     });
 
-    it('will not take a proof from one chat into the next', async () => {
-        const run = await handedOver(harness());
-        run.assembler.reset();
-        run.context.extensionPrompts.qvink_memory_short.value = '';
+    it('writes with qvink disabled, whatever its saved settings still say', async () => {
+        // A disabled extension is never loaded (public/scripts/extensions.js:626).
+        const run = harness({ settings: makeQvinkSettings({ exclude_messages_after_threshold: true }) });
+        run.context.extensionSettings.disabledExtensions.push(QVINK_EXTENSION);
+        run.assembler.setOwnEnabled(true);
+        run.context.chat = makeQvinkChat({ length: 40, summarisedThrough: 29 });
 
-        expect((await run.plan()).handover).toBe('unproven');
+        expect(await run.plan()).toMatchObject({ writing: true, handover: 'writing' });
+    });
+
+    it('writes on the first turn of a new chat, with nothing to earn first', async () => {
+        // A disabled qvink parks no block, so a gate that waited to compare
+        // against one never opened after a reload.
+        const run = handedOver(harness());
+        run.assembler.reset();
+        delete run.context.extensionPrompts.qvink_memory_short;
+
+        expect(await run.plan()).toMatchObject({ writing: true, stepReason: 'first-turn' });
     });
 
     it('holds back every message the block speaks for, evicted ones included', async () => {
-        const run = await handedOver(harness({ cap: 6_000 }), { length: 40 });
+        const run = handedOver(harness({ cap: 6_000 }), { length: 40 });
         run.context.chat = makeQvinkChat({ length: 200, summarisedThrough: 189 });
 
         const plan = await run.write();
@@ -471,39 +443,23 @@ describe('handing the injection over', () => {
         expect(plan.blank.at(-1)).toBe(plan.report.summarisedThrough);
     });
 
-    it('writes a placed block, and blanks nothing when it would not be placed', async () => {
-        // The handover's own instruction — qvink's position to "Macro Only" —
-        // is what made this reachable: mirroring that position parked our block
-        // at NONE while we blanked 92 messages (docs/decisions.md D-0029).
-        const run = await handedOver(harness());
-        run.context.extensionSettings.qvink_memory.short_term_position = -1;
-
-        const plan = await run.write();
-
-        // Defaulted rather than mirrored, so it is placed and it is written.
-        expect(plan.writing).toBe(true);
-        expect(plan.placement.position).toBe(0);
-        expect(plan.report.placementDefaulted).toBe(true);
-        expect(plan.blank.length).toBeGreaterThan(0);
-    });
-
-    it('never writes a block ST would not collect, whatever qvink says', async () => {
-        // The invariant behind D-0029: writing is also blanking, so a block that
-        // is never collected means a prompt with neither the summaries nor the
-        // messages they stand for.
-        const run = await handedOver(harness());
+    it('places the block where it always does, whatever position qvink names', async () => {
+        // Mirroring qvink's "Macro Only" once parked our block at NONE while 92
+        // messages were blanked (docs/decisions.md D-0029).
+        const run = handedOver(harness());
 
         for (const position of [-1, 0, 1, 2, -7, undefined, 'nonsense']) {
             run.context.extensionSettings.qvink_memory.short_term_position = position;
             const plan = await run.write();
 
             expect(plan.writing).toBe(true);
-            expect(plan.placement.position).toBeGreaterThanOrEqual(0);
+            expect(plan.placement).toEqual(BLOCK_PLACEMENT);
+            expect(plan.blank.length).toBeGreaterThan(0);
         }
     });
 
     it('keeps the block out of the report and in the plan', async () => {
-        const run = await handedOver(harness());
+        const run = handedOver(harness());
 
         const plan = await run.write();
 
@@ -588,7 +544,7 @@ describe('the plan is a function of the chat', () => {
 });
 
 /**
- * P2's invariants on the plan (docs/p2-plan.md §6). Cairn's scenes are
+ * P2's invariants on the plan (CLAUDE.md §3.10, docs/decisions.md D-0037). Cairn's scenes are
  * hand-written onto the chat here; nothing in these tests calls a model.
  */
 describe('P2: a block read from qvink and Cairn together', () => {

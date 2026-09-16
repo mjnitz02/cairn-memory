@@ -161,8 +161,6 @@ function memoryFields(memory) {
         // writing it and Cairn only measuring (docs/decisions.md D-0027).
         memory_writing: memory.writing ?? false,
         memory_handover: memory.handover ?? null,
-        memory_placement: memory.placement ?? null,
-        memory_placement_defaulted: memory.placementDefaulted ?? null,
         memory_blanked: memory.blanked ?? null,
         memory_scenes: memory.scenes,
         memory_included: memory.included,
@@ -173,7 +171,7 @@ function memoryFields(memory) {
         memory_step_reason: memory.stepReason,
         memory_evicted: memory.evicted,
         memory_over_cap: memory.overCap,
-        // A fixed share of the max prompt (docs/p2-plan.md decision 2).
+        // A fixed share of the max prompt (docs/decisions.md D-0038).
         memory_cap: memory.cap,
         memory_floor: memory.floor,
         memory_max_prompt_tokens: memory.maxPromptTokens,
@@ -182,12 +180,6 @@ function memoryFields(memory) {
         memory_stability_percent: memory.change?.stabilityPercent ?? null,
         memory_change_at: memory.change?.divergenceAt ?? null,
         memory_change_percent: memory.change?.divergencePercent ?? null,
-        // Whether our render of qvink's own selection is their block byte for
-        // byte. The handover is gated on this (docs/decisions.md D-0020).
-        memory_fidelity: memory.fidelity?.compared ? memory.fidelity.match : null,
-        memory_fidelity_resolved: memory.fidelity?.resolved ?? null,
-        memory_fidelity_diverge_at: memory.fidelity?.divergeAt ?? null,
-        memory_live_chars: memory.fidelity?.liveChars ?? null,
     };
 }
 
@@ -203,7 +195,7 @@ function summaryFields(status) {
         summary_reported: true,
         // Why Cairn is or is not summarising (src/pipeline/summarizer.js).
         summary_gate: status.gate ?? null,
-        // A request was out while this prompt was built: the overlap docs/p2-plan.md §7 counts.
+        // A request was out while this prompt was built: the overlap docs/decisions.md D-0041 counts.
         summary_in_flight: status.inFlight != null,
         summary_pending: status.pending ?? null,
         summary_given_up: status.givenUp ?? [],

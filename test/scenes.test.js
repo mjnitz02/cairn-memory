@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
     QVINK_DEFAULTS,
+    QVINK_EXTENSION,
     cairnStart,
     SCENE_HISTORY,
     pendingScenes,
     qvinkExcluding,
+    qvinkRunning,
     qvinkSummarising,
     sceneHistory,
-    qvinkInjected,
     qvinkInjecting,
     readScenes,
-    resolvePlacement,
-    resolveRendering,
 } from '../src/memory/scenes.js';
-import { makeQvinkChat, makeQvinkData, makeQvinkSettings } from './mocks/qvink.js';
+import { makeQvinkChat, makeQvinkData } from './mocks/qvink.js';
+import { createContext } from './mocks/sillytavern.js';
 import { cairnStore, cairnSummary, makeMixedChat } from './mocks/cairn.js';
 
 describe('reading tier 2 out of message.extra', () => {
@@ -33,11 +33,10 @@ describe('reading tier 2 out of message.extra', () => {
         expect(readScenes(chat).map((scene) => scene.index)).toEqual([0, 1]);
     });
 
-    it('leaves the prefill out unless qvink is showing it (its index.js:3521)', () => {
+    it('leaves the prefill out, as qvink does by default (its index.js:113, :3521)', () => {
         const chat = makeQvinkChat({ length: 1 });
 
         expect(readScenes(chat)[0].text.startsWith('Summary: ')).toBe(false);
-        expect(readScenes(chat, { showPrefill: true })[0].text.startsWith('Summary: ')).toBe(true);
     });
 
     it('drops excluded scenes but lets a remembered one through anyway', () => {
@@ -50,14 +49,14 @@ describe('reading tier 2 out of message.extra', () => {
     it('never mutates the chat it read', () => {
         const chat = makeQvinkChat({ length: 3 });
         const before = JSON.stringify(chat);
-        readScenes(chat, { showPrefill: true });
+        readScenes(chat);
 
         expect(JSON.stringify(chat)).toBe(before);
     });
 });
 
 /**
- * Two sources, one scene per message (docs/p2-plan.md §1). qvink's summaries are
+ * Two sources, one scene per message (docs/decisions.md D-0037). qvink's summaries are
  * read and never rewritten; Cairn's count only while their hash still matches.
  */
 describe('reading qvink and Cairn scenes together', () => {
@@ -81,7 +80,7 @@ describe('reading qvink and Cairn scenes together', () => {
 
     it('drops a scene whose message was edited, and does not fall back to an older qvink one', () => {
         // A qvink summary on the same message is at least as old as the edit made
-        // Cairn's, so it is no better (docs/p2-plan.md §1).
+        // Cairn's, so it is no better (docs/decisions.md D-0037).
         const chat = makeQvinkChat({ length: 3 });
         chat[1].extra.cairn = cairnStore(chat[1], 'Before the edit.');
         chat[1].mes += ' An afterthought.';
@@ -183,54 +182,6 @@ describe('the history sent with a summary request', () => {
     });
 });
 
-describe('the set qvink is injecting', () => {
-    it('is the included, non-lagging scenes (its index.js:3939)', () => {
-        const scenes = readScenes(makeQvinkChat({ length: 20, summarisedThrough: 9 }));
-
-        expect(qvinkInjected(scenes).map((scene) => scene.index)).toEqual([...Array(10).keys()]);
-    });
-
-    it('excludes a scene qvink flagged out of the short-term window', () => {
-        const chat = makeQvinkChat({ length: 6, summarisedThrough: 5 });
-        chat[2].extra.qvink_memory.include = null;
-
-        expect(qvinkInjected(readScenes(chat)).map((s) => s.index)).toEqual([0, 1, 3, 4, 5]);
-    });
-});
-
-describe('how the block is rendered', () => {
-    it('follows qvink live settings so a handover is byte-identical for this user', () => {
-        const rendering = resolveRendering({
-            qvink_memory: makeQvinkSettings({
-                short_template: '[Recap]\n{{memories}}',
-                summary_injection_separator: '\n- ',
-                show_prefill: true,
-            }),
-        });
-
-        expect(rendering).toMatchObject({
-            template: '[Recap]\n{{memories}}',
-            separator: '\n- ',
-            showPrefill: true,
-            configured: true,
-        });
-    });
-
-    it('falls back to qvink documented defaults when it is not installed', () => {
-        const rendering = resolveRendering({});
-
-        expect(rendering.template).toBe(QVINK_DEFAULTS.template);
-        expect(rendering.separator).toBe(QVINK_DEFAULTS.separator);
-        expect(rendering.configured).toBe(false);
-    });
-
-    it('treats an empty template as unconfigured rather than as an empty block', () => {
-        const rendering = resolveRendering({ qvink_memory: { short_template: '' } });
-
-        expect(rendering.template).toBe(QVINK_DEFAULTS.template);
-    });
-});
-
 describe('the fixture itself', () => {
     it('carries every key the real data has', () => {
         // A reader that depends on a key we did not model has to fail here, not
@@ -251,41 +202,6 @@ describe('the fixture itself', () => {
     });
 });
 
-describe('where the block goes', () => {
-    it('mirrors qvink placement, so the handover moves only the writer', () => {
-        const placement = resolvePlacement({
-            qvink_memory: makeQvinkSettings({
-                short_term_position: 1, short_term_depth: 4, short_term_role: 1, short_term_scan: true,
-            }),
-        });
-
-        expect(placement).toEqual({ position: 1, depth: 4, role: 1, scan: true, defaulted: false });
-    });
-
-    it('falls back to qvink own defaults when it is not configured', () => {
-        expect(resolvePlacement({})).toEqual({
-            position: QVINK_DEFAULTS.position,
-            depth: QVINK_DEFAULTS.depth,
-            role: QVINK_DEFAULTS.role,
-            scan: QVINK_DEFAULTS.scan,
-            defaulted: true,
-        });
-    });
-
-    it('does not mirror "Macro Only" — that is the switch the handover asks for', () => {
-        // Mirroring NONE parks our block where nothing collects it, on the very
-        // turn we also start holding messages back (docs/decisions.md D-0029).
-        const placement = resolvePlacement({
-            qvink_memory: makeQvinkSettings({ short_term_position: -1, short_term_depth: 16 }),
-        });
-
-        expect(placement.position).toBe(QVINK_DEFAULTS.position);
-        expect(placement.defaulted).toBe(true);
-        // The rest of the placement is still theirs.
-        expect(placement.depth).toBe(16);
-    });
-});
-
 /**
  * What the handover gate reads (src/prompt/handover.js). Both of these are about
  * the *other* extension's live state, and getting either wrong means two writers
@@ -300,7 +216,7 @@ describe('whether qvink is still writing', () => {
 
     it('treats "Macro Only" as silent — the value stays, nothing places it', () => {
         // extension_prompt_types.NONE (public/script.js:484) matches no collected
-        // position, and the value is what the fidelity check compares against.
+        // position, so the value is parked and never placed.
         const prompts = { qvink_memory_short: { value: '[recap]', position: -1 } };
 
         expect(qvinkInjecting(prompts)).toEqual([]);
@@ -322,42 +238,98 @@ describe('whether qvink is still writing', () => {
     });
 });
 
+/**
+ * ST keeps an extension's settings after it is disabled or removed, so a setting
+ * alone says nothing about whether qvink still runs.
+ */
+describe('whether qvink is running', () => {
+    const withQvink = (extensions = [QVINK_EXTENSION]) => createContext({ chat: [], extensions });
+
+    it('is running when installed and enabled', () => {
+        expect(qvinkRunning(withQvink())).toBe(true);
+    });
+
+    it('is not running when uninstalled, or disabled (public/scripts/extensions.js:626)', () => {
+        const disabled = withQvink();
+        disabled.extensionSettings.disabledExtensions.push(QVINK_EXTENSION);
+
+        expect(qvinkRunning(withQvink([]))).toBe(false);
+        expect(qvinkRunning(disabled)).toBe(false);
+    });
+
+    it('is running under another folder name once it has parked a block, even an empty one', () => {
+        // Its refresh parks both keys on every chat (its index.js:4004-4005, :4022-4023).
+        const renamed = withQvink(['third-party/my-qvink']);
+        renamed.setExtensionPrompt('qvink_memory_short', '', -1, 2);
+
+        expect(qvinkRunning(renamed)).toBe(true);
+    });
+
+    it('is not running on a bare or missing context', () => {
+        expect(qvinkRunning({})).toBe(false);
+        expect(qvinkRunning(undefined)).toBe(false);
+    });
+});
+
 describe('whether qvink is still taking messages out of the history', () => {
+    const running = (settings) => {
+        const context = createContext({ chat: [], extensions: [QVINK_EXTENSION] });
+        context.extensionSettings.qvink_memory = settings;
+        return context;
+    };
+
     it('reads its own setting', () => {
-        expect(qvinkExcluding({ qvink_memory: { exclude_messages_after_threshold: true } })).toBe(true);
-        expect(qvinkExcluding({ qvink_memory: { exclude_messages_after_threshold: false } })).toBe(false);
+        expect(qvinkExcluding(running({ exclude_messages_after_threshold: true }))).toBe(true);
+        expect(qvinkExcluding(running({ exclude_messages_after_threshold: false }))).toBe(false);
     });
 
     it('assumes its default when it has not been configured', () => {
         // Its own default is on (its index.js:136), so an unconfigured install is
         // still excluding and the gate stays shut.
-        expect(qvinkExcluding({ qvink_memory: {} })).toBe(true);
+        expect(qvinkExcluding(running({}))).toBe(true);
+        expect(qvinkExcluding(running(undefined))).toBe(true);
     });
 
-    it('is not excluding anything when it is not installed at all', () => {
-        expect(qvinkExcluding({})).toBe(false);
+    it('is not excluding anything when it is not running, whatever its settings say', () => {
+        const uninstalled = createContext({ chat: [] });
+        uninstalled.extensionSettings.qvink_memory = { exclude_messages_after_threshold: true };
+
+        expect(qvinkExcluding(uninstalled)).toBe(false);
+        expect(qvinkExcluding(undefined)).toBe(false);
     });
 });
 
 /**
  * Two extensions summarising the same message pay for it twice and race to
  * write it. qvink's Auto Summarize has to be off before Cairn starts
- * (docs/p2-plan.md §7, cutover step 1).
+ * (docs/how-it-works.md, "Writing summaries").
  */
 describe('whether qvink is still summarising', () => {
+    const running = (settings) => {
+        const context = createContext({ chat: [], extensions: [QVINK_EXTENSION] });
+        context.extensionSettings.qvink_memory = settings;
+        return context;
+    };
+
     it('reads its Auto Summarize setting', () => {
-        expect(qvinkSummarising({ qvink_memory: { auto_summarize: true } })).toBe(true);
-        expect(qvinkSummarising({ qvink_memory: { auto_summarize: false } })).toBe(false);
+        expect(qvinkSummarising(running({ auto_summarize: true }))).toBe(true);
+        expect(qvinkSummarising(running({ auto_summarize: false }))).toBe(false);
     });
 
     it('assumes its default, on, when it has not been configured', () => {
         // its index.js:116, read through `?? default_settings[key]` (:655).
         expect(QVINK_DEFAULTS.autoSummarize).toBe(true);
-        expect(qvinkSummarising({ qvink_memory: {} })).toBe(true);
+        expect(qvinkSummarising(running({}))).toBe(true);
     });
 
-    it('is not summarising anything when it is not installed at all', () => {
-        expect(qvinkSummarising({})).toBe(false);
+    it('is not summarising anything when it is not running, whatever its settings say', () => {
+        const disabled = running({ auto_summarize: true });
+        disabled.extensionSettings.disabledExtensions.push(QVINK_EXTENSION);
+        const uninstalled = createContext({ chat: [] });
+        uninstalled.extensionSettings.qvink_memory = { auto_summarize: true };
+
+        expect(qvinkSummarising(disabled)).toBe(false);
+        expect(qvinkSummarising(uninstalled)).toBe(false);
         expect(qvinkSummarising(undefined)).toBe(false);
     });
 });

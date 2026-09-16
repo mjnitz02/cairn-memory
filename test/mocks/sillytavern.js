@@ -123,6 +123,7 @@ export function createContext({
     profiles = [],
     selectedProfile = null,
     requestService = null,
+    extensions = [],
 } = {}) {
     const extensionPrompts = {};
     const context = {
@@ -153,6 +154,16 @@ export function createContext({
             disabledExtensions: [],
             /** public/scripts/extensions/connection-manager/index.js:28-29 */
             connectionManager: { profiles, selectedProfile },
+        },
+
+        /**
+         * public/scripts/extensions.js:524, exposed at public/scripts/st-context.js:300.
+         * `extensions` holds internal names, `third-party/<folder>` for a user install
+         * (src/endpoints/extensions.js:518); the prefix may be left off, as ST allows.
+         */
+        getExtensionManifest(name) {
+            const found = extensions.find((id) => id === name || id === `third-party/${name}`);
+            return found ? { display_name: found } : null;
         },
 
         /** public/scripts/st-context.js:294 — a class with a static `sendRequest`. */

@@ -67,7 +67,7 @@ describe('the see-saw threshold', () => {
 });
 
 /**
- * The step clamp (docs/p2-plan.md §3). A step never moves the threshold past a
+ * The step clamp (docs/decisions.md D-0037). A step never moves the threshold past a
  * message still waiting for its summary: the block holds, and nothing is blanked
  * without the summary that stands in for it.
  */
@@ -123,7 +123,7 @@ describe('the step waits for a missing summary', () => {
 
     it('never moves back for a gap below the threshold — that is an edit, not a branch', () => {
         // An edited message inside the block loses its scene and its raw text
-        // returns in place (docs/p2-plan.md §5); the threshold does not retreat.
+        // returns in place (docs/decisions.md D-0037); the threshold does not retreat.
         const seeSaw = createSeeSaw({ rawWindow: 10, step: 10 });
         seeSaw.advance(51);
 

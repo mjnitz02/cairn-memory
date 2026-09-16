@@ -12,8 +12,8 @@
  * Two numbers, both fixed for the chat rather than measured turn to turn
  * (docs/decisions.md D-0033):
  *
- *   `cap`   — a fixed share of the max prompt, `CAP_FRACTION` (docs/p2-plan.md
- *             decision 2). No setting, and nothing measured feeds it.
+ *   `cap`   — a fixed share of the max prompt, `CAP_FRACTION` (docs/decisions.md
+ *             D-0038). No setting, and nothing measured feeds it.
  *   `floor` — where a rebuild lands. Half the cap, so the next rebuild is half a
  *             cap of growth away instead of one summary away (D-0026).
  *
@@ -34,7 +34,7 @@ export const FLOOR_FRACTION = 0.5;
 
 /**
  * The block's share of the max prompt. 35% rather than 30% keeps Esin at least the
- * 7,500 tokens qvink's limit gave it (docs/p2-plan.md decision 2).
+ * 7,500 tokens qvink's limit gave it (docs/decisions.md D-0038).
  */
 export const CAP_FRACTION = 0.35;
 

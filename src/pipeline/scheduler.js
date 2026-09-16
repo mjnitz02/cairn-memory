@@ -44,7 +44,7 @@ export function createSeeSaw({ rawWindow = RAW_WINDOW, step = STEP } = {}) {
          * Advance the threshold if this turn has earned it.
          *
          * `firstPending` clamps an advance to just before the oldest message still
-         * waiting for its summary (docs/p2-plan.md §3), so nothing is blanked
+         * waiting for its summary (docs/decisions.md D-0037), so nothing is blanked
          * without one. It never pulls the threshold back: a gap below it is an
          * edit, and the assembler already stops blanking that message.
          *

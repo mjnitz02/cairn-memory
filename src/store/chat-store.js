@@ -1,5 +1,5 @@
 /**
- * `message.extra.cairn` — read, validate, write (DESIGN.md §9, docs/p2-plan.md §1).
+ * `message.extra.cairn` — read, validate, write (DESIGN.md §9, docs/decisions.md D-0037).
  *
  * A scene lives on the message it summarises, so deletions, branches and swipes
  * carry it with no bookkeeping. What it cannot survive is an edit, and that is
@@ -14,7 +14,7 @@ import { STORE_VERSION } from './schema.js';
 import { hashString } from '../util/hash.js';
 import { estimateTokens } from '../util/tokens.js';
 
-/** Matt's qvink `message_length_threshold` (docs/p2-plan.md §1). */
+/** Matt's qvink `message_length_threshold` (docs/decisions.md D-0037). */
 export const MIN_SUMMARY_TOKENS = 50;
 
 /**

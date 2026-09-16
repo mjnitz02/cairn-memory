@@ -4,7 +4,7 @@
  *
  * Also the only feedback that summarising is happening at all: the message being
  * summarised says so while its request is out. Nothing here waits on it, and
- * nothing here blocks the chat (docs/p2-plan.md §3).
+ * nothing here blocks the chat (docs/how-it-works.md, "Writing summaries").
  *
  * `markMessages` and `renderMark` are pure. `createChatMarks` is the DOM glue.
  */

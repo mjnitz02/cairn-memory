@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_ATTEMPTS, assessSummarizing, createSummarizer } from '../src/pipeline/summarizer.js';
 import { DEFAULT_SUMMARY_PROMPT, SUMMARY_MAX_TOKENS, perMessage } from '../src/memory/scene-strategy.js';
-import { pendingScenes } from '../src/memory/scenes.js';
+import { QVINK_EXTENSION, pendingScenes } from '../src/memory/scenes.js';
 import { readScene } from '../src/store/chat-store.js';
 import { hashString } from '../src/util/hash.js';
 import { resetToasts } from '../src/util/log.js';
@@ -99,10 +99,21 @@ describe('whether Cairn may summarise', () => {
     });
 
     it('waits while qvink is still summarising the same messages', () => {
-        const busy = context();
+        const busy = context({ extensions: [QVINK_EXTENSION] });
         busy.extensionSettings.qvink_memory = { auto_summarize: true };
 
         expect(assessSummarizing(busy, { memoryProfileId: MEMORY.id }).reason).toBe('qvink-summarising');
+    });
+
+    it('does not wait on a disabled or uninstalled qvink\'s leftover Auto Summarize', () => {
+        // ST keeps an extension's settings after it is disabled or removed.
+        const disabled = context({ extensions: [QVINK_EXTENSION] });
+        disabled.extensionSettings.disabledExtensions.push(QVINK_EXTENSION);
+        const uninstalled = context();
+        for (const leftover of [disabled, uninstalled]) leftover.extensionSettings.qvink_memory = { auto_summarize: true };
+
+        expect(assessSummarizing(disabled, { memoryProfileId: MEMORY.id }).reason).toBe('ready');
+        expect(assessSummarizing(uninstalled, { memoryProfileId: MEMORY.id }).reason).toBe('ready');
     });
 
     it('flags a memory profile that is the chat\'s own', () => {
@@ -276,7 +287,10 @@ describe('when it runs', () => {
     });
 
     it('does nothing while qvink is still summarising, and starts once it stops', async () => {
-        const { context, service, summarizer } = harness({ responses: [summary(10), summary(11), summary(12), summary(13)] });
+        const { context, service, summarizer } = harness({
+            responses: [summary(10), summary(11), summary(12), summary(13)],
+            context: { extensions: [QVINK_EXTENSION] },
+        });
         context.extensionSettings.qvink_memory = { auto_summarize: true };
 
         summarizer.start();
@@ -336,7 +350,7 @@ describe('when it runs', () => {
     });
 });
 
-/** docs/p2-plan.md §2: before writing, the chat, the message and its text are all checked again. */
+/** docs/decisions.md D-0037: before writing, the chat, the message and its text are all checked again. */
 describe('a reply that arrives after the world moved on', () => {
     it('is discarded when you have left the chat, and the request is aborted', async () => {
         const answer = deferred();
@@ -583,7 +597,7 @@ describe('failure', () => {
 });
 
 /**
- * What the inspector and the log read (docs/p2-plan.md §7). Counts, sizes and times for
+ * What the inspector and the log read (docs/decisions.md D-0041). Counts, sizes and times for
  * the open chat — never a summary's text, which the log would carry to disk.
  */
 describe('what it reports', () => {
@@ -645,12 +659,12 @@ describe('what it reports', () => {
 
         expect(status('')).toBe(true);
         expect(status('For {{user}}: {{message}}')).toBe(false);
-        // No {{message}}: the default goes out instead (docs/p2-plan.md §4).
+        // No {{message}}: the default goes out instead (docs/decisions.md D-0039).
         expect(status('Summarise {{history}}')).toBe(true);
     });
 
     it('reports why it is idle', async () => {
-        const { context, summarizer } = harness();
+        const { context, summarizer } = harness({ context: { extensions: [QVINK_EXTENSION] } });
         context.extensionSettings.qvink_memory = { auto_summarize: true };
 
         summarizer.start();

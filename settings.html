@@ -18,7 +18,7 @@
                 The connection profile Cairn uses to write memory. This must not be your roleplay
                 model — roleplay models write flowery summaries. Cairn summarises each message after
                 a reply arrives, starting after the newest summary Qvink Memory wrote, and waits
-                until Qvink's <b>Auto Summarize</b> is off.
+                while Qvink is enabled with <b>Auto Summarize</b> on.
             </div>
 
             <label for="cairn_summaryPrompt">Summary prompt</label>
@@ -65,8 +65,9 @@
             <div class="cairn-hint">
                 Lets Cairn put the summaries into the prompt and keep the messages they cover out
                 of it, instead of Qvink Memory doing both. Cairn waits until Qvink is silent —
-                set its short- and long-term memory position to <b>Macro Only</b> and turn off
-                <b>Exclude messages after threshold</b> — and says below what it is waiting for.
+                disable it, or set its short- and long-term memory position to <b>Macro Only</b>
+                and turn off <b>Exclude messages after threshold</b> — and says below what it is
+                waiting for.
             </div>
 
             <label class="checkbox_label" for="cairn_debugLogging">

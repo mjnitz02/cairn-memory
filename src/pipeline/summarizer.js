@@ -1,5 +1,5 @@
 /**
- * The summarizer — the only file that calls a model (docs/p2-plan.md §2).
+ * The summarizer — the only file that calls a model (docs/decisions.md D-0037).
  *
  * It owns the queue, the transport, and what a failure does. What the prompt says
  * and how a reply is read belong to the strategy (memory/scene-strategy.js), and
@@ -45,7 +45,7 @@ export function assessSummarizing(context, { memoryProfileId } = {}) {
         return blocked('no-connection-manager');
     }
     if (!(manager?.profiles ?? []).some((profile) => profile.id === memoryProfileId)) return blocked('profile-missing');
-    if (qvinkSummarising(settings)) return blocked('qvink-summarising');
+    if (qvinkSummarising(context)) return blocked('qvink-summarising');
 
     return { ready: true, reason: 'ready', sameProfile: manager?.selectedProfile === memoryProfileId };
 }
@@ -164,7 +164,7 @@ export function createSummarizer(getContext, { settings, strategy = perMessage, 
             counting.ms += counting.lastMs;
         }
 
-        // Anything can happen in the seconds a request is out (docs/p2-plan.md §2). No
+        // Anything can happen in the seconds a request is out (docs/decisions.md D-0037). No
         // chat-id check: opening, reloading or renaming a chat refills the array with new
         // objects (public/script.js:7658, :10713), so the object test already catches it.
         const now = getContext();

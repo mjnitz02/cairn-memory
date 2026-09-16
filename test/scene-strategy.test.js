@@ -11,7 +11,7 @@ import { hashString } from '../src/util/hash.js';
 import { badOutputs } from './mocks/llm.js';
 import { createContext } from './mocks/sillytavern.js';
 
-/** docs/p2-plan.md §4, word for word — Matt's qvink prompt, proven in play. */
+/** docs/decisions.md D-0039, word for word — Matt's qvink prompt, proven in play. */
 const PLAN_DEFAULT = `Summarize the following fictional message as a single paragraph of 2-3 sentences in past tense. Do not use bullet points or numbered lists.
 
 Include: character names (not pronouns), actions taken, dialogue points, emotional shifts, decisions made, and new information revealed.
@@ -36,7 +36,7 @@ const SUMMARY = 'Aster told Wren the ferry would not run until the fog lifted, l
 const MESSAGE = { name: 'Aster', is_user: false, mes: 'The kettle clicked off. "The ferry won\'t run tonight," Aster said.' };
 
 describe('the default summary prompt', () => {
-    it('is the prompt in docs/p2-plan.md §4, word for word', () => {
+    it('is Matt\'s qvink prompt (D-0039), word for word', () => {
         expect(DEFAULT_SUMMARY_PROMPT).toBe(PLAN_DEFAULT);
     });
 

@@ -92,7 +92,7 @@ export function makeSummary(index, chars = 353) {
  *
  * `lagging` follows qvink's rule — `i > summarisedThrough` (its index.js:3830) —
  * so the `include`/`lagging` flags describe a coherent turn rather than an
- * arbitrary one, which is what the fidelity mirror renders from.
+ * arbitrary one.
  *
  * @param {{length?: number, summarisedThrough?: number, chars?: number,
  *          exclude?: number[], remember?: number[]}} [options]

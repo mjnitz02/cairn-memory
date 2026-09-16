@@ -3,11 +3,11 @@
 A short map of the pieces. The reasoning behind them is in
 [`DESIGN.md`](../DESIGN.md); this page says what is where.
 
-> **Built today: P0 and P1.** Cairn observes generations and reports on them,
-> holds the lorebook block steady, and writes the memory block from summaries your
-> existing memory extension has already made, once that extension is silenced.
-> P2 is in progress: Cairn writes its own summaries once that extension stops
-> summarising. Everything from "The shape of the problem" down is design, not code.
+> **Built today: P0 to P2.** Cairn observes generations and reports on them,
+> holds the lorebook block steady, writes its own summaries, and writes the memory
+> block from them and from any your previous memory extension made. That
+> extension can be disabled or uninstalled. Everything from "The shape of the
+> problem" down is design, not code.
 
 ## What P0 measures
 
@@ -101,7 +101,7 @@ Cairn separates the two:
 
 The block gets 35% of the prompt SillyTavern may send: the context window minus
 the reserved response. There is no setting for it, and Qvink's short-term limit
-no longer counts (`docs/p2-plan.md` decision 2). Cairn does not measure the rest
+no longer counts (`docs/decisions.md` D-0038). Cairn does not measure the rest
 of the prompt and adjust: the same chat always gets the same block, so nothing it
 saw last turn can change this one.
 
@@ -122,7 +122,9 @@ Two things the inspector says about this, because neither is visible in play:
   too tight to hold more than a step or two puts eviction back on every step. The
   block still looks correct while that happens, so the panel says it in words.
 
-**Where the summaries come from.** Each message holds at most one summary. Cairn
+### Where the summaries come from
+
+Each message holds at most one summary (`docs/decisions.md` D-0037). Cairn
 reads the ones your summarising extension already wrote and never changes them,
 and its own summaries go in `message.extra.cairn`. If a message has both, Cairn's
 wins. Each of Cairn's summaries stores a hash of the message it summarised. If
@@ -134,7 +136,9 @@ which can still be swiped or edited.
 
 A step never moves past a message that is still waiting for its summary. The
 block holds where it is, so no message leaves the history without a summary in
-the block to replace it (`docs/p2-plan.md` §3).
+the block to replace it. That only happens when the memory model falls behind: a
+message can be summarised once it is one message old and leaves the history at
+eleven, so the queue has to be about five exchanges behind.
 
 The first turn after you open a chat or reload the page always rebuilds the
 block, and it trims straight to half the limit while it is at it — that turn
@@ -150,11 +154,13 @@ arrives after you have switched or reloaded the chat, edited the message or
 deleted it is thrown away. The request is cancelled when the chat changes.
 
 Cairn does nothing without a memory profile, in group chats, or while Qvink
-Memory's **Auto Summarize** is on. Two extensions summarising the same message
-would pay for it twice and race each other to store it.
+Memory is running with **Auto Summarize** on. Two extensions summarising the same
+message would pay for it twice and race each other to store it. A disabled or
+uninstalled Qvink doesn't count: SillyTavern keeps its settings, but nothing reads
+them.
 
 A failed request writes nothing. That covers an error, a refusal, and a reply
-cut off or in the wrong shape (`docs/p2-plan.md` §4). The first failure shows a
+cut off or in the wrong shape (see **The reply** below). The first failure shows a
 warning, and further failures stay in the console until a summary succeeds
 again. A failure also ends the run, so an outage costs one request per reply,
 and the next reply retries. A message that fails three times is left alone for
@@ -162,6 +168,8 @@ the rest of the session, unless you edit it. The memory step waits before that
 message rather than moving past it, so the raw history grows instead of losing
 anything.
 
+Nothing starts when you send a message, because that's when the chat model starts
+generating, and on a shared or local backend a summary would compete with it.
 Running the summaries never delays SillyTavern. It waits for every
 `MESSAGE_RECEIVED` listener before it shows the reply, so Cairn starts the work
 and returns at once. Unlike Qvink with **Block generation** on, Cairn never holds
@@ -185,6 +193,13 @@ unedited prompt keeps following the default when it changes. A prompt with no
 `{{message}}` can't summarise anything, so Cairn uses the default and warns once.
 Editing the prompt doesn't rewrite existing summaries. Each summary stores a hash
 of the prompt that wrote it.
+
+**The reply** is cleaned into one paragraph: `<think>` blocks, code fences, list
+markers and a leading `Summary:` label are removed. SillyTavern doesn't say whether
+a reply was cut off, so Cairn rejects one that doesn't end in sentence-ending
+punctuation. It also rejects a reply that is empty, opens like a refusal, looks like
+JSON, or runs past 1,500 characters. A refusal worded in a way Cairn doesn't
+recognise is stored as a summary; editing the message gets it written again.
 
 **The panel** has a **Summaries** section that updates as requests go out and come
 back, not only when a reply is generated. It shows what Cairn is doing (writing
@@ -215,29 +230,25 @@ summarised messages back while that extension also holds them back, two differen
 rules are deciding the same thing and the raw window is whichever ran last. So
 Cairn checks, every turn, that:
 
-1. the other extension is placing neither of its memory injections,
-2. it is no longer excluding messages after its threshold, and
-3. Cairn's own render of *its* selection has matched its live block byte for
-   byte in this chat.
+1. the other extension is placing neither of its memory injections, and
+2. it is no longer excluding messages after its threshold.
 
-That third one is the interesting one. It has to be earned while the other
-extension is still the writer — it is the evidence that swapping writers changes
-nothing else about the prompt. Cairn remembers it for the rest of the chat, and
-forgets it when the chat changes.
+The second check applies only while Qvink is loaded. Disabling or uninstalling it
+satisfies both.
 
 Cairn never flips those switches for you. Configuring another extension from
 inside this one is the same "two systems, one prompt" problem in a different
 costume, so the panel names the switch it is waiting for and stops there.
 
 With Qvink Memory the two switches are **Memory position → Macro Only** (for both
-short- and long-term) and **Exclude messages after threshold → off**. "Macro Only"
-is the useful one: the block is still built, so Cairn can keep comparing against
-it, but SillyTavern no longer places it.
+short- and long-term) and **Exclude messages after threshold → off**.
 
-When the gate opens, the block goes where the other extension had it — same
-position, same depth, same role — so the handover changes exactly one thing.
-Messages whose summaries the block carries stop being sent, using SillyTavern's
-own ignore flag; the chat on screen and on disk is untouched.
+The block is Cairn's own and reads nothing from Qvink's settings. It uses Qvink's
+default template and `\n* ` separator, and goes after the story string with the
+system role, where Qvink puts it by default. A chat handed over from a Qvink on its
+default template keeps its block byte for byte. Messages whose summaries the block
+carries stop being sent, using SillyTavern's own ignore flag; the chat on screen
+and on disk is untouched.
 
 ## The shape of the problem
 

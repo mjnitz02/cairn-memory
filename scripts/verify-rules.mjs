@@ -2,17 +2,25 @@
 /**
  * Checks that every `CLAUDE.md §N.M` reference in the repo resolves to a rule
  * that exists, and that its text still looks like what the citing file claims.
+ * Also that every `docs/<page>.md` and `D-NNNN` reference names a page and a
+ * decision that exist, so deleting a doc cannot leave pointers to nothing.
  *
  * Rules are numbered, so inserting one silently shifts every reference after it
  * — which happened the first time a rule was added (CLAUDE.md §9.35: if a
  * mistake can be caught mechanically, catch it mechanically).
  */
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const ROOT = process.cwd();
 const SKIP = new Set(['node_modules', '.git', 'coverage', '.github']);
 const REFERENCE = /CLAUDE\.md §(\d+)\.(\d+)/g;
+const DOC = /\bdocs\/([\w-]+\.md)\b/g;
+const DECISION = /\bD-(\d{4})\b/g;
+
+const decisions = new Set(
+    [...readFileSync('docs/decisions.md', 'utf8').matchAll(/^## D-(\d{4})\b/gm)].map((match) => match[1]),
+);
 
 // Rule N lives under section S; both are needed to validate a §S.N reference.
 const rules = new Map();
@@ -27,6 +35,7 @@ for (const line of readFileSync('CLAUDE.md', 'utf8').split('\n')) {
 
 const failures = [];
 let checked = 0;
+let pointers = 0;
 
 for (const file of walk(ROOT)) {
     if (file.endsWith('CLAUDE.md')) continue;
@@ -50,6 +59,18 @@ for (const file of walk(ROOT)) {
             failures.push(`${where}: rule ${wanted} is in section ${rule.section}, not ${sectionText}.`);
         }
     }
+
+    // The changelog records what was true then, including pages since removed.
+    if (relative(ROOT, file) === 'CHANGELOG.md') continue;
+
+    for (const [, page] of text.matchAll(DOC)) {
+        pointers++;
+        if (!existsSync(join(ROOT, 'docs', page))) failures.push(`${relative(ROOT, file)} → docs/${page}: no such page.`);
+    }
+    for (const [, number] of text.matchAll(DECISION)) {
+        pointers++;
+        if (!decisions.has(number)) failures.push(`${relative(ROOT, file)} → D-${number}: no such decision.`);
+    }
 }
 
 function* walk(dir) {
@@ -62,10 +83,10 @@ function* walk(dir) {
 }
 
 if (failures.length) {
-    console.error(`✗ ${failures.length} stale rule reference(s):\n`);
+    console.error(`✗ ${failures.length} stale reference(s):\n`);
     for (const failure of failures) console.error(`  ${failure}`);
-    console.error('\nRules were probably renumbered. Fix the references, not the rules.');
+    console.error('\nA rule was renumbered, or a page or decision removed. Fix the references.');
     process.exit(1);
 }
 
-console.log(`✓ ${checked} rule references resolve`);
+console.log(`✓ ${checked} rule references and ${pointers} doc and decision references resolve`);

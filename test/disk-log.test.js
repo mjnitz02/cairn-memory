@@ -267,7 +267,6 @@ describe('disk log — the memory plan', () => {
                 chars: 38_900,
                 tokens: 9_040,
                 change: { stabilityPercent: 97.7, divergenceAt: 37_100, divergencePercent: 99.9 },
-                fidelity: { compared: true, match: true, approximate: false, divergeAt: null, liveChars: 38_900 },
             },
         }), getContext);
 
@@ -278,7 +277,6 @@ describe('disk log — the memory plan', () => {
             memory_stepped: true,
             memory_evicted: 0,
             memory_change_percent: 99.9,
-            memory_fidelity: true,
         });
     });
 
@@ -312,7 +310,7 @@ describe('disk log — P2 summaries', () => {
         return JSON.parse(writtenLines().at(-1));
     }
 
-    it('carries the fields the cutover run is read from (docs/p2-plan.md §7)', async () => {
+    it('carries the fields the cutover run is read from (docs/decisions.md D-0041)', async () => {
         expect(await line({ memory, summaries: status, promptTokens: 17_762 })).toMatchObject({
             memory_source: 'mixed',
             memory_cairn_scenes: 21,

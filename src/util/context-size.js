@@ -80,7 +80,7 @@ export const NEAR_LIMIT_FRACTION = 0.95;
 
 /**
  * Whether a prompt was full enough that ST may have dropped raw history the block's
- * cap cannot see (docs/p2-plan.md decision 2). Null when the limit is unknown.
+ * cap cannot see (docs/decisions.md D-0038). Null when the limit is unknown.
  *
  * @param {number} promptTokens What the observer counted.
  * @param {number} maxPromptTokens What the assembler planned against.

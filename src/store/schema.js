@@ -24,7 +24,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     memoryProfileId: '',
     /**
      * The summary prompt. Empty means the built-in default, so an unedited install
-     * gets the default's improvements (docs/p2-plan.md §4).
+     * gets the default's improvements (docs/decisions.md D-0039).
      */
     summaryPrompt: '',
     /** Show the prompt inspector panel (DESIGN.md §10). */

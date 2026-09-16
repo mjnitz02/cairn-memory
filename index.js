@@ -30,9 +30,8 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
         const diskLog = createDiskLog();
         diskLog.setEnabled(settings.logToDisk);
 
-        // Plans the memory block every turn and measures it against qvink's live
-        // one. Whether the plan is written is the handover gate's call
-        // (src/prompt/handover.js, docs/decisions.md D-0027).
+        // Plans the memory block every turn. Whether the plan is written is the
+        // handover gate's call (src/prompt/handover.js, docs/decisions.md D-0027).
         const assembler = createAssembler(getContext, { own: settings.ownMemoryBlock });
 
         // ST resolves the manifest's `generate_interceptor` off globalThis

@@ -7,7 +7,7 @@ import { HANDOVER, assessHandover } from '../src/prompt/handover.js';
  * block twice, or a raw window two extensions disagree about — both of which
  * look completely normal on screen.
  */
-const HANDED_OVER = { own: true, injecting: [], excluding: false, proven: true, placed: true };
+const HANDED_OVER = { own: true, injecting: [], excluding: false };
 
 describe('the handover gate', () => {
     it('opens only when every precondition holds at once', () => {
@@ -52,31 +52,10 @@ describe('the handover gate', () => {
         expect(verdict.detail).toContain('Exclude messages after threshold');
     });
 
-    it('will not take over on a block it has never rendered correctly', () => {
-        // D-0020's sequencing: the byte-identical check has to have passed while
-        // qvink was still the writer, or the handover moves the block and changes
-        // its contents in one step and no measurement can separate the two.
-        expect(assessHandover({ ...HANDED_OVER, proven: false })).toMatchObject({
-            writing: false,
-            reason: HANDOVER.UNPROVEN,
-        });
-    });
-
-    it('never holds messages back for a block that has nowhere to go', () => {
-        // Esin, 2026-09-15: the block was parked at NONE, ST collected nothing,
-        // and 92 messages were held out of a prompt that then had no summaries
-        // either. Writing is blanking; an unplaced block means neither
-        // (docs/decisions.md D-0029).
-        const verdict = assessHandover({ ...HANDED_OVER, placed: false });
-
-        expect(verdict.writing).toBe(false);
-        expect(verdict.reason).toBe(HANDOVER.UNPLACED);
-    });
-
     it('reports the switch the user must flip first, not the last one', () => {
         // Both wrong at once: qvink silent is step one, so that is what it says.
         const verdict = assessHandover({
-            own: true, injecting: ['qvink_memory_short'], excluding: true, proven: true,
+            own: true, injecting: ['qvink_memory_short'], excluding: true,
         });
 
         expect(verdict.reason).toBe(HANDOVER.QVINK_INJECTING);

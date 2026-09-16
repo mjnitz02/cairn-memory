@@ -100,10 +100,9 @@ write the summaries instead, **back up your chats**, then turn off Qvink's **Aut
 Summarize**. Cairn starts after the newest summary Qvink wrote and never changes
 Qvink's. Each summary is saved on its message, so it survives uninstalling Qvink.
 
-Cairn will not take over until it has also rendered Qvink's own block byte for
-byte at least once in that chat — so send a message or two *before* flipping the
-switches. The inspector's **Writing** line says whether Cairn is the writer and,
-if not, exactly what it is waiting for.
+Disabling or uninstalling Qvink does all of the above at once. The inspector's
+**Writing** line says whether Cairn is the writer and, if not, exactly what it is
+waiting for.
 
 ## Documentation
 
