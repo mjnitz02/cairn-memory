@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Re-checks docs/st-api-surface.md against a local SillyTavern checkout.
+ * Re-checks .claude/docs/st-api-surface.md against a local SillyTavern checkout.
  *
  * An uncited claim about an ST API is an unverified claim (CLAUDE.md §2.6), and
  * a citation that has silently rotted is worse than none. This is a local gate
@@ -13,7 +13,7 @@ import { join } from 'node:path';
 
 const ST_PATH = (process.env.ST_PATH || join(process.env.HOME, 'workspaces/SillyTavern'))
     .replace(/^~/, process.env.HOME);
-const DOC = 'docs/st-api-surface.md';
+const DOC = '.claude/docs/st-api-surface.md';
 
 const ROW = /^\|\s*`([^`]+)`\s*\|[^|]*\|\s*`([^`]+)`\s*\|\s*(\d+)\s*\|/;
 const PINNED = /\*\*Pinned: ST ([\d.]+) \(`([0-9a-f]+)`\)\*\*/;

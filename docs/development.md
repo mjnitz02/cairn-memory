@@ -18,7 +18,8 @@ make check       # lint + version-check + tests + verify-st
 ```
 
 CI runs all of it except `verify-st`, which needs a SillyTavern checkout that CI
-does not have. Every CI step exists here under the same target name — if you can
+does not have, and `verify-rules`, which reads `.claude/` — the dev docs are local-only and
+untracked. Every CI step exists here under the same target name — if you can
 run `make check`, you know what CI will say.
 
 | Target | |

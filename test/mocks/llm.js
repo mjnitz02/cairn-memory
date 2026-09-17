@@ -65,6 +65,121 @@ export const badOutputs = {
 };
 
 /**
+ * Realistic replies to the state prompt, which asks for a JSON merge patch
+ * (docs/p3-plan.md decision 5, §7). Each takes the patch the model *meant* and the
+ * state it was sent. No Cairn state reply has been seen in play yet, so the
+ * shapes are the summary catalogue's, carried over to JSON, plus WTrackerLite's
+ * habit of regenerating the whole state. Every one has a case in
+ * test/state-strategy.test.js (CLAUDE.md §3.12).
+ */
+export const badStateOutputs = {
+    /** A json fence, pretty-printed. */
+    fenced: (patch) => '```json\n' + JSON.stringify(patch, null, 2) + '\n```',
+
+    /** Preamble and sign-off around bare JSON. */
+    preambleAndSignOff: (patch) =>
+        `Here is the patch for the new messages:\n\n${JSON.stringify(patch, null, 2)}\n\nLet me know if anything should change!`,
+
+    /** Reasoning model leaks its thinking into content. */
+    leakedReasoning: (patch) => `<think>Wren moved outside. Location and mood change.</think>\n${JSON.stringify(patch)}`,
+
+    /** The template opened the think block in the prompt, so only its close arrives. */
+    orphanThinkClose: (patch) => `Wren moved outside, so the location changes.\n</think>\n\n${JSON.stringify(patch)}`,
+
+    /** Ran out of tokens while still thinking. */
+    unterminatedReasoning: () => '<think>Wren moved outside. First I should check whether the weather',
+
+    /** Hit max_tokens partway through the object. ST reports no finish reason (custom-request.js:60). */
+    truncated: (patch) => {
+        const json = JSON.stringify(patch, null, 2);
+        return json.slice(0, Math.floor(json.length * 0.6));
+    },
+
+    /** Content-policy refusal in place of output. */
+    refusal: () => 'I’m sorry, but I can’t continue with this scene.',
+
+    /** Describes the change in prose instead of writing the patch. */
+    prose: () => 'Wren has moved out to the outer pier of the ferry terminal and is calmer now.',
+
+    /** Ignores "patch" and sends the whole state back, as a regenerating tracker would. */
+    fullState: (patch, state) => JSON.stringify(mergePatch(state, patch), null, 2),
+
+    /** Wraps the patch in an array. */
+    array: (patch) => JSON.stringify([patch]),
+
+    /** Invents a field. */
+    unknownField: (patch) => JSON.stringify({ ...patch, tension: 'rising' }),
+
+    /** threads as one string, not a list. */
+    wrongType: (patch) => JSON.stringify({ ...patch, threads: 'Whether the last ferry will run tonight' }),
+
+    /** Writes a paragraph where a phrase goes. */
+    overlong: (patch) => JSON.stringify({
+        ...patch,
+        location: 'The outer pier of the ferry terminal, past the ticket office and the shuttered café, where the boards are slick with rain and the harbour lights are just coming on',
+    }),
+
+    /** A crowd arrives: four newcomers join two present characters, one past the cap. */
+    sixCharacters: (patch) => JSON.stringify({
+        ...patch,
+        characters: {
+            ...patch.characters,
+            Bram: { mood: 'bored' },
+            Cora: { mood: 'curious' },
+            Dell: { mood: 'tired' },
+            Ines: { mood: 'wary' },
+        },
+    }),
+
+    /** A per-character field the schema does not have (Risa's WTracker schema had one). */
+    unknownSubKey: (patch) => JSON.stringify({
+        ...patch,
+        characters: { ...patch.characters, Wren: { ...patch.characters?.Wren, posture: 'leaning on the rail' } },
+    }),
+
+    /** Title-cased keys, as a model mirroring the `Location:` labels would write them. */
+    capitalisedKeys: (patch) => JSON.stringify(capitalise(patch)),
+
+    /** Nothing changed. */
+    noChange: () => '{}',
+
+    /** A character leaves and a field stops applying, beside the meant change. */
+    nullRemovals: (patch) => JSON.stringify({
+        ...patch,
+        weather: null,
+        characters: { ...patch.characters, Aster: null },
+    }),
+
+    /** Empty, which a stalled endpoint returns with a 200. */
+    empty: () => '',
+};
+
+/** RFC 7386 §2's MergePatch, as written there: what a model sending the full state meant. */
+function mergePatch(target, patch) {
+    if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) return patch;
+    const result = typeof target === 'object' && target !== null && !Array.isArray(target) ? { ...target } : {};
+    for (const [name, value] of Object.entries(patch)) {
+        if (value === null) delete result[name];
+        else result[name] = mergePatch(result[name], value);
+    }
+    return result;
+}
+
+/** Title-case the schema's keys, leaving character names and values alone. */
+function capitalise(patch) {
+    const title = (key) => key[0].toUpperCase() + key.slice(1);
+    return Object.fromEntries(Object.entries(patch).map(([key, value]) => [
+        title(key),
+        key === 'characters'
+            ? Object.fromEntries(Object.entries(value).map(([name, fields]) => [
+                name,
+                Object.fromEntries(Object.entries(fields).map(([field, text]) => [title(field), text])),
+            ]))
+            : value,
+    ]));
+}
+
+/**
  * A reply the test settles by hand, for anything that happens while a request is
  * still out: a chat change, an edit, a second trigger.
  */

@@ -4,6 +4,7 @@
  * that exists, and that its text still looks like what the citing file claims.
  * Also that every `docs/<page>.md` and `D-NNNN` reference names a page and a
  * decision that exist, so deleting a doc cannot leave pointers to nothing.
+ * The docs are local-only under `.claude/`; references keep the short form.
  *
  * Rules are numbered, so inserting one silently shifts every reference after it
  * — which happened the first time a rule was added (CLAUDE.md §9.35: if a
@@ -19,13 +20,13 @@ const DOC = /\bdocs\/([\w-]+\.md)\b/g;
 const DECISION = /\bD-(\d{4})\b/g;
 
 const decisions = new Set(
-    [...readFileSync('docs/decisions.md', 'utf8').matchAll(/^## D-(\d{4})\b/gm)].map((match) => match[1]),
+    [...readFileSync('.claude/docs/decisions.md', 'utf8').matchAll(/^## D-(\d{4})\b/gm)].map((match) => match[1]),
 );
 
 // Rule N lives under section S; both are needed to validate a §S.N reference.
 const rules = new Map();
 let section = 0;
-for (const line of readFileSync('CLAUDE.md', 'utf8').split('\n')) {
+for (const line of readFileSync('.claude/CLAUDE.md', 'utf8').split('\n')) {
     const heading = line.match(/^## (\d+)\./);
     if (heading) section = Number(heading[1]);
 
@@ -65,7 +66,7 @@ for (const file of walk(ROOT)) {
 
     for (const [, page] of text.matchAll(DOC)) {
         pointers++;
-        if (!existsSync(join(ROOT, 'docs', page))) failures.push(`${relative(ROOT, file)} → docs/${page}: no such page.`);
+        if (!existsSync(join(ROOT, '.claude', 'docs', page))) failures.push(`${relative(ROOT, file)} → docs/${page}: no such page.`);
     }
     for (const [, number] of text.matchAll(DECISION)) {
         pointers++;

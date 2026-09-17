@@ -8,6 +8,7 @@
  *
  * Pure: no ST, no network. ST's macro expansion comes in as `expand`.
  */
+import { looksLikeRefusal, straightQuotes, stripThinking, unfence } from './model-reply.js';
 import { hashString } from '../util/hash.js';
 import { hasMacro, renderTemplate } from '../util/template.js';
 
@@ -83,7 +84,6 @@ export const perMessage = {
     parse: parseSummary,
 };
 
-const REFUSAL = /^(?:I'?m sorry|I am sorry|sorry\b|I apologi[sz]e|I can(?:not|'t)\b|I won't\b|I will not\b|I'?m (?:not able|unable)|I am (?:not able|unable)|as an AI\b|I must decline|I'?m afraid)/i;
 const SIGN_OFF = /^(?:I hope|Let me know|Feel free|Is there anything|If you(?:'d| would) like|Would you like)/i;
 const LABEL = /^(?:\*\*|__)?summary(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*/i;
 const LIST_MARKER = /^(?:[-*•]|\d+[.)])\s+/;
@@ -93,24 +93,16 @@ const FINISHED = /[.!?…。！？]["'”’»)\]*]*$/;
 /**
  * Clean a reply into one paragraph, or reject it. ST returns no finish reason
  * (public/scripts/custom-request.js:60), so an unfinished last sentence is the
- * truncation check. A refusal worded in a way REFUSAL misses is stored — the
+ * truncation check. A refusal worded in a way `looksLikeRefusal` misses is stored — the
  * known weakness in docs/decisions.md D-0037.
  *
  * @param {string} content
  * @returns {{ok: true, text: string} | {ok: false, reason: 'empty'|'refusal'|'format'|'too-long'|'truncated'}}
  */
 export function parseSummary(content) {
-    let text = typeof content === 'string' ? content : '';
-
-    // Still thinking when the tokens ran out.
-    if (/^\s*<think>/i.test(text) && !/<\/think>/i.test(text)) return reject('truncated');
-    text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
-    // The chat template opened the block in the prompt, so only its close arrived.
-    const close = text.search(/<\/think>/i);
-    if (close >= 0) text = text.slice(close + '</think>'.length);
-
-    const fence = text.match(/```[^\n]*\n([\s\S]*?)\n?```/);
-    if (fence) text = fence[1];
+    const thought = stripThinking(content);
+    if (thought.truncated) return reject('truncated');
+    let text = unfence(thought.text);
 
     const paragraphs = text.split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean);
     if (paragraphs.length > 1 && paragraphs[0].endsWith(':')) paragraphs.shift();
@@ -126,7 +118,7 @@ export function parseSummary(content) {
         .trim();
 
     if (!text) return reject('empty');
-    if (REFUSAL.test(straightQuotes(text))) return reject('refusal');
+    if (looksLikeRefusal(text)) return reject('refusal');
     if (/^[{[]/.test(text)) return reject('format');
     if (text.length > MAX_SUMMARY_CHARS) return reject('too-long');
     if (!FINISHED.test(text)) return reject('truncated');
@@ -135,8 +127,4 @@ export function parseSummary(content) {
 
 function reject(reason) {
     return { ok: false, reason };
-}
-
-function straightQuotes(text) {
-    return text.replace(/[‘’]/g, '\'');
 }

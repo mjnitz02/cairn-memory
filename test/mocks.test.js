@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createContext, extension_prompt_types, makeChat, makeMessage, openChat, receiveMessage, world_info_position } from './mocks/sillytavern.js';
-import { badOutputs, createRequestService, deferred } from './mocks/llm.js';
+import { badOutputs, badStateOutputs, createRequestService, deferred } from './mocks/llm.js';
 
 /**
  * Guards the mocks themselves. A mock that has drifted from ST is worse than no
@@ -140,5 +140,23 @@ describe('memory-model mock', () => {
         expect(badOutputs.leakedReasoning(summary)).toContain('<think>');
         expect(badOutputs.overlong(summary).length).toBeGreaterThan(500);
         expect(badOutputs.empty()).toBe('');
+    });
+
+    it('offers the malformed state replies the patch parser must survive', () => {
+        const state = { location: 'The waiting room', characters: { Aster: { mood: 'resigned' }, Wren: { mood: 'impatient' } } };
+        const patch = { location: 'The outer pier', characters: { Wren: { mood: 'calmer' } } };
+
+        for (const [name, output] of Object.entries(badStateOutputs)) {
+            expect(typeof output(patch, state), name).toBe('string');
+        }
+        expect(badStateOutputs.fenced(patch)).toMatch(/^```json\n\{/);
+        expect(() => JSON.parse(badStateOutputs.truncated(patch))).toThrow();
+        expect(JSON.parse(badStateOutputs.fullState(patch, state))).toEqual({
+            location: 'The outer pier',
+            characters: { Aster: { mood: 'resigned' }, Wren: { mood: 'calmer' } },
+        });
+        expect(Object.keys(JSON.parse(badStateOutputs.capitalisedKeys(patch)))).toEqual(['Location', 'Characters']);
+        expect(Object.keys(JSON.parse(badStateOutputs.sixCharacters(patch)).characters)).toHaveLength(5);
+        expect(badStateOutputs.overlong(patch).length).toBeGreaterThan(160);
     });
 });

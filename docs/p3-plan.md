@@ -187,11 +187,13 @@ Shapes and sizes only. Read from `~/workspaces/cairn-corpus`, never written.
      thing to get wrong. Lines can't mark a cut-off reply, and they need an escape
      for clearing a field.
    - **Parser.**
-     - **Cleanup:** strip `<think>` blocks as the summary parser does (shared).
-       Take the first fenced block if there is one, otherwise the text from the
-       first `{` to the last `}`.
+     - **Cleanup:** strip `<think>` blocks as the summary parser does (shared,
+       `memory/model-reply.js`). Take the first fenced block if there is one. The
+       patch is the first bracketed span that parses as JSON, with brackets inside
+       strings skipped, so braces in a preamble or sign-off can't swallow it.
      - **Rejects the whole reply** (writes nothing, counts as a failure): empty,
-       a refusal, not valid JSON (`truncated` when no closing brace), not an object.
+       a refusal, no JSON (`truncated` when a bracket is still open at the end),
+       not an object.
      - **Drops one field and keeps the rest:** an unknown key, a wrong type, a value
        over its cap, a 6th character, or an unknown character sub-key. Key names
        match case-insensitively. Each drop is counted and logged as
@@ -294,7 +296,8 @@ message.extra.cairn = {
 - Estimate: about 1,200 tokens in, 30–150 out.
 
 **Prompt draft** (`DESIGN.md` §12 structure: positive instructions, `IMPORTANT:`,
-examples, a tiebreaker):
+examples, a tiebreaker). As built, `STATE_PROMPT` also gives each field's cap, taken
+from the schema, because a value over its cap is dropped:
 
 ```
 You keep the current state of a roleplay scene. Below are the state as it stood
