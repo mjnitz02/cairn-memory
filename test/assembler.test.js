@@ -8,6 +8,7 @@ import { makeQvinkChat, makeQvinkSettings, makeSummary } from './mocks/qvink.js'
 import { cairnStore, cairnSummary, makeMixedChat } from './mocks/cairn.js';
 import { pendingScenes } from '../src/memory/scenes.js';
 import { hashString } from '../src/util/hash.js';
+import { mulberry32 } from './helpers/random.js';
 
 /**
  * qvink's own rendering, re-derived here rather than by calling ours: template
@@ -680,15 +681,3 @@ describe('P2: a block read from qvink and Cairn together', () => {
         }
     });
 });
-
-/** A small seeded PRNG, so a failing random chat can be replayed by its seed. */
-function mulberry32(seed) {
-    let a = seed;
-    return () => {
-        a = (a + 0x6D2B79F5) | 0;
-        let t = Math.imul(a ^ (a >>> 15), 1 | a);
-        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-}
-
