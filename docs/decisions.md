@@ -8,6 +8,32 @@ what we believed and why it changed.
 
 ---
 
+## D-0051 — P6 comes before P4: the fixed cap is bigger than the room
+**2026-09-17.** Reorders `DESIGN.md` §13. The plan is `docs/p6-plan.md`.
+
+**The evidence.** The P3 branch's log, with real-length user messages at a 23,040
+max prompt. On the turn before the second step the prompt was 21,964 with a
+4,945-token block, so the rest came to 17,019: card and lore about 9,080, and a
+19-message raw window about 7,860. That leaves about 6,000 for the block at its
+fullest, against D-0038's cap of 8,063. The block is 6,017, and a step adds about
+1,050, so the cycle after the next step overflows by about 1,000. Text completion
+then drops unpinned examples and the oldest raw messages without telling Cairn
+(`script.js:4920`, `:4960`). The cap was never reached by growth: only the first
+turn after a reload evicted (33 summaries).
+
+**Why P6 first.** P4 compacts under budget pressure, and on this chat the cap never
+feels pressure before ST trims the prompt. Compaction would fire only on reloads,
+and canon added to the block would make the overflow worse.
+
+**Scope, from Matt.** Keep things as static as possible and assume as little as
+possible: improve on the fixed 35%, don't build a dynamic estimate. The see-saw's
+`RAW_WINDOW` and `STEP` stay as D-0034 measured them. P4 and P5 follow P6.
+
+**Reopens if:** P6's run shows the cap can't hold still between events (§13's own
+gate), which would leave D-0038 standing and send P4 ahead on the fixed share.
+
+---
+
 ## D-0050 — Any message can be summarised on request, and the chat shows what the prompt reads
 **2026-09-17.** Quality-of-life changes before P4.
 

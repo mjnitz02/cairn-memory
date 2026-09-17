@@ -420,11 +420,17 @@ edits, deletions and branches roll back with no code (D-0045). Placed just after
 95.9% with the state against 97.5% without, steps still breaking at the block's tail, 13
 updates with no failures, and the state at a median of 57 tokens.
 
+**Order after P3: P6, then P4 and P5** (`docs/decisions.md` D-0051). On a real-length chat the
+fixed cap is bigger than the room the prompt leaves, so P4 would never see budget pressure
+before ST trims the prompt.
+
 **P4 — Canon + compactor.** Promote / merge / drop under budget pressure. Fixes symptom B.
 
 **P5 — Episodes + entity retrieval.** The long tail.
 
-**P6 — A budget worked out from the chat.** Until P6, the block's cap is a fixed 35% of the max
+**P6 — A budget worked out from the chat.** *Proposed in `docs/p6-plan.md`*, which works each
+reserve out from the chat and settings instead of watching the prompt, so it needs neither the
+lore floor nor the pause described below. Until P6, the block's cap is a fixed 35% of the max
 prompt (`docs/decisions.md` D-0038). P6 works the cap out from the chat's own parts, so the
 block uses the room the chat actually leaves, and P4 and P5 get more space to work with. The
 prompt splits into four parts:
