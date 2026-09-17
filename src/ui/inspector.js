@@ -8,6 +8,8 @@
  */
 import { SLUG } from '../constants.js';
 import { nearPromptLimit } from '../util/context-size.js';
+import { GATES, escapeHtml, fmt, row } from './html.js';
+import { renderStateSection } from './state-section.js';
 
 const STABILITY_BANDS = [
     { min: 95, className: 'good', note: 'prefix holding' },
@@ -19,19 +21,30 @@ const STABILITY_BANDS = [
  * @param {HTMLElement} host Element to render into.
  */
 export function createInspector(host) {
-    // Two parts, drawn apart: summaries land between generations, and redrawing the
+    // Drawn apart: summaries and states land between generations, and redrawing the
     // snapshot for each would close whatever details the reader has open.
-    host.innerHTML = `<div class="${SLUG}-snapshot"></div><div class="${SLUG}-summaries"></div>`;
-    const [snapshotPart, summariesPart] = host.children;
+    host.innerHTML = `<div class="${SLUG}-snapshot"></div><div class="${SLUG}-summaries"></div><div class="${SLUG}-state"></div>`;
+    const [snapshotPart, summariesPart, statePart] = host.children;
+    // The state section joins the queue, which moves between generations, to the
+    // placement, which only a generation changes.
+    let stateStatus = null;
+    let placement = null;
+    const drawState = () => {
+        statePart.innerHTML = renderStateSection(stateStatus, placement);
+    };
 
     return {
         render(snapshot) {
             snapshotPart.innerHTML = snapshot ? renderSnapshot(snapshot) : renderEmpty();
+            placement = snapshot?.state ?? null;
+            drawState();
         },
 
         /** @param {object|null} status The summarizer's `status`. */
         summaries(status) {
             summariesPart.innerHTML = renderSummaries(status);
+            stateStatus = status?.state ?? null;
+            drawState();
         },
     };
 }
@@ -245,16 +258,6 @@ function renderRecoupled(memory) {
         rebuilds the block. There is not enough context here to keep the two apart.</div>`;
 }
 
-/** Why the summarizer is idle, in the words of the switch that would change it. */
-const GATES = {
-    'no-profile': 'off \u2014 no memory connection chosen',
-    'group-chat': 'off \u2014 group chats are not supported',
-    'no-chat': 'no chat open',
-    'no-connection-manager': 'waiting \u2014 the Connection Manager extension is disabled',
-    'profile-missing': 'waiting \u2014 the memory connection profile no longer exists',
-    'qvink-summarising': 'waiting \u2014 Qvink\'s Auto Summarize is on',
-};
-
 /**
  * Cairn's own summaries: what it is doing now, what it has cost this chat, and what
  * it gave up on. A given-up message holds the memory step, which is invisible in play
@@ -327,18 +330,4 @@ function describeBreak(divergenceIn) {
         default:
             return ', above every injection';
     }
-}
-
-function row(label, value) {
-    return `<div class="${SLUG}-row"><span>${label}</span><b>${value}</b></div>`;
-}
-
-function fmt(n) {
-    return Number(n ?? 0).toLocaleString();
-}
-
-function escapeHtml(value) {
-    return String(value ?? '').replace(/[&<>"']/g, (c) => (
-        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }[c]
-    ));
 }

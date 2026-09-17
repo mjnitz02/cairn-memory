@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-    continueReply, createContext, editMessage, extension_prompt_types, makeChat, makeCoreChat, makeMessage, newSwipe, openChat,
+    assembleTextPrompt, continueReply, createContext, getExtensionPrompt, editMessage, extension_prompt_types, makeChat, makeCoreChat, makeMessage, newSwipe, openChat,
     receiveMessage, sendMessage, swipeReply, swipeTo, world_info_position,
 } from './mocks/sillytavern.js';
 import { badOutputs, badStateOutputs, createRequestService, deferred } from './mocks/llm.js';
@@ -70,6 +70,45 @@ describe('SillyTavern mock', () => {
             role: 0,
             filter: null,
         });
+    });
+
+    it('places in-chat prompts by depth from the end, as doChatInject does (public/script.js:5628-5676)', () => {
+        const context = createContext({ chat: makeChat(3) });
+        const core = makeCoreChat(context.chat);
+        const history = (prompt) => prompt.slice(prompt.indexOf('Wren: Wren says something at turn 0.'));
+
+        context.setExtensionPrompt('b_depth0', 'Zero.', extension_prompt_types.IN_CHAT, 0);
+        context.setExtensionPrompt('a_depth1', 'One.', extension_prompt_types.IN_CHAT, 1);
+        context.setExtensionPrompt('c_user', 'As Wren.', extension_prompt_types.IN_CHAT, 1, false, 1);
+        context.setExtensionPrompt('block', 'Block.', extension_prompt_types.IN_PROMPT, 0);
+
+        const prompt = assembleTextPrompt(context, core);
+        expect(prompt.startsWith('Story string.\n\nBlock.\n')).toBe(true);
+        // System lands below user at the same depth: "most important go lower" (:5636).
+        expect(history(prompt)).toBe('Wren: Wren says something at turn 0.\nAster: Aster answers at turn 1.\n'
+            + 'Wren: As Wren.\nOne.\nWren: Wren says something at turn 2.\nZero.\n');
+        expect(core).toHaveLength(3);
+    });
+
+    it('moves a depth-0 prompt above the last message on a continue (:5665), and blanks an ignored message (:5841)', () => {
+        const context = createContext({ chat: makeChat(3) });
+        context.chat[0].extra[Symbol.for('ignore')] = true;
+        context.setExtensionPrompt('zero', 'Zero.', extension_prompt_types.IN_CHAT, 0);
+
+        expect(assembleTextPrompt(context, makeCoreChat(context.chat), { isContinue: true, storyString: '' }))
+            .toBe('Aster: Aster answers at turn 1.\nZero.\nWren: Wren says something at turn 2.\n');
+    });
+
+    it('collects a position as getExtensionPrompt does: sorted keys, trimmed, joined (:3301-3330)', () => {
+        const prompts = {
+            b: { value: ' second ', position: 0, depth: 0, role: 0 },
+            a: { value: 'first', position: 0, depth: 0, role: 0 },
+            c: { value: '', position: 0, depth: 0, role: 0 },
+            d: { value: 'elsewhere', position: 1, depth: 0, role: 0 },
+        };
+
+        expect(getExtensionPrompt(prompts, 0)).toBe('\nfirst\nsecond\n');
+        expect(getExtensionPrompt(prompts, 1, 0, '\n', 0, false)).toBe('elsewhere');
     });
 
     it('awaits every event handler before emit resolves', async () => {

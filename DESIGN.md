@@ -135,12 +135,12 @@ ST's own recent messages. Not ours. Carries the flavour that state deliberately 
 Small, structured, **continuously rewritten**. Only the hard facts a character's description
 fixes and the story then changes: location, weather, who is present, and each one's hair and
 outfit, as WTrackerLite keeps them. Mood, time and plot stay with the roleplay model, because
-tracking them gridlocks it into narrating a dictated lane (`docs/p3-plan.md` decision 4).
+tracking them gridlocks it into narrating a dictated lane (`docs/decisions.md` D-0043).
 At most ~330 tokens. Bounded **by design**, not by eviction. Never grows.
 
 Generated as a **diff against the previous state** plus the new messages, not regenerated from
-scratch — cheaper, more stable, and a small model can do it. Stored per-message in `extra` so it
-branches correctly.
+scratch — cheaper, and fields the diff leaves out keep their exact wording. Stored per-message in
+`extra` so it branches correctly (`docs/decisions.md` D-0044, D-0045).
 
 This is the piece no existing extension has in combination with the others, and it is what
 actually kills the holes: state is always current, so it cannot have gaps.
@@ -173,9 +173,13 @@ Target prompt shape:
 [ canon block + stable WI (via outlet) ]       volatility: rarely
 [ scene summaries ]                            volatility: every N turns (see-saw)
 [ ...... raw chat history ...... ]
-   depth 2:  [ world state ]                   volatility: every N turns
+   depth 1:  [ world state ]                   volatility: every reply
    depth 0:  [ retrieved episodes + dynamic WI ]  volatility: per turn
 ```
+
+The world state sits just after the newest message it has read, which is depth 1 in normal play.
+It moves forward one reply each turn, so it costs a re-read of itself and the user's message:
+about 1.6 points of prefix stability, measured (`docs/decisions.md` D-0042, D-0049).
 
 In ST terms this maps directly onto injection depth: stable content high/early via
 `extension_prompt_types.IN_PROMPT`, volatile content late via `IN_CHAT` at low depth. Per-turn
@@ -405,6 +409,16 @@ for 67.3%, about 91% over a cycle, as in P1. Summary quality is deferred to a re
 after P4 or P5.
 
 **P3 — State.** Structured, diffed, per-message. Replaces WTrackerLite.
+
+*Landed:* WTrackerLite's fields and nothing more, so the memory model never steers the story
+(`docs/decisions.md` D-0043). One update per reply, a JSON merge patch from a built-in prompt
+(D-0044), with a first build that records everything the messages establish (D-0048). A full
+snapshot on the newest message read, valid while what it read hashes the same, so swipes,
+edits, deletions and branches roll back with no code (D-0045). Placed just after that message
+(D-0042), independent of the handover gate (D-0047), and never while WTracker is loaded
+(D-0046). *Measured* (D-0049): on a branch of Esin with real-length user messages, held turns at
+95.9% with the state against 97.5% without, steps still breaking at the block's tail, 13
+updates with no failures, and the state at a median of 57 tokens.
 
 **P4 — Canon + compactor.** Promote / merge / drop under budget pressure. Fixes symptom B.
 

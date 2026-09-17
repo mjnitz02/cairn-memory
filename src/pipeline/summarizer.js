@@ -2,7 +2,7 @@
  * The summarizer — the only file that calls a model (docs/decisions.md D-0037).
  *
  * It owns the queue, the transport, and what a failure does, for both kinds of
- * memory work: the state update and the summaries (docs/p3-plan.md §3). What a
+ * memory work: the state update and the summaries (docs/decisions.md D-0044). What a
  * prompt says and how a reply is read belong to the strategies (memory/*-strategy.js),
  * and what is waiting belongs to memory/scenes.js and memory/state.js.
  *
@@ -16,7 +16,7 @@ import { perMessage, resolveSummaryPrompt } from '../memory/scene-strategy.js';
 import { jobStillCurrent, pendingStateJob } from '../memory/state.js';
 import { applyPatch } from '../memory/state-schema.js';
 import { statePatch } from '../memory/state-strategy.js';
-import { writeScene, writeState } from '../store/chat-store.js';
+import { readScene, summarisable, writeScene, writeState } from '../store/chat-store.js';
 import { hashString } from '../util/hash.js';
 import { countTokens } from '../util/tokens.js';
 import { debug, error, toast, toastOnce, warn } from '../util/log.js';
@@ -50,6 +50,10 @@ export function createSummarizer(getContext, {
     let controller = null;
     let active = null;
     let again = false;
+    /** Messages the user asked to have summarised, by object, since indexes shift. */
+    const asked = [];
+    /** The message a summary request is out for. */
+    let writing = null;
 
     /** Start a run, or fold this trigger into the one under way. Never rejects. */
     function drain() {
@@ -75,7 +79,7 @@ export function createSummarizer(getContext, {
     /**
      * The state first, since the very next prompt carries it, then summaries oldest
      * first, one request at a time. A summary is needed only when its message reaches
-     * a step, 10 or more messages later (docs/p3-plan.md §3).
+     * a step, 10 or more messages later (docs/decisions.md D-0044).
      */
     async function run() {
         let stateTried = false;
@@ -106,6 +110,13 @@ export function createSummarizer(getContext, {
             }
 
             if (!gates.summary.ready) return;
+            const requested = nextAsked(chat);
+            if (requested !== undefined) {
+                // A failure the user asked for is theirs to retry, so it doesn't end the run.
+                await summarise(context, config, requested, { asked: true });
+                notify();
+                continue;
+            }
             const index = pendingScenes(chat).find((at) => !summaries.givenUp(sceneKey(chatId, chat[at])));
             if (index === undefined) return;
             const landed = await summarise(context, config, index);
@@ -189,8 +200,20 @@ export function createSummarizer(getContext, {
         await save(now, 'the state');
     }
 
-    /** @returns {Promise<boolean>} Whether a scene was written, and the run should go on. */
-    async function summarise(context, { memoryProfileId, summaryPrompt }, index) {
+    /** The oldest asked-for message still in the chat, or undefined. */
+    function nextAsked(chat) {
+        while (asked.length) {
+            const index = chat.indexOf(asked.shift());
+            if (index >= 0) return index;
+        }
+        return undefined;
+    }
+
+    /**
+     * @param {{asked?: boolean}} [options] `asked` when the user clicked for it: a failure then says so every time.
+     * @returns {Promise<boolean>} Whether a scene was written, and the run should go on.
+     */
+    async function summarise(context, { memoryProfileId, summaryPrompt }, index, { asked: byUser = false } = {}) {
         const { chat, chatId } = context;
         const message = chat[index];
         const hash = hashString(message.mes);
@@ -204,13 +227,15 @@ export function createSummarizer(getContext, {
                 expand: (text) => context.substituteParams(text),
             });
         } catch (err) {
-            return failSummary(chatId, message, index, 'error', err);
+            return failSummary(chatId, message, index, 'error', err, byUser);
         }
         if (request.fallback) toastOnce(PROMPT_FALLBACK);
 
+        writing = message;
         const sent = await send(context, memoryProfileId, request, summaries, index);
+        writing = null;
         if (sent.signal.aborted) return discard('summary', index, 'aborted');
-        if (sent.error) return failSummary(chatId, message, index, 'error', sent.error);
+        if (sent.error) return failSummary(chatId, message, index, 'error', sent.error, byUser);
 
         // Anything can happen in the seconds a request is out (docs/decisions.md D-0037). No
         // chat-id check: opening, reloading or renaming a chat refills the array with new
@@ -220,9 +245,9 @@ export function createSummarizer(getContext, {
         if (hashString(message.mes) !== hash) return discard('summary', index, 'message edited');
 
         const parsed = strategy.parse(sent.reply?.content);
-        if (!parsed.ok) return failSummary(chatId, message, index, parsed.reason);
+        if (!parsed.ok) return failSummary(chatId, message, index, parsed.reason, undefined, byUser);
         if (!writeScene(message, { text: parsed.text, prompt: request.prompt, at: new Date(clock()).toISOString() })) {
-            return failSummary(chatId, message, index, 'write');
+            return failSummary(chatId, message, index, 'write', undefined, byUser);
         }
 
         summaries.succeed(sceneKey(chatId, message));
@@ -244,8 +269,13 @@ export function createSummarizer(getContext, {
         return false;
     }
 
-    function failSummary(chatId, message, index, reason, err) {
+    function failSummary(chatId, message, index, reason, err, byUser = false) {
         const outcome = summaries.fail(sceneKey(chatId, message), reason);
+        if (byUser) {
+            toast(`Summarising message #${index} failed (${reason}). Nothing was changed.`);
+            if (err) warn(err);
+            return false;
+        }
         report(outcome, `The summary for message #${index} failed (${reason}).`, err);
         if (outcome.givenUp) {
             warn(`Gave up on message #${index} after ${outcome.count} failures. The memory step holds before it until the page is reloaded.`);
@@ -324,6 +354,38 @@ export function createSummarizer(getContext, {
         drain();
     }
 
+    /**
+     * Summarise a message on the user's word, whatever the queue would do with it: a
+     * written summary is replaced, a given-up message is tried again, and neither the last
+     * message nor one before qvink's newest summary is passed over (docs/decisions.md D-0050).
+     * The request waits behind the state update and goes ahead of the queue.
+     *
+     * @param {number} index
+     * @returns {{queued: boolean, reason?: string}} `reason` is a summary gate's, or
+     *          `off`, `no-message`, `hidden`, `too-short` or `future`.
+     */
+    function resummarise(index) {
+        const refused = (reason) => ({ queued: false, reason });
+        if (!running) return refused('off');
+        const context = getContext();
+        const message = context.chat?.[index];
+        if (!message || typeof message.mes !== 'string') return refused('no-message');
+        if (message.is_system) return refused('hidden');
+        if (!summarisable(message)) return refused('too-short');
+        // A newer Cairn's store is not ours to overwrite (store/chat-store.js).
+        if (readScene(message).status === 'future') return refused('future');
+        const gate = assessSummarizing(context, settings?.() ?? {});
+        if (!gate.ready) return refused(gate.reason);
+
+        // A second click while it is waiting or out changes nothing.
+        if (message !== writing && !asked.includes(message)) {
+            summaries.forget(sceneKey(context.chatId, message));
+            asked.push(message);
+            drain();
+        }
+        return { queued: true };
+    }
+
     /** A request for the chat being left is abandoned; the new chat's queue starts. */
     function onChatChanged() {
         controller?.abort();
@@ -359,10 +421,13 @@ export function createSummarizer(getContext, {
             for (const [event, listener] of listeners) eventSource.removeListener(eventTypes[event], listener);
             running = false;
             again = false;
+            asked.length = 0;
             controller?.abort();
         },
 
         drain,
+
+        resummarise,
 
         /** Resolves when no run is under way. */
         idle() {

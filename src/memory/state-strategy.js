@@ -1,6 +1,6 @@
 /**
  * The state strategy: a JSON merge patch against the current state, after each
- * reply (docs/p3-plan.md decisions 5-6, §2).
+ * reply (docs/decisions.md D-0044).
  *
  * The same boundary as `perMessage` (DESIGN.md §11): what the prompt says and how
  * a reply is read live here. Merging the patch belongs to the schema
@@ -14,6 +14,7 @@ import {
     MAX_CHARACTERS,
     MAX_NAME_CHARS,
     TEXT_FIELDS,
+    renderState,
     validState,
 } from './state-schema.js';
 import { hashString } from '../util/hash.js';
@@ -29,14 +30,19 @@ export const STATE_MAX_MESSAGES = 6;
 export const STATE_MAX_EARLIER = 5;
 
 /**
- * Built in, not a setting (decision 6): the field list and caps are the schema's,
+ * Built in, not a setting (D-0044): the field list and caps are the schema's,
  * so an edit could only break the parser. A value over its cap is dropped, not
  * cut, which is why the model is told the caps. It records stated facts only, so
- * the memory model never takes over telling the story (decision 4).
+ * the memory model never takes over telling the story (D-0043).
  */
 export const STATE_PROMPT = `You keep a short record of the hard facts of a roleplay scene: where it is, who is in it, and what each character's hair and outfit are right now. Character descriptions often fix these, so the record carries forward whatever the story has since changed. Below are the record as it stood and the messages that came after it. Reply with a JSON merge patch that brings the record up to the end of the messages.
 
+{{#if first}}
+IMPORTANT: The record is empty, so this patch is its first entry. Fill in every field the messages and earlier events establish, including hair and outfit for each character present, even where they are only mentioned in passing. Leave out only what they don't say.
+{{/if}}
+{{#if update}}
 IMPORTANT: Include only what the messages change. Leave every other field out of the patch, so its wording stays exactly as it is.
+{{/if}}
 
 Fields, with the most characters each value may use:
 - location: where the scene is, most specific place first (${TEXT_FIELDS.location})
@@ -56,7 +62,12 @@ State: {"location":"The ferry terminal, waiting room","characters":{"Wren":{"hai
 Messages: Wren shrugs off her soaked coat, ties her hair back and walks out to the pier.
 Patch: {"location":"The ferry terminal, outer pier","characters":{"Wren":{"hair":"Tied back","outfit":"Grey jumper, jeans, boots"}}}
 
+{{#if first}}
+When unsure whether a detail still holds at the end of the messages, leave it out.
+{{/if}}
+{{#if update}}
 When unsure whether something changed, leave it out.
+{{/if}}
 
 Current state:
 {{state}}
@@ -95,7 +106,12 @@ export const statePatch = {
             throw new RangeError(`A state request takes at most ${STATE_MAX_EARLIER} earlier scenes`);
         }
 
+        // A changes-only instruction on an empty record leaves out whatever was set before
+        // these messages, hair most of all (docs/decisions.md D-0048).
+        const first = renderState(state) === '';
         const content = renderTemplate(STATE_PROMPT, {
+            first: first ? 'yes' : '',
+            update: first ? '' : 'yes',
             state: JSON.stringify(state),
             earlier: earlier.map((scene) => (typeof scene === 'string' ? scene : scene?.text ?? '')).join('\n'),
             messages: messages.map((message) => `${message?.name ?? ''}: ${message?.mes ?? ''}`).join('\n\n'),

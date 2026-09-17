@@ -14,6 +14,7 @@ import { setDebugEnabled } from '../util/log.js';
  *           onLogToDiskChange?: (enabled: boolean) => void,
  *           onHoldWorldInfoChange?: (enabled: boolean) => void,
  *           onOwnMemoryBlockChange?: (enabled: boolean) => void,
+ *           onWorldStateChange?: (enabled: boolean) => void,
  *           onMemoryProfileChange?: (profileId: string) => void}} [handlers]
  * @returns {Promise<HTMLElement>} The element the inspector renders into.
  */
@@ -28,6 +29,7 @@ export async function renderSettingsPanel(context, handlers = {}) {
     bindCheckbox(context, 'logToDisk', (value) => handlers.onLogToDiskChange?.(value));
     bindCheckbox(context, 'holdWorldInfo', (value) => handlers.onHoldWorldInfoChange?.(value));
     bindCheckbox(context, 'ownMemoryBlock', (value) => handlers.onOwnMemoryBlockChange?.(value));
+    bindCheckbox(context, 'worldState', (value) => handlers.onWorldStateChange?.(value));
     bindCheckbox(context, 'debugLogging', (value) => setDebugEnabled(value));
 
     populateProfiles(context, settings.memoryProfileId);

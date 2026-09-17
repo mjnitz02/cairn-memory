@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { markMessages, renderMark } from '../src/ui/chat-marks.js';
+import { markMessages, renderMark, stateTexts } from '../src/ui/chat-marks.js';
+import { QVINK_EXTENSION, qvinkDisplaying } from '../src/memory/scenes.js';
+import { STATE_HEADER } from '../src/memory/state-schema.js';
+import { writeState } from '../src/store/chat-store.js';
 import { MAX_ATTEMPTS, createSummarizer } from '../src/pipeline/summarizer.js';
 import { resetToasts } from '../src/util/log.js';
 import { cairnStore, cairnSummary, makeMixedChat } from './mocks/cairn.js';
 import { badOutputs, createRequestService, deferred } from './mocks/llm.js';
-import { createContext } from './mocks/sillytavern.js';
+import { createContext, makeChat } from './mocks/sillytavern.js';
 
 const MEMORY = { id: 'memory-profile', name: 'GLM (memory)' };
 
@@ -25,6 +28,35 @@ describe('what each message shows', () => {
 
         expect(states(marks)).toEqual({ 10: 'written', 11: 'written' });
         expect(marks.get(10).text).toBe(cairnSummary(10));
+    });
+
+    it('shows qvink\'s summaries, labelled as qvink\'s, when asked to', () => {
+        const marks = markMessages(chat(), null, { showQvink: true });
+
+        expect(marks.get(3)).toMatchObject({ state: 'qvink', excluded: false });
+        expect(marks.get(3).text).toBe(chat()[3].extra.qvink_memory.memory);
+        expect(marks.get(10).state).toBe('written');
+        expect(renderMark(marks.get(3))).toContain('Qvink:</span>');
+    });
+
+    it('marks a qvink summary the block leaves out, unless it is remembered', () => {
+        const excluded = chat();
+        excluded[3].extra.qvink_memory.exclude = true;
+        excluded[4].extra.qvink_memory.exclude = true;
+        excluded[4].extra.qvink_memory.remember = true;
+        const marks = markMessages(excluded, null, { showQvink: true });
+
+        expect(marks.get(3).excluded).toBe(true);
+        expect(renderMark(marks.get(3))).toContain('Qvink (excluded):');
+        expect(marks.get(4).excluded).toBe(false);
+    });
+
+    it('shows neither summary on a message whose Cairn summary went stale, as the block reads neither', () => {
+        const edited = makeMixedChat({ length: 14, qvinkThrough: 9, cairnThrough: 11 });
+        edited[5].extra.cairn = cairnStore(edited[5], cairnSummary(5));
+        edited[5].mes += ' An afterthought.';
+
+        expect(markMessages(edited, null, { showQvink: true }).has(5)).toBe(false);
     });
 
     it('marks the waiting messages, but never the last one', () => {
@@ -52,6 +84,61 @@ describe('what each message shows', () => {
         edited[11].mes += ' An afterthought.';
 
         expect(states(markMessages(edited, idle()))).toEqual({ 10: 'written', 11: 'waiting', 12: 'waiting' });
+    });
+});
+
+describe('whether qvink draws its own', () => {
+    const running = (settings) => {
+        const context = createContext({ chat: [], extensions: [QVINK_EXTENSION] });
+        if (settings) context.extensionSettings.qvink_memory = settings;
+        return context;
+    };
+
+    it('follows its display switch while it runs, and assumes its default, on', () => {
+        // its index.js:160, read through `?? default_settings[key]` (:655).
+        expect(qvinkDisplaying(running({ display_memories: true }))).toBe(true);
+        expect(qvinkDisplaying(running({ display_memories: false }))).toBe(false);
+        expect(qvinkDisplaying(running({}))).toBe(true);
+    });
+
+    it('draws nothing when it isn\'t running, whatever its settings say', () => {
+        const disabled = running({ display_memories: true });
+        disabled.extensionSettings.disabledExtensions.push(QVINK_EXTENSION);
+
+        expect(qvinkDisplaying(disabled)).toBe(false);
+        expect(qvinkDisplaying(createContext({ chat: [] }))).toBe(false);
+    });
+});
+
+describe('the world state on each message', () => {
+    const PIER = { location: 'The ferry terminal, waiting room', characters: { Wren: { outfit: 'Wool coat, boots' } } };
+    const DECK = { location: 'The ferry, upper deck', characters: { Wren: { outfit: 'Wool coat, boots' } } };
+
+    function played() {
+        const played = makeChat(6);
+        expect(writeState(played, 3, { value: PIER, read: 4, changed: ['location'], prompt: 'h:1', at: 'T' })).toBe(true);
+        expect(writeState(played, 5, { value: DECK, read: 2, changed: ['location'], prompt: 'h:1', at: 'T' })).toBe(true);
+        return played;
+    }
+
+    it('shows every message that carries a state, rendered as the prompt carries it', () => {
+        const texts = stateTexts(played());
+
+        expect([...texts.keys()]).toEqual([3, 5]);
+        expect(texts.get(5)).toBe(`${STATE_HEADER}\nLocation: The ferry, upper deck\nPresent: Wren\nWren — outfit: Wool coat, boots`);
+    });
+
+    it('leaves out a state the reader wouldn\'t use: stale, out of schema, or empty', () => {
+        const stale = played();
+        stale[4].mes += ' Reworded.';
+        const broken = played();
+        broken[3].extra.cairn.state.value = { mood: 'Tense' };
+        const empty = makeChat(4);
+        writeState(empty, 3, { value: {}, read: 2, changed: [], prompt: 'h:1', at: 'T' });
+
+        expect([...stateTexts(stale).keys()]).toEqual([3]);
+        expect([...stateTexts(broken).keys()]).toEqual([5]);
+        expect(stateTexts(empty).size).toBe(0);
     });
 });
 

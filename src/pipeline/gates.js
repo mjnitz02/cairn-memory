@@ -23,7 +23,7 @@ export function assessSummarizing(context, { memoryProfileId } = {}) {
 /**
  * Whether Cairn may update the world state in this chat now, and if not, why.
  * qvink keeps no state, so it has no say here; a loaded WTracker does, and
- * `tracker` names it (docs/p3-plan.md decision 8).
+ * `tracker` names it (docs/decisions.md D-0046).
  *
  * @param {object} context SillyTavern.getContext()
  * @param {{memoryProfileId?: string, worldState?: boolean}} settings

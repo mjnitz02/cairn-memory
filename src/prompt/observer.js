@@ -30,7 +30,7 @@ const DEFAULT_HISTORY = 20;
  * @param {{limit?: number, onSnapshot?: (snapshot: object) => void,
  *           holding?: () => (number|null),
  *           memory?: (turn: {promptTokens: number}) => Promise<object|null>,
- *           summaries?: () => (object|null)}} [options]
+ *           summaries?: () => (object|null), state?: () => (object|null)}} [options]
  *        `holding` reports how many World Info entries the holder is keeping in,
  *        so a logged run says whether the fix was on (docs/decisions.md D-0024).
  *        `memory` returns the report from the plan the interceptor already
@@ -38,8 +38,9 @@ const DEFAULT_HISTORY = 20;
  *        for reporting only; the plan never reads it back (D-0033).
  *        `summaries` is the summarizer's status as the prompt goes out, which is how
  *        a log says whether a summary request overlapped a generation.
+ *        `state` is the world state the interceptor placed this turn.
  */
-export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot, holding, memory, summaries } = {}) {
+export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot, holding, memory, summaries, state } = {}) {
     /**
      * Previous flattened prompt per API path — the baseline the meter compares
      * against. Keyed by API because a text-completion string and a flattened
@@ -86,7 +87,8 @@ export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot
             worldInfoOrdering: assessOrdering(pendingWorldInfo),
             worldInfoHeld: holding?.() ?? null,
             memory: await planMemory(promptTokens),
-            summaries: readSummaries(),
+            summaries: read(summaries, 'the summarizer status'),
+            state: read(state, 'the world state placement'),
         };
 
         previousPrompts.set(api, flat);
@@ -164,12 +166,12 @@ export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot
         }
     }
 
-    function readSummaries() {
-        if (!summaries) return null;
+    function read(source, what) {
+        if (!source) return null;
         try {
-            return summaries() ?? null;
+            return source() ?? null;
         } catch (err) {
-            warn('Observer failed to read the summarizer status.', err);
+            warn(`Observer failed to read ${what}.`, err);
             return null;
         }
     }

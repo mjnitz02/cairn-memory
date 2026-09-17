@@ -14,7 +14,7 @@ import {
 } from './mocks/sillytavern.js';
 
 /**
- * The queue's state job (docs/p3-plan.md §3, §5): ahead of summaries, one per run,
+ * The queue's state job (docs/decisions.md D-0044, D-0045): ahead of summaries, one per run,
  * discarded when the chat moves under it, and failing on its own streak.
  */
 
@@ -344,7 +344,7 @@ describe('when it runs', () => {
         expect(summarizer.status.written).toBe(3);
     });
 
-    it('stands aside while WTrackerLite is loaded and names it, and summaries still run (decision 8)', async () => {
+    it('stands aside while WTrackerLite is loaded and names it, and summaries still run (D-0046)', async () => {
         const chat = makeMixedChat({ length: 14, qvinkThrough: 9, cairnThrough: 9 });
         const { service, summarizer } = harness({
             chat,
@@ -374,7 +374,7 @@ describe('when it runs', () => {
     });
 });
 
-/** Anything can happen in the seconds a request is out (docs/p3-plan.md §3, "Before writing"). */
+/** Anything can happen in the seconds a request is out (docs/decisions.md D-0044). */
 describe('a state reply that arrives after the chat moved on', () => {
     async function outFor(chat = playedChat()) {
         const answer = deferred();
@@ -558,7 +558,7 @@ describe('state failure', () => {
     });
 });
 
-/** What the panel and the log will read (docs/p3-plan.md §6): counts and kinds, never the state's text. */
+/** What the panel and the log will read (docs/how-it-works.md): counts and kinds, never the state's text. */
 describe('what it reports about the state', () => {
     it('counts requests, writes, failures, dropped fields, tokens and time for the chat', async () => {
         let now = CLOCK;
@@ -575,7 +575,7 @@ describe('what it reports about the state', () => {
             calls: 2, written: 1, failures: 1, lastReason: 'refusal', dropped: 1, gate: 'ready', tracker: null, inFlight: null,
         });
         expect(state.lastMs).toBeGreaterThan(0);
-        expect(state.tokensIn).toBeGreaterThan(Math.ceil(STATE_PROMPT.length / 4) * 2);
+        expect(state.tokensIn).toBeGreaterThan(Math.ceil(statePatch.build({ messages: [{ name: 'Wren', mes: '' }] }).messages[0].content.length / 4) * 2);
         expect(state.tokensOut).toBe(replies.reduce((total, text) => total + Math.ceil(text.length / 4), 0));
         const reported = JSON.stringify(summarizer.status);
         expect(reported).not.toContain('ferry');

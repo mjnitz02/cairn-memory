@@ -180,8 +180,20 @@ summaries fall behind, the memory step waits for them instead of moving past.
 **In the chat**, each summary appears under its message, where Qvink shows its
 own. While a request is out, the message being summarised says so, and the ones
 behind it say they're waiting. A failure shows its reason under the message and
-says whether Cairn will retry after the next reply or has given up. Only Cairn's
-summaries are shown: Qvink shows its own while it is enabled.
+says whether Cairn will retry after the next reply or has given up. Qvink's
+summaries are shown too, as `Qvink:`, while Qvink isn't loaded or has its own
+display turned off, and one excluded in Qvink is dimmed. The chat shows what the
+block reads: a message whose Cairn summary went stale after an edit shows neither.
+
+**Summarise with Cairn**, in a message's actions menu, sends that message to the
+memory model again. The request is the one the queue would send, and it goes
+next, after any state update. A new summary replaces the one there, Cairn's or
+Qvink's; a failure keeps it and says so every time. It works on any message long
+enough to summarise, including the last one and messages older than Qvink's newest
+summary, which the queue skips, and it gives a message Cairn gave up on a fresh
+start. It waits on the same switches as the queue and says which one is closed.
+Replacing a summary that is already in the memory block changes the block from
+that summary on, so the next prompt misses the cache from there, as an edit would.
 
 **The prompt** is the **Summary prompt** setting. `{{message}}` is the message as
 `Name: text`, and `{{history}}` is the summaries before it, one per line.
@@ -218,6 +230,64 @@ loaded, so the work between two generations is the difference between two lines.
 Reloading the same chat keeps them, and switching chats starts them again.
 `summary_in_flight` is true when a summary request was still out as the prompt was
 built. That is how a run shows a summary overlapping a generation.
+
+## Keeping the world state
+
+Cairn keeps a short record of the scene's hard facts: where it is, the weather,
+who is there, and each character's hair and outfit. A character card fixes these
+("wears a combat uniform"), and when the story changes one, summaries tend to
+leave the change out, so the old fact creeps back. Mood, time and plot aren't
+recorded, because the roleplay model is the one telling the story. A typical
+state is about 55 tokens, and the largest the fields allow is about 330.
+
+**When it runs.** In the same run as the summaries, before them, because the next
+prompt carries it. After each reply, and as soon as you edit a message, Cairn asks
+the memory model for a JSON merge patch against the current state, from the
+messages since it (at most 6 of the newest). The patch holds only what changed,
+except on a first build into an empty record, which asks for every field the
+messages establish, so a hairstyle set earlier isn't skipped for not changing. A
+cold start on a long chat sends the summaries just before those 6 as background,
+so it is still one request. The
+state is stored on the newest message it read, in `message.extra.cairn.state`,
+with a hash of the messages it read. A reply that arrives after any of those
+messages changed, or after you left the chat, is thrown away. A failed state
+update writes nothing, warns once per run of failures, and doesn't stop the
+summaries. After three failures on the same messages Cairn stops trying until a
+new message arrives or one is edited.
+
+**Where it goes.** In the chat, directly after the newest message the state has
+read, with the system role. In normal play that is just above your newest
+message, so the model reads the scene as the reply you are answering left it.
+When the queue is behind, the state sits deeper, still after the message it read.
+The state is found by its message, not by position, so:
+
+- **a swipe** uses the state before the reply being replaced, and a new swipe gets
+  its own state. Swiping back brings the old swipe's state back with it;
+- **an edit, hide or deletion** inside what a state read makes that state stale, and
+  the one before it is used until it is rewritten. Later states stay valid;
+- **a branch** keeps the states on the messages it copies.
+
+A state older than the memory step, on a message the block already summarises, is
+left out, since the summaries are newer than it. While WTracker or WTrackerLite is
+loaded, Cairn neither updates nor places the state, so there is never a second
+state in the prompt.
+
+**In the chat**, each message that carries a usable state has a collapsed **World
+state** under it, holding the text as the prompt would carry it. Stale states are
+not shown. Nothing is shown while the switch is off or a WTracker is loaded.
+
+**The switch** is **Keep the world state**, on by default. It does nothing until a
+memory profile is chosen. Turned off, the state leaves the prompt at the next
+generation and no more state requests go out.
+
+**The panel** has a **World state** section: what the queue is doing (writing, up to
+date, waiting on WTrackerLite, or gave up), the state as the last prompt carried it,
+its depth, size and the kinds of its last change, then requests, failures, dropped
+fields, time and tokens for the open chat. **The log** records the same without the
+state's text: `state_injected`, `state_reason`, `state_depth`, `state_chars`,
+`state_tokens`, `state_changed`, `state_change_kinds`, and the queue's `state_*`
+running totals. `state_changed` says the text differs from last turn's, so the
+prefix should break inside `cairn_state`.
 
 ## Taking over the injection
 
@@ -266,7 +336,7 @@ different storage problems and Cairn treats them separately.
 | Tier | What | Update rule | Cost |
 |---|---|---|---|
 | 0 | Raw recent messages | ST's own — not ours | — |
-| 1 | World state | Overwritten as a diff, never summarised | ~300–600 tokens, fixed |
+| 1 | World state | Overwritten as a diff, never summarised | ~55 tokens typical, ~330 at most |
 | 2 | Scene summaries | Rolling, delta-written | Budgeted, compacted under pressure |
 | 3 | Canon | Append-only one-liners, entity-tagged | Negligible per item |
 | 4 | Episodes | Archived, entity-keyed | Off-prompt; retrieved on demand |
@@ -285,7 +355,8 @@ system / persona / character card      never changes
 canon + stable lorebook content        rarely
 scene summaries                        every N turns
   …raw chat history…
-  depth 2:  world state                every N turns
+  after the newest message it read:
+            world state                every reply
   depth 0:  retrieved episodes         per turn
 ```
 

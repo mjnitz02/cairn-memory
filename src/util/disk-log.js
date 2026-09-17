@@ -136,6 +136,7 @@ function toEntry(snapshot) {
         prompt_near_limit: nearPromptLimit(snapshot.promptTokens, snapshot.memory?.maxPromptTokens),
         ...memoryFields(snapshot.memory),
         ...summaryFields(snapshot.summaries),
+        ...stateFields(snapshot.state, snapshot.summaries?.state),
     };
 }
 
@@ -209,6 +210,41 @@ function summaryFields(status) {
         summary_tokens_in: status.tokensIn,
         summary_tokens_out: status.tokensOut,
         summary_prompt_default: status.promptDefault ?? null,
+    };
+}
+
+/**
+ * The world state: what this prompt carried, then the queue as the prompt went out
+ * (docs/how-it-works.md, "Keeping the world state"). Sizes, depths and kinds of change, never the state's text.
+ * The queue's counts are running totals, as the summary ones are.
+ */
+function stateFields(placement, status) {
+    return {
+        state_reported: Boolean(placement),
+        state_injected: placement?.injected ?? false,
+        // injected, off, wtracker-loaded, none-yet, empty or behind-step.
+        state_reason: placement?.reason ?? null,
+        state_tracker: placement?.tracker ?? null,
+        // 1 in normal play; more means the queue is behind.
+        state_depth: placement?.injected ? placement.depth : null,
+        state_chars: placement?.chars ?? null,
+        state_tokens: placement?.tokens ?? null,
+        // The injected text differs from last turn's, so the break should land in it.
+        state_changed: placement?.changed ?? null,
+        state_change_kinds: placement?.changeKinds ?? [],
+        state_gate: status?.gate ?? null,
+        state_in_flight: status ? status.inFlight != null : null,
+        state_pending: status?.pending ?? null,
+        state_given_up: status?.givenUp ?? null,
+        state_calls: status?.calls ?? null,
+        state_written: status?.written ?? null,
+        state_failures: status?.failures ?? null,
+        state_last_reason: status?.lastReason ?? null,
+        state_dropped_fields: status?.dropped ?? null,
+        state_ms: status?.ms ?? null,
+        state_last_ms: status?.lastMs ?? null,
+        state_tokens_in: status?.tokensIn ?? null,
+        state_tokens_out: status?.tokensOut ?? null,
     };
 }
 

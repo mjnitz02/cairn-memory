@@ -2,7 +2,7 @@
  * `message.extra.cairn` — read, validate, write (DESIGN.md §9, docs/decisions.md D-0037).
  *
  * Two tiers share the store. A scene lives on the message it summarises and a
- * state on the newest message it read (docs/p3-plan.md §1), so deletions, branches
+ * state on the newest message it read (docs/decisions.md D-0045), so deletions, branches
  * and swipes carry both with no bookkeeping. What neither survives is an edit, and
  * that is caught on read: each counts only while the text it was written from
  * still hashes the same.

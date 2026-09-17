@@ -13,6 +13,12 @@ describe('migrateSettings', () => {
         expect(migrateSettings('nonsense')).toEqual({ ...DEFAULT_SETTINGS });
     });
 
+    it('keeps the world state on by default, so it needs only a memory profile (docs/decisions.md D-0044)', () => {
+        expect(DEFAULT_SETTINGS.worldState).toBe(true);
+        expect(migrateSettings({ version: SETTINGS_VERSION, memoryProfileId: 'profile-a' }).worldState).toBe(true);
+        expect(migrateSettings({ version: SETTINGS_VERSION, worldState: false }).worldState).toBe(false);
+    });
+
     it('keeps user values and fills in missing keys', () => {
         const stored = { version: SETTINGS_VERSION, memoryProfileId: 'profile-a' };
         const migrated = migrateSettings(stored);

@@ -21,7 +21,7 @@ export const STORE_VERSION = 2;
  * @type {Record<number, (store: object) => object>}
  */
 export const STORE_MIGRATIONS = {
-    // v2 adds `state` (docs/p3-plan.md §1). A v1 store has none, so it is already a v2 one.
+    // v2 adds `state` (docs/decisions.md D-0045). A v1 store has none, so it is already a v2 one.
     1: (store) => ({ ...store, v: 2 }),
 };
 
@@ -85,6 +85,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
      * injecting, Cairn plans and measures without writing anything.
      */
     ownMemoryBlock: true,
+    /**
+     * Keep the world state and put it in the prompt (docs/decisions.md D-0044).
+     * Inert until a memory profile is chosen, and held while WTracker is loaded.
+     */
+    worldState: true,
 });
 
 /**

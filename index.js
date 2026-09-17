@@ -7,11 +7,13 @@ import { createDiskLog } from './src/util/disk-log.js';
 import { createAssembler } from './src/prompt/assembler.js';
 import { createInjector } from './src/prompt/injector.js';
 import { createObserver } from './src/prompt/observer.js';
+import { createStatePlacement } from './src/prompt/state-placement.js';
 import { createSummarizer } from './src/pipeline/summarizer.js';
 import { migrateSettings } from './src/store/schema.js';
 import { createChatMarks } from './src/ui/chat-marks.js';
 import { createInspector } from './src/ui/inspector.js';
 import { renderSettingsPanel } from './src/ui/panel.js';
+import { installResummariseButton } from './src/ui/resummarise-button.js';
 import { error, info, setDebugEnabled } from './src/util/log.js';
 
 (async function init() {
@@ -36,9 +38,10 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
 
         // ST resolves the manifest's `generate_interceptor` off globalThis
         // (extensions.js:2035), so the name here must match manifest.json. It is
-        // the only hook still ahead of prompt assembly, so both writes happen in
-        // it: the World Info hold and the memory block.
-        const injector = createInjector(getContext, { memory: assembler });
+        // the only hook still ahead of prompt assembly, so every write happens in
+        // it: the World Info hold, the memory block and the world state.
+        const statePlacement = createStatePlacement(getContext, { settings: () => settings });
+        const injector = createInjector(getContext, { memory: assembler, state: statePlacement });
         injector.setHoldEnabled(settings.holdWorldInfo);
         globalThis.cairn_intercept = injector.intercept;
 
@@ -52,8 +55,9 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
                 marks.refresh();
             },
         });
-        // The summaries under their messages, and the only in-chat sign one is being written.
-        const marks = createChatMarks(getContext, { status: () => summarizer.status });
+        // The summaries and states under their messages, and the only in-chat sign one is being written.
+        const marks = createChatMarks(getContext, { status: () => summarizer.status, settings: () => settings });
+        installResummariseButton(summarizer);
 
         const observer = createObserver(getContext, {
             onSnapshot: (snapshot) => {
@@ -65,6 +69,7 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
             // flows back into the next plan (docs/decisions.md D-0033).
             memory: () => assembler.latest,
             summaries: () => summarizer.status,
+            state: () => statePlacement.latest,
         });
 
         inspector = createInspector(await renderSettingsPanel(context, {
@@ -84,6 +89,11 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
             onLogToDiskChange: (enabled) => diskLog.setEnabled(enabled),
             onHoldWorldInfoChange: (enabled) => injector.setHoldEnabled(enabled),
             onOwnMemoryBlockChange: (enabled) => assembler.setOwnEnabled(enabled),
+            // Off takes effect at the next generation; on may have a state to bring up to date.
+            onWorldStateChange: () => {
+                summarizer.drain();
+                marks.refresh();
+            },
             // A newly chosen profile may have a backlog waiting for it.
             onMemoryProfileChange: () => summarizer.drain(),
         }));
@@ -104,6 +114,7 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
             observer.resetBaseline();
             injector.reset();
             assembler.reset();
+            statePlacement.reset();
             diskLog.reset();
             inspector.render(null);
             inspector.summaries(summarizer.status);

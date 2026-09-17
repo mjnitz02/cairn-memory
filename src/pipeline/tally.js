@@ -2,7 +2,7 @@
  * One kind of memory work's bookkeeping: what the open chat has cost, the failure
  * streak that decides when to toast, and the jobs that failed too often to try
  * again this session. Summaries and state updates each keep their own, so one
- * kind failing never gives up on the other (docs/p3-plan.md §5).
+ * kind failing never gives up on the other (docs/decisions.md D-0045).
  *
  * Pure: no ST, no network.
  */
@@ -57,6 +57,11 @@ export function createTally(counters = {}) {
             attempts.delete(key);
             stats.written++;
             streak = 0;
+        },
+
+        /** Forget a job's failures, so a user's retry of a given-up job is tried at all. */
+        forget(key) {
+            attempts.delete(key);
         },
 
         /** @returns {{count: number, reason: string}|undefined} */

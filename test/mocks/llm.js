@@ -66,7 +66,7 @@ export const badOutputs = {
 
 /**
  * Realistic replies to the state prompt, which asks for a JSON merge patch
- * (docs/p3-plan.md decision 5, §7). Each takes the patch the model *meant* and the
+ * (docs/decisions.md D-0044). Each takes the patch the model *meant* and the
  * state it was sent. No Cairn state reply has been seen in play yet, so the
  * shapes are the summary catalogue's, carried over to JSON, plus WTrackerLite's
  * habit of regenerating the whole state. Every one has a case in

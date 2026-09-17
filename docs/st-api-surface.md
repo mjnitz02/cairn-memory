@@ -92,8 +92,17 @@ literally against the cited line.
 | `...chatItem,` | Its entries are fresh objects that **share `extra` by reference** with the real chat | `public/script.js` | 4525 |
 | `index,` | The index they carry counts the *filtered* array — never use it as a chat index | `public/script.js` | 4527 |
 | `coreChat.pop();` | A swipe drops the reply being replaced, so the state used is the one before it | `public/script.js` | 4498 |
+| `doChatInject` | Places the world state: an `IN_CHAT` prompt goes in `depth` entries from the end of `coreChat` | `public/script.js` | 5628 |
+| `const injectIdx = Math.min(depth + totalInsertedMessages, messages.length);` | Depth counts prompt entries, so the state's depth is the number of entries after its message | `public/script.js` | 5666 |
+| `const depth = isContinue && i === 0 ? 1 : i;` | On a continue, a depth-0 state moves above the message being continued | `public/script.js` | 5665 |
+| `const roles = [extension_prompt_roles.SYSTEM, extension_prompt_roles.USER, extension_prompt_roles.ASSISTANT];` | At the same depth, a system prompt lands below a user or assistant one | `public/script.js` | 5636 |
+| `export const extension_prompt_roles = {` | The state is parked with the system role (`SYSTEM: 0`) | `public/script.js` | 494 |
+| `injectedIndices = await doChatInject(coreChat, isContinue);` | Text completion injects while blanked messages are still in `coreChat`; they are all older than a placed state | `public/script.js` | 4745 |
+| `oaiMessages = setOpenAIMessages(coreChat);` | Chat completion builds from the same `coreChat`, dropping blanked messages (`openai.js:584`)... | `public/script.js` | 4834 |
+| `? await getExtensionPrompt(extension_prompt_types.IN_CHAT, i, separator, roleTypes[role], wrap)` | ...before placing by depth, which still matches because no state behind the step is placed | `public/scripts/openai.js` | 856 |
 | `lastMessage.mes = getMessage;` | A new swipe replaces `mes` and keeps `extra`, so the state on it goes stale by its hash | `public/script.js` | 6676 |
 | `targetMessage.extra = structuredClone(targetSwipeInfo?.extra) ?? {};` | Swiping back restores that swipe's `extra`, state included, as a new object | `public/script.js` | 7015 |
+| `syncMesToSwipe(mesId);` | Swiping away saves the current `extra` into that swipe first, so a new swipe's copy made before its state was written is overwritten (`targetSwipeInfo.extra`, :6939) | `public/script.js` | 10340 |
 | `if (typeof globalThis[interceptorKey] === 'function') {` | An extension's interceptor is called by its manifest name, so a defined one means WTracker or WTrackerLite is running | `public/scripts/extensions.js` | 2035 |
 | `message.is_system = hide;` | Hiding a message sets `is_system`, so `summarisable()` skips hidden messages | `public/scripts/chats.js` | 157 |
 | `structuredClone(chat.slice(0, Number(mesId) + 1))` | A branch copies the messages it keeps, `extra` and all, so their scenes go with them | `public/scripts/bookmarks.js` | 173 |
@@ -130,6 +139,9 @@ literally against the cited line.
 | `MESSAGE_UPDATED` | Event name; an edit can invalidate a summary, so its mark is redrawn | `public/scripts/events.js` | 12 |
 | `MESSAGE_DELETED` | Event name; a deletion renumbers the messages after it | `public/scripts/events.js` | 11 |
 | `MESSAGE_SWIPED` | Event name; a swipe changes the last message | `public/scripts/events.js` | 7 |
+| `const messageTemplate = $('#message_template .mes');` | Every message is cloned from the template, so the summarise button added to it once is on every message drawn after | `public/script.js` | 448 |
+| `<div class="extraMesButtons">` | The message's actions menu, where the summarise button goes | `public/index.html` | 7414 |
+| `'.mes_buttons .mes_button',` | A `mes_button` in that menu answers Enter like a click | `public/scripts/keyboard.js` | 17 |
 
 ## Verified, not yet called
 
@@ -144,7 +156,6 @@ does not rest on an unchecked claim; each moves up as its phase lands.
 | `outlet` | `world_info_position.outlet === 7` | `public/scripts/world-info.js` | 863 |
 | `outletName` | Declared WI entry field, editable in the WI UI | `public/scripts/world-info.js` | 4108 |
 | `outlet::` | The `{{outlet::key}}` macro that places parked content | `public/scripts/macros.js` | 668 |
-| `doChatInject` | Where `IN_CHAT` injections are spliced into the history | `public/script.js` | 5628 |
 | `flushWIInjections` | ST clears depth and outlet injections every generation | `public/script.js` | 5678 |
 | `getOutletPrompt` | Resolves `{{outlet::key}}` from the parked injection | `public/scripts/macros.js` | 597 |
 | `export function substituteParams(` | Signature; the legacy engine is the default | `public/script.js` | 2981 |
@@ -192,3 +203,6 @@ WTrackerLite and upstream WTracker are looked for under `third-party/SillyTavern
 and `third-party/SillyTavern-WTracker`, and by the interceptors their manifests name,
 `wtrackerliteGenerateInterceptor` and `wtrackerGenerateInterceptor`. Cairn reads nothing else
 from either, and no settings, since those outlive the extension.
+
+Qvink's summaries are shown under their messages only while Qvink isn't drawing its own: it
+isn't loaded, or its `display_memories` (default on, `index.js:160`, checked at `:1460`) is off.

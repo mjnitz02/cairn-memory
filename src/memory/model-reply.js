@@ -1,7 +1,7 @@
 /**
  * Cleanup every memory strategy's parser does first: reasoning that leaked into
  * the content, a code fence, and a refusal in place of output
- * (docs/decisions.md D-0037, docs/p3-plan.md decision 5).
+ * (docs/decisions.md D-0037, D-0044).
  *
  * Pure: text in, text out.
  */

@@ -1,10 +1,10 @@
 /**
- * Tier 1 — which state counts, and what the next update reads (docs/p3-plan.md
- * decisions 7-8, §3-4).
+ * Tier 1 — which state counts, and what the next update reads (docs/decisions.md
+ * D-0042, D-0044 to D-0046).
  *
  * Nothing is stored about which state is current. The newest valid state wins,
  * read fresh each time, so deletions, branches, swipes and edits roll back with no
- * bookkeeping (§5). Invalidation never cascades: an edit makes stale only the state
+ * bookkeeping (D-0045). Invalidation never cascades: an edit makes stale only the state
  * whose range it touched.
  *
  * Pure: plain data in, plain data out. No ST, no DOM, no network.
@@ -15,7 +15,7 @@ import { validState } from './state-schema.js';
 import { STATE_MAX_EARLIER, STATE_MAX_MESSAGES } from './state-strategy.js';
 
 /**
- * The two state writers Cairn stands aside for (decision 8). Folders are the ones
+ * The two state writers Cairn stands aside for (D-0046). Folders are the ones
  * their repositories clone into, under ST's `third-party/` prefix
  * (src/endpoints/extensions.js:518). Interceptor names are from their manifests:
  * WTrackerLite's manifest.json, and WTracker's at github.com/bmen25124/SillyTavern-WTracker.
@@ -85,7 +85,7 @@ export function stateForPrompt(chat, promptChat) {
  * STATE_MAX_MESSAGES of the newest. When it has to leave older ones out (a cold
  * start, or catching up), the scenes just before what it reads go in as background.
  *
- * The state update includes the last message, unlike summaries (decision 2).
+ * The state update includes the last message, unlike summaries (D-0044).
  *
  * @param {Array<object>} chat The live chat. Read only.
  * @returns {null|{
@@ -161,7 +161,13 @@ export function wtrackerLoaded(context, { scope = globalThis } = {}) {
     return loaded?.name ?? null;
 }
 
-function usableState(chat, index) {
+/**
+ * The state stored on `chat[index]`, if it is one the reader would use: its range
+ * still hashes the same and the schema accepts its value.
+ *
+ * @returns {{index: number, state: object}|null}
+ */
+export function usableState(chat, index) {
     const { status, state } = readState(chat, index);
     return status === 'valid' && validState(state.value) ? { index, state } : null;
 }

@@ -1,6 +1,7 @@
 /**
- * Cairn's summaries, shown under the messages they summarise — where qvink shows
- * its own (its index.js:1445-1511), so switching between them reads the same.
+ * The summaries, shown under the messages they summarise — where qvink shows its
+ * own (its index.js:1445-1511), so switching between them reads the same — and the
+ * world state stored on each message, collapsed beneath them.
  *
  * Also the only feedback that summarising is happening at all: the message being
  * summarised says so while its request is out. Nothing here waits on it, and
@@ -9,26 +10,30 @@
  * `markMessages` and `renderMark` are pure. `createChatMarks` is the DOM glue.
  */
 import { SLUG } from '../constants.js';
-import { pendingScenes } from '../memory/scenes.js';
+import { pendingScenes, qvinkDisplaying, readScenes } from '../memory/scenes.js';
+import { usableState, wtrackerLoaded } from '../memory/state.js';
+import { renderState } from '../memory/state-schema.js';
 import { MAX_ATTEMPTS } from '../pipeline/summarizer.js';
-import { readScene } from '../store/chat-store.js';
 import { warn } from '../util/log.js';
+import { escapeHtml } from './html.js';
 
 /**
- * What each message shows. Only Cairn's own work: qvink draws its summaries itself
- * while it is enabled.
+ * What each message shows: the summary the memory block reads for it, and Cairn's
+ * work in progress. A stale Cairn summary hides qvink's on the same message too,
+ * because the block reads neither (memory/scenes.js).
  *
  * @param {Array<object>} chat
  * @param {object|null} status The summarizer's `status`.
- * @returns {Map<number, {state: 'written'|'writing'|'waiting'|'failed'|'given-up',
- *          text?: string, reason?: string, attempts?: number}>}
+ * @param {{showQvink?: boolean}} [options] `showQvink` while qvink isn't drawing its own.
+ * @returns {Map<number, {state: 'written'|'qvink'|'writing'|'waiting'|'failed'|'given-up',
+ *          text?: string, excluded?: boolean, reason?: string, attempts?: number}>}
  */
-export function markMessages(chat, status) {
+export function markMessages(chat, status, { showQvink = false } = {}) {
     const marks = new Map();
-    (chat ?? []).forEach((message, index) => {
-        const { status: stored, scene } = readScene(message);
-        if (stored === 'valid') marks.set(index, { state: 'written', text: scene.text });
-    });
+    for (const scene of readScenes(chat)) {
+        if (scene.source === 'cairn') marks.set(scene.index, { state: 'written', text: scene.text });
+        else if (showQvink) marks.set(scene.index, { state: 'qvink', text: scene.text, excluded: !scene.eligible });
+    }
     if (!status) return marks;
 
     for (const { index, attempts, reason } of status.failed ?? []) {
@@ -44,11 +49,31 @@ export function markMessages(chat, status) {
     return marks;
 }
 
+/**
+ * The world state on each message that carries one the reader would use, rendered as
+ * the prompt carries it. A state with nothing recorded has nothing to show.
+ *
+ * @param {Array<object>} chat
+ * @returns {Map<number, string>}
+ */
+export function stateTexts(chat) {
+    const texts = new Map();
+    (chat ?? []).forEach((_, index) => {
+        const found = usableState(chat, index);
+        const text = found ? renderState(found.state.value) : '';
+        if (text) texts.set(index, text);
+    });
+    return texts;
+}
+
 /** @returns {string} The mark's inner HTML. Scene text is escaped, never formatted. */
 export function renderMark(mark) {
     switch (mark.state) {
         case 'written':
             return `<span class="${SLUG}-scene-label">Cairn:</span> ${escapeHtml(mark.text)}`;
+        case 'qvink':
+            // Excluded in qvink, so the block leaves it out.
+            return `<span class="${SLUG}-scene-label">${mark.excluded ? 'Qvink (excluded):' : 'Qvink:'}</span> ${escapeHtml(mark.text)}`;
         case 'writing':
             return `<i class="fa-solid fa-spinner fa-spin"></i> Cairn is summarising this message…`;
         case 'waiting':
@@ -65,9 +90,9 @@ export function renderMark(mark) {
 
 /**
  * @param {() => object} getContext
- * @param {{status: () => (object|null)}} options
+ * @param {{status: () => (object|null), settings?: () => {worldState?: boolean}}} options
  */
-export function createChatMarks(getContext, { status }) {
+export function createChatMarks(getContext, { status, settings }) {
     let running = false;
     /** What each mark element last drew, so an unchanged mark is not rewritten. */
     const drawn = new WeakMap();
@@ -79,9 +104,17 @@ export function createChatMarks(getContext, { status }) {
             // the message body inside each (public/index.html:7461).
             const root = document.getElementById('chat');
             if (!root) return;
-            const marks = running ? markMessages(getContext().chat, status()) : new Map();
+            const context = getContext();
+            const marks = running
+                ? markMessages(context.chat, status(), { showQvink: !qvinkDisplaying(context) })
+                : new Map();
+            // Hidden where no state goes in the prompt: switched off, or a WTracker keeps its own.
+            const showStates = running && settings?.()?.worldState !== false && !wtrackerLoaded(context);
+            const states = showStates ? stateTexts(context.chat) : new Map();
             for (const element of root.querySelectorAll('.mes[mesid]')) {
-                draw(element, marks.get(Number(element.getAttribute('mesid'))));
+                const index = Number(element.getAttribute('mesid'));
+                draw(element, marks.get(index));
+                drawState(element, states.get(index));
             }
         } catch (err) {
             warn('Could not show summaries in the chat.', err);
@@ -102,9 +135,29 @@ export function createChatMarks(getContext, { status }) {
             node = document.createElement('div');
             body.after(node);
         }
-        node.className = `${SLUG}-scene ${SLUG}-scene-${mark.state}`;
+        node.className = `${SLUG}-scene ${SLUG}-scene-${mark.state}${mark.excluded ? ` ${SLUG}-scene-excluded` : ''}`;
         node.innerHTML = html;
         drawn.set(node, html);
+    }
+
+    /** Below the summary if there is one. Only the text is rewritten, so an open section stays open. */
+    function drawState(element, text) {
+        let node = element.querySelector(`.${SLUG}-state`);
+        if (text === undefined) {
+            node?.remove();
+            return;
+        }
+        if (!node) {
+            const body = element.querySelector('.mes_text');
+            if (!body) return;
+            node = document.createElement('details');
+            node.className = `${SLUG}-state`;
+            node.innerHTML = '<summary>World state</summary><pre></pre>';
+            // A summary drawn later goes directly after the body, so it still lands above this.
+            (element.querySelector(`.${SLUG}-scene`) ?? body).after(node);
+        }
+        const pre = node.querySelector('pre');
+        if (pre.textContent !== text) pre.textContent = text;
     }
 
     /** Every event after which ST has built or rebuilt message elements. */
@@ -139,10 +192,4 @@ export function createChatMarks(getContext, { status }) {
             refresh();
         },
     };
-}
-
-function escapeHtml(value) {
-    return String(value ?? '').replace(/[&<>"']/g, (c) => (
-        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }[c]
-    ));
 }

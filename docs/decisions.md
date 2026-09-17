@@ -8,6 +8,352 @@ what we believed and why it changed.
 
 ---
 
+## D-0050 — Any message can be summarised on request, and the chat shows what the prompt reads
+**2026-09-17.** Quality-of-life changes before P4.
+
+**The decision.**
+- **Summarise with Cairn** in a message's actions menu sends it again, whatever the
+  queue would do with it. It replaces a summary (Cairn's or Qvink's) only on success,
+  and it resets the failure count on a message the queue gave up on. It works on
+  the last message and on messages older than Qvink's newest summary, which the queue
+  skips (D-0037). It sends the same request, goes ahead of the queue, and waits
+  on the same gates.
+- **Qvink's summaries are shown** as `Qvink:` while Qvink isn't loaded or has
+  `display_memories` off, so a summary is never drawn twice. The chat shows what
+  `readScenes` gives the block, so a stale Cairn summary hides the Qvink one too.
+- **Every message with a usable state** shows it in a collapsed **World state**
+  section, rendered by `renderState`, so what you see matches the prompt text.
+  Hidden while the switch is off or a WTracker is loaded. No setting.
+
+**Why the queue's limits don't apply.** The queue skips the last message because
+it may still change, and messages before Qvink's newest summary so it never adds
+scenes into the middle of the block. Both rules keep automatic work from being
+wasted or moving the cache without being asked. A click is asked. A summary of
+the last message goes stale by its hash if a swipe or edit changes the text.
+
+**Costs we accept.** Replacing a summary already in the block changes the block
+from that summary on, so the next prompt misses the cache from there, as an edit
+would. A summary added before Qvink's newest one adds a scene mid-block. A failed
+request toasts every time, since you asked for it, but doesn't end the run.
+
+**Reopens if:** a regenerate button for the state is wanted. It only makes sense
+on the newest state, because each state patches the one before it.
+
+---
+
+## D-0049 — P3 is measured and closed: Cairn keeps the world state
+**2026-09-17.** Closes P3 (`DESIGN.md` §13). The plan's decisions are D-0042 to
+D-0046, the run added D-0047 and D-0048, and the plan page is deleted.
+
+**The run.** A branch of Esin forked at message 84, on text completion. 25
+generations: 20 with the state on, then 5 with it off as the control. The user
+messages were written with ST's **Impersonate**, about 2,000 characters each, with
+a few 8-character "continue" messages among them. So unlike D-0041's runs, the
+raw window held real-length user messages. Stability is the share of each prompt
+already cached.
+
+```
+state on                               n   stability    break
+the state didn't move                  9   96.9–97.7    just after cairn_state
+the state moved forward a reply        7   92.1–95.7    where the state used to be
+step                                   2   58.6, 65.1   the old block's tail
+swipe                                  1   100          none
+
+state off (the control)
+normal turns and one impersonate       4   97.3–97.7    the newest message
+```
+
+- **The state costs about 1.6 points.** Held generations averaged 95.9% with the
+  state on and 97.5% with it off. D-0042 predicted about 2.2 points (≈95%) from
+  corpus sizes. The plan's "about 0.5 points on Esin" assumed its 2-token
+  "continue" messages, which this run didn't use.
+- **The cost lands on whichever generation first carries the moved state.** With
+  Impersonate, that's usually the impersonate: it re-reads from the state's old
+  position, and the next normal turn breaks just after the state. Without it, the
+  normal turn pays.
+- **A step still breaks at the block's tail.** Both steps broke at the end of the
+  old block (20,031 and 25,054 characters). The two figures differ by how big the
+  block was, not by the state.
+- **Depth** was 1 on every normal turn, 0 or 2 on impersonates, and 3 when a turn
+  went out within seconds of a reply, before its update was written. The state
+  stayed after the messages it had read every time.
+- **Updates:** 13 written, plus the cold start before the log began, 0 failures, 0
+  dropped fields. About 1,300 tokens in and 59 out each, 2.5–15.2 s, 6.9 s on
+  average. The state was 50–77 tokens, median 57, against a bound of about 330.
+- **Summaries:** 23 requests, 22 written, and 1 error, retried and written.
+- **Overlap:** a state request was out during 3 of 25 generations, all sent within
+  seconds of a reply. A summary request was out during 6.
+- **One writer** on every generation.
+
+**Rollback held.**
+- **Swipe.** The swipe generation matched the original's prompt byte for byte, with
+  the previous state at depth 1, and the new swipe got its own state 6 s later.
+  ST's copy of the new swipe's `extra` still holds the old swipe's state until the
+  next swipe away overwrites it (`script.js:10338-10340` → `:6939`), and a state is
+  only used if it matches its message.
+- **Edit.** After an edit to the newest reply, the next generation used the state
+  before it (depth 2), a second update rewrote it 42 s after the reply, and the
+  turn after that used the new state at depth 1.
+- **The control.** Switching the state off stopped its requests, and the prompt
+  broke once where the state had been (95.1%).
+
+**Found in the run.**
+- **The first build left out hair and weather** (D-0048).
+- **The prompt reached 95% of its limit** once: 21,964 of 23,040 tokens, the turn
+  before the second step, which brought it down to 18,737. With real-length user
+  messages the raw window is widest just before a step. Nothing overflowed. It is
+  input for P6.
+- **The log doesn't say what kind of generation it was.** Impersonates, continues
+  and swipes were told apart from the chat file's timestamps.
+
+**What this run cannot show.** Whether the state helps the story. Quality is
+deferred with the summaries' (D-0041).
+
+---
+
+## D-0048 — A first build records everything the messages establish
+**2026-09-17.** Found in the P3 run. Amends D-0044's prompt.
+
+**What went wrong.** The run's first build read 6 messages into an empty record and
+wrote a location and two outfits. It left out hair and weather, which
+WTrackerLite's tracker on the same message had for all three characters. Nothing
+was dropped: the model never wrote them. The prompt only asks for changes
+("Include only what the messages change", "When unsure whether something changed,
+leave it out"), and from an empty record, a hairstyle set earlier and mentioned
+once in passing doesn't read as a change.
+
+**The decision.** When the state renders to nothing, the prompt swaps those two
+lines for a first-build pair: fill in every field the messages and earlier events
+establish, including hair and outfit for each character present, and leave out
+what's unsure to still hold at the end. Once the record holds anything, updates
+keep the changes-only wording. One template with two `{{#if}}` branches, so a
+state still stores one prompt hash.
+
+**Why it matters more than one turn.** The tier exists to carry a hairstyle
+forward after the story changed it. A first build that skips it waits for the
+story to mention hair again. In the run, hair arrived three replies later.
+
+**Cost we accept.** A change made before the 6-message window is still missed.
+Reading further back on a first build would fix that, at the cost of a bigger
+request.
+
+**Reopens if:** first builds still miss fields the messages state, or updates start
+rewording fields they shouldn't touch.
+
+---
+
+## D-0047 — The state doesn't follow the handover gate
+**2026-09-17.** Asked during the P3 run.
+
+**The decision.** Whether the state goes into the prompt depends only on **Keep the
+world state** and the WTracker check (D-0046), not on whether the handover gate
+lets Cairn write the memory block (D-0027). When the gate is shut, the state is
+still placed, and a state is still left out when it's older than the step Cairn
+has planned.
+
+**Why.** Each setting controls one thing, which is what the settings text already
+says. The gate is shut in two cases. With qvink still writing its block, its
+summaries and Cairn's state don't overlap, because qvink keeps no state. With
+**Write the memory block** off, tying the state to it would switch off two things
+at once, and that setting exists so the block can be measured on its own.
+
+**Reopens if:** a summarising extension that also keeps state, so the gate's "who
+writes" question covers the state too.
+
+---
+
+## D-0046 — Cairn reads nothing from WTracker, and waits while one is loaded
+**2026-09-16.** P3 plan decision 8.
+
+**The decision.** No migration from `extra.WTrackerLite` or `extra.WTracker`. While
+either extension is loaded, under `third-party/SillyTavern-WTrackerLite` or
+`third-party/SillyTavern-WTracker`, Cairn neither updates nor places the state, and
+the panel names the one it's waiting on.
+
+**Why not migrate.** Only Esin had the data, its newest tracker was message 84, and
+the live chat was about 60 messages past it. A state that old is the wrong seed,
+and the schema differs. A cold start from recent messages costs one request.
+
+**Why ask whether it's loaded.** Two state writers in one prompt is the problem this
+project exists to end. The check reads what's loaded, not the extension's
+settings, because settings outlive a disabled extension (D-0040).
+
+**Reopens if:** someone needs to keep a long WTracker history, or a tracker installs
+under another folder name.
+
+---
+
+## D-0045 — Each state stands alone and hashes what it read; the newest valid one wins
+**2026-09-16.** P3 plan decision 7 and §1, §5.
+
+**The decision.** A full state snapshot is stored on the newest message the update
+read, as `extra.cairn.state`: `value`, `read` (how many messages it read, ending at
+its own, hidden ones skipped), `hash` (those messages as `name: mes`), `changed`
+(kinds, never content), `prompt` and `at`. A state counts only while its range still
+hashes the same. The reader walks back from the newest message in the prompt to the
+first valid state. Store version 2; the migration from v1 is a no-op, since v1 has
+no state.
+
+**Why a snapshot, not a chain of patches.** A deletion, a branch
+(`bookmarks.js:173`) or a stale state in the middle never breaks the ones around
+it. It costs about 1 KB per reply in the chat file.
+
+**Why `read`, not an index.** Deleting an earlier message shifts indexes, but not a
+count that ends at the state's own message.
+
+**Rollback needs no code.** Editing, hiding, unhiding or deleting a message in range,
+or swiping the state's own message, makes it stale, and the one before it is used
+until the queue catches up. Swiping back restores the old swipe's `extra`
+(`script.js:7015`), state included.
+
+**No cascade.** An edit to an older message invalidates only the state that read it.
+Later states were built on the old text and stay valid. The most common edit is to
+the newest reply, and a cascade would redo every later state over a story that has
+usually overwritten that fact since. *Cost:* a fact from an edited old message stays
+wrong until the story touches that field again.
+
+**Failure writes nothing** (CLAUDE.md §4.17). The previous valid state stays in the
+prompt. After 3 failures on the same read range, the state gives up on it for the
+session; a new message or an edit changes the range. Each kind keeps its own streak
+(`pipeline/tally.js`), so a failing state prompt never starves the summaries.
+
+**Consequence.** An older Cairn reads a v2 store as `future` and stops reading its
+own summaries until upgraded.
+
+**Reopens if:** stale states from old edits turn up in play often enough to want the
+cascade.
+
+---
+
+## D-0044 — One state update per reply: a JSON merge patch from a built-in prompt
+**2026-09-16.** P3 plan decisions 2, 3, 5 and 6, §2 and §3.
+
+**The decision.** After each reply, and as soon as a message is edited, the queue
+brings the state up to date through the newest message, the latest reply included.
+The state job runs first in the run, then the summaries, one request at a time. It
+reads every message since the last valid state, at most the newest 6; a cold start
+or catch-up with more also gets the 5 scenes before them as background. The model
+replies with a JSON Merge Patch (RFC 7386) against the current state. The prompt is
+built in, and there's one setting, **Keep the world state**, on by default and
+inert until a memory profile is chosen.
+
+**Why include the latest reply.** The tier exists to be current, and the reply the
+user answers is where the scene moved. It also keeps the state at depth 1
+(D-0042). *Cost:* a swipe, continue or edit of the reply wastes one request, which
+the hash catches (D-0045).
+
+**Why every reply.** Under D-0042, the placement costs the same every turn whatever
+the cadence, so updating every N replies only saves requests that cost almost
+nothing, and leaves the state up to N replies behind.
+
+**Why a patch.** Fields the patch leaves out keep their bytes, so rewording can't
+creep in: Elizabeth's regenerate-everything tracker reworded weather in 7 of its 10
+changes. `{}` means no change, which the log needs, and a model that sends the whole
+state anyway still merges correctly.
+
+**Why JSON, unlike D-0037.** ST returns no finish reason (`custom-request.js:60`),
+and cut-off JSON fails to parse. The parser strips `<think>` blocks and fences
+(shared with summaries, `memory/model-reply.js`), takes the first bracketed span
+that parses, and rejects a reply that is empty, a refusal, not JSON or not an
+object. A field that breaks the schema (unknown key, wrong type, over its cap, a
+6th character) is dropped and counted, never clamped. What changed is worked out by
+comparing before and after the merge, not taken from the model (CLAUDE.md §4.18).
+
+**Why not editable.** The prompt is tied to the schema and the parser, so an edit can
+only break them. D-0039's reasons for the summary prompt, a prompt proven in play and
+pasting in qvink's, don't apply.
+
+**Reopens if:** updates fail or drop fields often in play, or the per-reply cost stops
+being negligible.
+
+---
+
+## D-0043 — The world state is WTrackerLite's fields, and nothing else
+**2026-09-16.** P3 plan decision 4. Revised before release: the first draft also had
+`time`, per-character `appearance`, `condition`, `mood` and `intent`, and `threads`.
+
+**The decision.**
+
+```js
+{
+  location: string,    // ≤ 120 chars, most specific place first
+  weather: string,     // ≤ 80, or indoor conditions
+  characters: {        // ≤ 5 present characters, keyed by name (≤ 40)
+    [name]: { hair: string /* ≤ 80 */, outfit: string /* ≤ 120 */ },
+  },
+}
+```
+
+It renders as labelled lines under `[Current scene]`, in fixed order, with a
+`Present:` line so a character with nothing recorded still counts as there. The
+widest state renders to about 1,750 characters, about 330 tokens. A typical
+two-character state is about 55.
+
+**What the tier is for** (Matt, from hundreds of roleplays). A card's description
+fixes facts like "wears a combat uniform". When the story changes them, summaries
+tend to leave the change out, and ten messages later the character is wiping sweat
+off their combat uniform in the gym. The state carries the latest hair and outfit
+forward until they change again. Location and who is present cement that.
+
+**Why nothing more.** Mood, time of day and plot are dynamic, and the card already
+gives the roleplay model a range to evolve. Recording them gridlocks it: it
+narrates the dictated lane, keeps characters frozen in a recorded mood, and won't
+move time forward until the user does. The memory model would be steering the
+story. Upstream WTracker tracked all of that, and Matt's WTrackerLite fork cut it
+down to these fields.
+
+**Caps from the corpus.** WTrackerLite-shaped trackers peak at hair 60, outfit 109,
+location 81 and weather 69 characters, and at 5 characters present. Only Risa's
+verbose upstream schema passes a cap. The bound sits outside the block's 35% cap
+(D-0038); `prompt_near_limit` still covers the whole prompt.
+
+**Reopens if:** a stuck-hard-fact case from play that these fields can't hold. A
+might-help field isn't one.
+
+---
+
+## D-0042 — The world state sits just after the newest message it read
+**2026-09-16.** P3 plan decision 1 and §4. Supersedes `DESIGN.md` §6's depth 2.
+
+**The decision.** `setExtensionPrompt('cairn_state', text, IN_CHAT, depth, false,
+SYSTEM)` (`script.js:8926`), where depth is the number of prompt messages after the
+state's message. In normal play that's depth 1: between the reply the state includes
+and the user's new message. The state's message is found in the interceptor's
+`coreChat` by `extra` identity, never by index, since `coreChat` drops hidden
+messages (`script.js:4496`) and pops the last one on a swipe (`:4498`). A state at
+or before the step's `summarisedThrough` is older than the block and isn't placed,
+nor is one that renders to nothing.
+
+**Why the depth matters more than the change rate.** ST inserts an `IN_CHAT` prompt
+*depth* messages from the end (`doChatInject`, `script.js:5628`, `:5665-5666`). Next
+turn, two messages go in below it, so its old position no longer matches even if the
+text didn't change. Every in-chat placement costs a re-read each turn, of the state
+and everything below it. Predicted on D-0034's layout, with corpus sizes:
+
+| Placement | Extra re-read per turn | Held turn |
+|---|---|---|
+| No state | — | ~97% |
+| `IN_PROMPT` after the block | a change re-reads from the block's tail, like a step | ~71–79% |
+| `IN_CHAT` depth 2 | reply + user + state ≈ 700 tokens | ~93% |
+| **`IN_CHAT` depth 1** | user + state ≈ 380 tokens | **~95%** |
+| `IN_CHAT` depth 0 | state ≈ 80 tokens | ~96.5% |
+
+The state changed in 7 of Esin's 8 tracked exchanges, so `IN_PROMPT` would break
+the prefix high almost every turn. D-0049 measured depth 1 at about 1.6 points.
+
+**Why not depth 0.** The state would sit below the user's newest message, which it
+hasn't read, so a message that moves the scene would be contradicted just before the
+reply. Depth 0 is also where per-turn retrieval goes (P5).
+
+**Why "after the message", not a fixed depth.** On a swipe the previous state is
+still at depth 1. When the queue falls behind, the state sits deeper and stays in
+order. On a continue, ST moves a depth-0 injection up one message (`:5665`).
+
+**Reopens if:** the state's cost in play moves well past the prediction, or P5's
+retrieval needs the slot.
+
+---
+
 ## D-0041 — P2 is measured and closed: Cairn summarises, and qvink can go
 **2026-09-16.** Closes P2 (`DESIGN.md` §13). The plan's four decisions are
 D-0037 to D-0040, and the plan page is deleted.

@@ -353,3 +353,69 @@ describe('disk log — P2 summaries', () => {
         expect(entry.prompt_near_limit).toBeNull();
     });
 });
+
+describe('disk log — P3 world state', () => {
+    const placement = {
+        injected: true, reason: 'injected', tracker: null, index: 41, depth: 1, chars: 290, tokens: 55,
+        changed: true, changeKinds: ['location', 'characters.outfit'],
+        text: '[Current scene]\nLocation: The ferry, upper deck',
+    };
+    const status = {
+        gate: 'ready', tracker: null, inFlight: null, pending: false, givenUp: false, calls: 12, written: 11,
+        failures: 1, lastReason: 'truncated', dropped: 2, ms: 82_800, lastMs: 6_100, tokensIn: 14_400, tokensOut: 960,
+    };
+
+    async function line(overrides) {
+        const log = createDiskLog({ delayMs: 0 });
+        log.setEnabled(true);
+        log.append(snapshot(overrides), getContext);
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        return JSON.parse(writtenLines().at(-1));
+    }
+
+    it('carries the fields the P3 run is read from (docs/decisions.md D-0049)', async () => {
+        expect(await line({ state: placement, summaries: { state: { ...status, inFlight: 43 } } })).toMatchObject({
+            state_reported: true,
+            state_injected: true,
+            state_reason: 'injected',
+            state_tracker: null,
+            state_depth: 1,
+            state_chars: 290,
+            state_tokens: 55,
+            state_changed: true,
+            state_change_kinds: ['location', 'characters.outfit'],
+            state_gate: 'ready',
+            state_in_flight: true,
+            state_pending: false,
+            state_given_up: false,
+            state_calls: 12,
+            state_written: 11,
+            state_failures: 1,
+            state_last_reason: 'truncated',
+            state_dropped_fields: 2,
+            state_ms: 82_800,
+            state_last_ms: 6_100,
+            state_tokens_in: 14_400,
+            state_tokens_out: 960,
+        });
+    });
+
+    it('never writes the state\'s text', async () => {
+        const written = JSON.stringify(await line({ state: placement, summaries: { state: status } }));
+
+        expect(written).not.toContain('ferry');
+        expect(written).not.toContain('Current scene');
+    });
+
+    it('records why no state went in, with no depth', async () => {
+        const entry = await line({
+            state: { ...placement, injected: false, reason: 'behind-step', depth: 3, chars: 0, tokens: 0, changeKinds: [], text: '' },
+        });
+
+        expect(entry).toMatchObject({ state_injected: false, state_reason: 'behind-step', state_depth: null, state_in_flight: null });
+    });
+
+    it('says so plainly when nothing reported a state', async () => {
+        expect(await line({})).toMatchObject({ state_reported: false, state_injected: false, state_reason: null, state_calls: null });
+    });
+});

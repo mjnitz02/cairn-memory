@@ -1,6 +1,6 @@
 /**
  * Tier 1's shape: the fields and their caps, merging a patch into a state, and
- * rendering a state into the prompt (docs/p3-plan.md decisions 4-5, §2).
+ * rendering a state into the prompt (docs/decisions.md D-0043, D-0044).
  *
  * The fields are the hard facts a card's description fixes and the story later
  * changes: where the scene is, who is in it, their hair and outfit. Mood, time and

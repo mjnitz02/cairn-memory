@@ -27,11 +27,36 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 - Cairn's summaries appear under their messages, as Qvink's do. The message being
   summarised shows that a request is out, the ones behind it show they're
   waiting, and a failed summary shows why and whether it will be retried.
+- **Summarise with Cairn** in each message's actions menu writes that message's
+  summary again, replacing Cairn's or Qvink's. A failure keeps the old one. It
+  also works on the newest message and on a message Cairn gave up on.
+- Qvink's summaries appear under their messages as `Qvink:` while Qvink isn't
+  drawing its own.
+- Each message that carries a world state shows it under the message, in a
+  collapsed **World state** section.
 - The inspector has a **Summaries** section that updates as summaries are written.
   It shows what Cairn is doing or waiting on, what the open chat has cost
   (summaries, requests, failures, time, estimated tokens), and any message it gave
   up on. The memory block section says who wrote the summaries in it and whether
   a step is waiting.
+- **Cairn keeps the world state**: where the scene is, the weather, who is there,
+  and each character's hair and outfit. After each reply, and as soon as you edit a
+  message, it updates the state through the **Memory connection**, before the
+  summaries, and stores it on the newest message it read, in
+  `message.extra.cairn.state`. The first update fills in everything the recent
+  messages say; after that, only what changed. The state goes into the prompt just above your
+  newest message. Swipes, edits, deletions and branches fall back to the previous
+  state on their own. A failed update writes nothing and warns once per run of
+  failures. Cairn does nothing with the state while WTracker or WTrackerLite is
+  loaded.
+- **Keep the world state** setting, on by default. It does nothing until a memory
+  profile is chosen.
+- The inspector has a **World state** section: what the state queue is doing, the
+  state as the last prompt carried it, its depth and size, and the open chat's
+  requests, failures, dropped fields, time and tokens.
+- Log fields `state_*`: whether a state went in and why not, its depth, size,
+  whether it changed and the kinds of change, and the state queue's gate, in
+  flight, pending, given up and running totals. The state's text is never logged.
 - Log fields `memory_source` (now `qvink`, `cairn` or `mixed`),
   `memory_cairn_scenes`, `memory_step_waiting`, `prompt_near_limit`, and
   `summary_*`: gate, in flight, pending, given up, and running totals of calls,

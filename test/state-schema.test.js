@@ -14,7 +14,7 @@ import {
 import { STORE_V2 } from './fixtures/store-v2.js';
 import { mulberry32 } from './helpers/random.js';
 
-/** Synthetic. Two characters with typical values: about Esin's WTrackerLite JSON size (docs/p3-plan.md decision 4). */
+/** Synthetic. Two characters with typical values: about Esin's WTrackerLite JSON size (docs/decisions.md D-0043). */
 const TERMINAL = Object.freeze({
     location: 'The ferry terminal, waiting room',
     weather: 'Drizzle outside; damp and cold indoors',
@@ -35,7 +35,7 @@ function deepFreeze(value) {
 }
 
 describe('the schema', () => {
-    it('is WTrackerLite\'s fields, with the plan\'s caps (docs/p3-plan.md decision 4)', () => {
+    it('is WTrackerLite\'s fields, with the decided caps (docs/decisions.md D-0043)', () => {
         expect(TEXT_FIELDS).toEqual({ location: 120, weather: 80 });
         expect(CHARACTER_FIELDS).toEqual({ hair: 80, outfit: 120 });
         expect([MAX_CHARACTERS, MAX_NAME_CHARS]).toEqual([5, 40]);
@@ -257,7 +257,7 @@ describe('dropping what breaks the schema', () => {
 });
 
 describe('rendering', () => {
-    it('renders the plan\'s format in fixed order (docs/p3-plan.md §2)', () => {
+    it('renders the decided format in fixed order (docs/decisions.md D-0043)', () => {
         expect(renderState(STORE_V2.state.value)).toBe([
             '[Current scene]',
             'Location: The ferry terminal, waiting room',
@@ -307,7 +307,7 @@ describe('rendering', () => {
 });
 
 describe('the bound', () => {
-    it('is about 1,750 characters, the widest state (docs/p3-plan.md decision 4)', () => {
+    it('is about 1,750 characters, the widest state (docs/decisions.md D-0043)', () => {
         expect(MAX_STATE_CHARS).toBe(1754);
     });
 

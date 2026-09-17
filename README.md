@@ -72,17 +72,20 @@ message and read the inspector.
 
 Point **Memory connection** at a profile that is *not* your roleplay model.
 Without one, Cairn never calls a model. Each summary appears under its message,
-and Cairn never blocks sending, so you can keep chatting while it works.
+with a collapsed **World state** below it, and Cairn never blocks sending, so you
+can keep chatting while it works. To redo a summary, choose **Summarise with
+Cairn** (the stacked-stones icon) in the message's actions menu.
 
 | Setting | What it does |
 |---|---|
 | Enabled | Turns Cairn off without uninstalling. Existing memory is kept. |
-| Memory connection | The profile Cairn uses to write summaries. Must not be your roleplay model. |
+| Memory connection | The profile Cairn uses to write summaries and the world state. Must not be your roleplay model. |
 | Summary prompt | The instructions the memory model gets for each message. `{{message}}` is the message, and `{{history}}` is the summaries before it. **Reset to default** restores the built-in prompt. |
 | Show inspector | Shows what was injected, from where, and how stable the prompt is. |
 | Write inspector log to disk | Appends each generation to `user/files/cairn-inspector.jsonl`. |
 | Hold World Info entries | Keeps a lorebook entry in the prompt once it has activated, instead of letting it drop out when the keyword scan misses it. On by default; off restores stock SillyTavern behaviour. |
 | Write the memory block | Lets Cairn inject the summaries and keep the messages they cover out of the history. On by default, but Cairn waits until your existing memory extension is silent — see below. |
+| Keep the world state | Tracks where the scene is, the weather, who is there, and each character's hair and outfit, and puts it just above your newest message. On by default. Waits while WTracker or WTrackerLite is loaded. |
 | Debug logging | Verbose browser-console output. Only needed for bug reports. |
 
 ### Handing over from Qvink Memory

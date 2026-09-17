@@ -18,7 +18,8 @@
                 The connection profile Cairn uses to write memory. This must not be your roleplay
                 model — roleplay models write flowery summaries. Cairn summarises each message after
                 a reply arrives, starting after the newest summary Qvink Memory wrote, and waits
-                while Qvink is enabled with <b>Auto Summarize</b> on.
+                while Qvink is enabled with <b>Auto Summarize</b> on. The same connection keeps the
+                world state.
             </div>
 
             <label for="cairn_summaryPrompt">Summary prompt</label>
@@ -68,6 +69,17 @@
                 disable it, or set its short- and long-term memory position to <b>Macro Only</b>
                 and turn off <b>Exclude messages after threshold</b> — and says below what it is
                 waiting for.
+            </div>
+
+            <label class="checkbox_label" for="cairn_worldState">
+                <input id="cairn_worldState" type="checkbox">
+                <span>Keep the world state</span>
+            </label>
+            <div class="cairn-hint">
+                Keeps track of the current scene — where it is, the weather, who is there, and each
+                character's hair and outfit — and puts it in the prompt just above your newest message.
+                It is brought up to date after each reply, and waits while WTracker or WTrackerLite is
+                loaded.
             </div>
 
             <label class="checkbox_label" for="cairn_debugLogging">

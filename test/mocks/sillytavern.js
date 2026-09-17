@@ -129,6 +129,69 @@ function saveSwipe(message) {
     message.swipe_info[message.swipe_id] = { send_date: message.send_date, extra: structuredClone(message.extra) };
 }
 
+/**
+ * `getExtensionPrompt` (public/script.js:3301-3330): keys sorted, filtered by position,
+ * depth and role, each value trimmed, joined, and wrapped in the separator when `wrap`.
+ * Macro substitution (:3326) is left out.
+ */
+export function getExtensionPrompt(extensionPrompts, position, depth, separator = '\n', role, wrap = true) {
+    let values = Object.keys(extensionPrompts)
+        .sort()
+        .map((key) => extensionPrompts[key])
+        .filter((x) => x.position == position && x.value)
+        .filter((x) => depth === undefined || x.depth === undefined || x.depth === depth)
+        .filter((x) => role === undefined || x.role === undefined || x.role === role)
+        .map((x) => x.value.trim())
+        .join(separator);
+    if (wrap && values.length && !values.startsWith(separator)) values = separator + values;
+    if (wrap && values.length && !values.endsWith(separator)) values = values + separator;
+    return values;
+}
+
+/**
+ * A text-completion prompt, as far as placement goes. The story string with the
+ * BEFORE_PROMPT and IN_PROMPT injections around it (public/script.js:4700-4701), then
+ * the history, with IN_CHAT injections spliced in by depth as `doChatInject` does
+ * (:5628-5676), each message formatted without instruct mode (:5833-5846). The
+ * interceptor's `coreChat` is copied first, since ST splices into its own. Trimming to
+ * the context is not modelled.
+ */
+export function assembleTextPrompt(context, coreChat, { isContinue = false, storyString = 'Story string.\n' } = {}) {
+    const prompts = context.extensionPrompts;
+    const messages = [...coreChat].reverse();
+    let inserted = 0;
+    // getExtensionPromptMaxDepth is MAX_INJECTION_DEPTH (:3281); nothing here goes deeper than the chat.
+    for (let i = 0; i <= messages.length; i++) {
+        const roleMessages = [];
+        for (const role of [0, 1, 2]) {
+            const text = getExtensionPrompt(prompts, extension_prompt_types.IN_CHAT, i, '\n', role, false).trimStart();
+            if (text) {
+                roleMessages.push({
+                    name: ['', context.name1, context.name2][role], is_user: role === 1, mes: text,
+                    extra: { type: role === 0 ? 'narrator' : null },
+                });
+            }
+        }
+        if (roleMessages.length) {
+            const depth = isContinue && i === 0 ? 1 : i;
+            messages.splice(Math.min(depth + inserted, messages.length), 0, ...roleMessages);
+            inserted += roleMessages.length;
+        }
+    }
+    messages.reverse();
+
+    const history = messages.map((item) => {
+        if (item.extra?.[Symbol.for('ignore')]) return '';
+        const prependName = item.name && item.extra?.type !== 'narrator';
+        return prependName ? `${item.name}: ${item.mes}\n` : `${item.mes}\n`;
+    }).join('');
+
+    return getExtensionPrompt(prompts, extension_prompt_types.BEFORE_PROMPT)
+        + storyString
+        + getExtensionPrompt(prompts, extension_prompt_types.IN_PROMPT)
+        + history;
+}
+
 /** Minimal eventSource: registration plus await-all emit, as ST's does. */
 function makeEventSource() {
     const handlers = new Map();

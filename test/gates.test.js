@@ -98,7 +98,7 @@ describe('whether Cairn may update the world state', () => {
         expect(assessStateUpdates(busy, settings).ready).toBe(true);
     });
 
-    it('stands aside while WTracker or WTrackerLite is loaded, and names it (decision 8)', () => {
+    it('stands aside while WTracker or WTrackerLite is loaded, and names it (D-0046)', () => {
         for (const tracker of WTRACKERS) {
             const loaded = context({ extensions: [tracker.extension] });
             expect(assessStateUpdates(loaded, settings)).toEqual({

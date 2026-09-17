@@ -1,7 +1,7 @@
 /**
  * The write side: everything Cairn puts into someone else's prompt goes through
- * here (DESIGN.md §11). Two writes, both in the generate interceptor: the World
- * Info holder (P1 step 1) and the memory block (P1 step 3).
+ * here (DESIGN.md §11). Three writes, all in the generate interceptor: the World
+ * Info holder (P1 step 1), the memory block (P1 step 3) and the world state (P3).
  *
  * ST re-derives the activated set from a two-message keyword scan every turn.
  * When that scan happens to seed nothing the whole lore block vanishes and comes
@@ -35,6 +35,7 @@
  */
 import { SLUG } from '../constants.js';
 import { createRememberedSet } from './lorebook.js';
+import { STATE_INJECTION } from './state-placement.js';
 import { debug, toastOnce, warn } from '../util/log.js';
 
 /**
@@ -50,15 +51,18 @@ export const MEMORY_INJECTION = `${SLUG}_memory`;
  * (docs/st-api-surface.md, Hazards).
  *
  * @param {() => object} getContext Returns a fresh SillyTavern.getContext()
- * @param {{remembered?: object, memory?: {plan: () => Promise<object>}}} [options]
+ * @param {{remembered?: object, memory?: {plan: () => Promise<object>},
+ *          state?: {plan: (chat: Array<object>, step: object) => Promise<object>}}} [options]
  *        `memory` is the assembler. It is asked for a plan every turn and the
- *        plan says whether Cairn may write it (prompt/handover.js).
+ *        plan says whether Cairn may write it (prompt/handover.js). `state` is the
+ *        world state's placement (prompt/state-placement.js).
  */
-export function createInjector(getContext, { remembered = createRememberedSet(), memory = null } = {}) {
+export function createInjector(getContext, { remembered = createRememberedSet(), memory = null, state = null } = {}) {
     let running = false;
     let enabled = true;
-    /** Whether our block is parked right now, so it is cleared exactly once. */
+    /** Whether our block and our state are parked right now, so each is cleared exactly once. */
     let parked = false;
+    let stateParked = false;
     /**
      * The `extra` objects we set the ignore flag on last turn. Identity, not
      * index: it survives a branch, and it is what makes clearing our own flags
@@ -88,10 +92,10 @@ export function createInjector(getContext, { remembered = createRememberedSet(),
 
     /**
      * ST's generate interceptor — `(chat, contextSize, abort, type)`,
-     * extensions.js:2037. We read nothing from `chat` and write nothing to it:
-     * the no-clone rule (DESIGN.md §9) is satisfied by not touching it at all.
+     * extensions.js:2037. `chat` is read to place the state and never written to or
+     * copied, which is how the no-clone rule (DESIGN.md §9) is kept.
      */
-    async function intercept(_chat, _contextSize, _abort, type) {
+    async function intercept(chat, _contextSize, _abort, type) {
         // `running` is checked here and not only at registration: ST resolves the
         // interceptor off globalThis for the life of the page (extensions.js:2035),
         // so switching Cairn off has to be honoured at call time or it keeps
@@ -102,7 +106,8 @@ export function createInjector(getContext, { remembered = createRememberedSet(),
         if (!running || type === 'quiet') return;
 
         await holdWorldInfo();
-        await applyMemory();
+        const plan = await applyMemory();
+        await applyState(chat, plan);
     }
 
     /** P1 step 1 — push the held lore back in before ST's scan reads it. */
@@ -130,23 +135,52 @@ export function createInjector(getContext, { remembered = createRememberedSet(),
      * a turn's worth of staleness is a stale sentence, where clearing half of it
      * would be a prompt that says the model has not seen messages it is also not
      * being shown (CLAUDE.md §4.17).
+     *
+     * @returns {Promise<object|null>} The plan, written or not; null when there is none.
      */
     async function applyMemory() {
-        if (!memory) return;
+        if (!memory) return null;
 
         try {
             const plan = await memory.plan();
 
             if (!plan?.writing) {
-                release();
-                return;
+                releaseMemory();
+                return plan ?? null;
             }
 
             park(plan);
             blank(plan.blank);
+            return plan;
         } catch (err) {
             warn('Failed to assemble the memory block; leaving the prompt as it was.', err);
             toastOnce('Cairn could not rebuild the memory block this turn. The previous one is still in the prompt.');
+            return null;
+        }
+    }
+
+    /**
+     * P3 — the world state, just after the newest message it read. It follows the
+     * see-saw even while the handover gate leaves the block to qvink, since the state
+     * stands on its own. With no plan to read the step from, no state counts as behind
+     * it. A failure leaves last turn's state in place, as `applyMemory` does.
+     */
+    async function applyState(chat, plan) {
+        if (!state) return;
+
+        try {
+            const placed = await state.plan(chat, { summarisedThrough: plan?.report?.summarisedThrough ?? -1 });
+            if (!placed?.text) {
+                releaseState();
+                return;
+            }
+            const { position, scan, role } = placed.placement;
+            getContext().setExtensionPrompt(STATE_INJECTION, placed.text, position, placed.depth, scan, role);
+            stateParked = true;
+            debug(`World state: parked ${placed.text.length} chars at depth ${placed.depth}.`);
+        } catch (err) {
+            warn('Failed to place the world state; leaving the prompt as it was.', err);
+            toastOnce('Cairn could not place the world state this turn. The previous one is still in the prompt.');
         }
     }
 
@@ -199,8 +233,14 @@ export function createInjector(getContext, { remembered = createRememberedSet(),
         flagged = next;
     }
 
-    /** Un-write both halves: no block of ours in the prompt, no message held back. */
+    /** Un-write everything: no block or state of ours in the prompt, no message held back. */
     function release() {
+        releaseMemory();
+        releaseState();
+    }
+
+    /** Both halves of the block: no block in the prompt, no message held back. */
+    function releaseMemory() {
         try {
             if (parked) {
                 getContext().setExtensionPrompt(MEMORY_INJECTION, '');
@@ -210,6 +250,18 @@ export function createInjector(getContext, { remembered = createRememberedSet(),
             blank([]);
         } catch (err) {
             warn('Failed to release the memory block.', err);
+        }
+    }
+
+    function releaseState() {
+        try {
+            if (stateParked) {
+                getContext().setExtensionPrompt(STATE_INJECTION, '');
+                stateParked = false;
+                debug('World state: released the injection.');
+            }
+        } catch (err) {
+            warn('Failed to release the world state.', err);
         }
     }
 
