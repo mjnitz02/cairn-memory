@@ -2,6 +2,10 @@
  * Tier 1's shape: the fields and their caps, merging a patch into a state, and
  * rendering a state into the prompt (docs/p3-plan.md decisions 4-5, §2).
  *
+ * The fields are the hard facts a card's description fixes and the story later
+ * changes: where the scene is, who is in it, their hair and outfit. Mood, time and
+ * plot stay with the roleplay model, so the memory model never steers the story.
+ *
  * The caps bound the rendered state by construction. `applyPatch` only produces
  * values `validState` accepts, `renderState` renders nothing else, and the widest
  * valid state renders to MAX_STATE_CHARS. Nothing is clamped: a value over its cap
@@ -11,15 +15,13 @@
  */
 
 /** Top-level text fields, in render order, with their caps in characters. */
-export const TEXT_FIELDS = Object.freeze({ time: 60, location: 120, weather: 80 });
+export const TEXT_FIELDS = Object.freeze({ location: 120, weather: 80 });
 
 /** Per-character fields, in render order, with their caps. */
-export const CHARACTER_FIELDS = Object.freeze({ appearance: 160, condition: 80, mood: 60, intent: 100 });
+export const CHARACTER_FIELDS = Object.freeze({ hair: 80, outfit: 120 });
 
 export const MAX_CHARACTERS = 5;
 export const MAX_NAME_CHARS = 40;
-export const MAX_THREADS = 3;
-export const MAX_THREAD_CHARS = 120;
 
 /** What `changed` can hold, in the order it is reported. Kinds, never content. */
 export const CHANGE_KINDS = Object.freeze([
@@ -27,18 +29,17 @@ export const CHANGE_KINDS = Object.freeze([
     'characters.arrived',
     'characters.left',
     ...Object.keys(CHARACTER_FIELDS).map((field) => `characters.${field}`),
-    'threads',
 ]);
 
 export const STATE_HEADER = '[Current scene]';
 
-const LABELS = Object.freeze({ time: 'Time', location: 'Location', weather: 'Weather' });
-const STATE_KEYS = [...Object.keys(TEXT_FIELDS), 'characters', 'threads'];
+const LABELS = Object.freeze({ location: 'Location', weather: 'Weather' });
+const STATE_KEYS = [...Object.keys(TEXT_FIELDS), 'characters'];
 
 /**
  * Merge a JSON Merge Patch (RFC 7386) into a state. A changed field takes the new
- * value, `null` or a blank string clears it, `null` for a character removes them,
- * and `threads` is replaced whole. Key names match case-insensitively, and so do
+ * value, `null` or a blank string clears it, and `null` for a character removes
+ * them. Key names match case-insensitively, and so do
  * character names, keeping the stored spelling.
  *
  * A field that breaks the schema is dropped and the rest applies. `changed` is
@@ -62,20 +63,12 @@ export function applyPatch(current, patch) {
         : copyCharacters(current.characters);
     if (characters) value.characters = characters;
 
-    let threads = current.threads;
-    if (keys.has('threads')) {
-        const read = readThreads(keys.get('threads'));
-        if (read.ok) threads = read.threads;
-        else dropped.push({ field: 'threads', reason: read.reason });
-    }
-    if (threads) value.threads = [...threads];
-
     return { value, changed: changedKinds(current, value), dropped };
 }
 
 /**
  * Exactly the values `applyPatch` produces: known keys only, every text non-blank
- * and within its cap, no empty `characters` or `threads`.
+ * and within its cap, no empty `characters`.
  *
  * @param {unknown} value
  */
@@ -84,7 +77,6 @@ export function validState(value) {
     return Object.entries(value).every(([field, entry]) => {
         if (Object.hasOwn(TEXT_FIELDS, field)) return validText(entry, TEXT_FIELDS[field]);
         if (field === 'characters') return validCharacters(entry);
-        if (field === 'threads') return Array.isArray(entry) && entry.length > 0 && readThreads(entry).ok;
         return false;
     });
 }
@@ -104,13 +96,16 @@ export function renderState(value) {
     const lines = Object.keys(TEXT_FIELDS)
         .filter((field) => value[field] !== undefined)
         .map((field) => `${LABELS[field]}: ${oneLine(value[field])}`);
-    for (const [name, fields] of Object.entries(value.characters ?? {})) {
+    const characters = Object.entries(value.characters ?? {});
+    // Who is present is a fact of its own, as WTrackerLite rendered it, so a
+    // character with nothing recorded yet still counts as there.
+    if (characters.length) lines.push(`Present: ${characters.map(([name]) => oneLine(name)).join(', ')}`);
+    for (const [name, fields] of characters) {
         const parts = Object.keys(CHARACTER_FIELDS)
             .filter((field) => fields[field] !== undefined)
             .map((field) => `${field}: ${oneLine(fields[field])}`);
-        lines.push(parts.length ? `${oneLine(name)} — ${parts.join('; ')}` : oneLine(name));
+        if (parts.length) lines.push(`${oneLine(name)} — ${parts.join('; ')}`);
     }
-    if (value.threads) lines.push(`Open threads: ${value.threads.map(oneLine).join('; ')}`);
 
     return lines.length ? [STATE_HEADER, ...lines].join('\n') : '';
 }
@@ -124,7 +119,7 @@ function widestState() {
     for (let i = 0; i < MAX_CHARACTERS; i++) {
         characters[String.fromCharCode(65 + i).repeat(MAX_NAME_CHARS)] = fill(CHARACTER_FIELDS);
     }
-    return { ...fill(TEXT_FIELDS), characters, threads: Array(MAX_THREADS).fill('x'.repeat(MAX_THREAD_CHARS)) };
+    return { ...fill(TEXT_FIELDS), characters };
 }
 
 /**
@@ -206,16 +201,6 @@ function readText(entry, cap) {
     return { ok: true, text: entry };
 }
 
-function readThreads(entry) {
-    if (entry === null) return { ok: true, threads: undefined };
-    if (!Array.isArray(entry) || !entry.every((thread) => typeof thread === 'string' && thread.trim() !== '')) {
-        return { ok: false, reason: 'wrong-type' };
-    }
-    if (entry.length > MAX_THREADS) return { ok: false, reason: 'too-many' };
-    if (entry.some((thread) => thread.length > MAX_THREAD_CHARS)) return { ok: false, reason: 'too-long' };
-    return { ok: true, threads: entry.length ? entry : undefined };
-}
-
 function changedKinds(before, after) {
     const kinds = new Set(Object.keys(TEXT_FIELDS).filter((field) => before[field] !== after[field]));
 
@@ -231,8 +216,6 @@ function changedKinds(before, after) {
         }
     }
     if (Object.keys(was).some((name) => !Object.hasOwn(now, name))) kinds.add('characters.left');
-
-    if (JSON.stringify(before.threads ?? []) !== JSON.stringify(after.threads ?? [])) kinds.add('threads');
     return CHANGE_KINDS.filter((kind) => kinds.has(kind));
 }
 

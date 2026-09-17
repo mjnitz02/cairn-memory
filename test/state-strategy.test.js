@@ -14,26 +14,24 @@ import { createContext } from './mocks/sillytavern.js';
 
 /** Synthetic, and the shape of test/fixtures/store-v2.js: two characters present. */
 const STATE = Object.freeze({
-    time: 'Evening',
     location: 'The ferry terminal, waiting room',
     weather: 'Drizzle outside; damp and cold indoors',
     characters: Object.freeze({
-        Aster: Object.freeze({ appearance: 'Oilskin coat, hair pinned up', mood: 'resigned' }),
-        Wren: Object.freeze({ appearance: 'Wool coat, collar up', mood: 'impatient', intent: 'find out when the ferry runs' }),
+        Aster: Object.freeze({ hair: 'Pinned up', outfit: 'Oilskin coat over a fisherman\'s jumper' }),
+        Wren: Object.freeze({ hair: 'Loose, damp from the rain', outfit: 'Wool coat over a grey jumper, jeans, boots' }),
     }),
-    threads: Object.freeze(['Whether the last ferry will run tonight']),
 });
 
-/** What the model meant: Wren walks out to the pier and calms down. */
+/** What the model meant: Wren takes off her coat and walks out to the pier. */
 const PATCH = Object.freeze({
     location: 'The ferry terminal, outer pier',
-    characters: Object.freeze({ Wren: Object.freeze({ mood: 'calmer' }) }),
+    characters: Object.freeze({ Wren: Object.freeze({ outfit: 'Grey jumper, jeans, boots' }) }),
 });
 
 const AFTER = {
     ...STATE,
     location: PATCH.location,
-    characters: { Aster: STATE.characters.Aster, Wren: { ...STATE.characters.Wren, mood: 'calmer' } },
+    characters: { Aster: STATE.characters.Aster, Wren: { ...STATE.characters.Wren, outfit: PATCH.characters.Wren.outfit } },
 };
 
 /** Synthetic, the shape of a corpus exchange: the user's turn, then the reply. */
@@ -49,7 +47,7 @@ describe('the state prompt', () => {
         const top = [...STATE_PROMPT.matchAll(/^- (\w+):/gm)].map((match) => match[1]);
         const nested = [...STATE_PROMPT.matchAll(/^ {2}- (\w+):/gm)].map((match) => match[1]);
 
-        expect(top).toEqual([...Object.keys(TEXT_FIELDS), 'characters', 'threads']);
+        expect(top).toEqual([...Object.keys(TEXT_FIELDS), 'characters']);
         expect(nested).toEqual(Object.keys(CHARACTER_FIELDS));
     });
 
@@ -58,7 +56,6 @@ describe('the state prompt', () => {
             expect(STATE_PROMPT, field).toMatch(new RegExp(`^ *- ${field}: .*\\(${cap}\\)$`, 'm'));
         }
         expect(STATE_PROMPT).toMatch(/^- characters: .*at most 5, keyed by name \(40\)/m);
-        expect(STATE_PROMPT).toMatch(/^- threads: up to 3 .*\(120\)$/m);
     });
 
     it('gives an example the parser and schema accept whole', () => {
@@ -70,9 +67,9 @@ describe('the state prompt', () => {
         expect(applyPatch(state, parsed.patch)).toEqual({
             value: {
                 location: 'The ferry terminal, outer pier',
-                characters: { Wren: { mood: 'calmer', intent: 'find out when the ferry runs' } },
+                characters: { Wren: { hair: 'Tied back', outfit: 'Grey jumper, jeans, boots' } },
             },
-            changed: ['location', 'characters.mood'],
+            changed: ['location', 'characters.hair', 'characters.outfit'],
             dropped: [],
         });
     });
@@ -156,7 +153,7 @@ describe('building one state request', () => {
 describe('parsing and applying a state reply', () => {
     const applied = (value, changed, dropped = []) => ({ ok: true, value, changed, dropped });
     const rejected = (reason) => ({ ok: false, reason });
-    const moved = ['location', 'characters.mood'];
+    const moved = ['location', 'characters.outfit'];
 
     const expected = {
         fenced: applied(AFTER, moved),
@@ -166,18 +163,18 @@ describe('parsing and applying a state reply', () => {
         fullState: applied(AFTER, moved),
         capitalisedKeys: applied(AFTER, moved),
         unknownField: applied(AFTER, moved, [{ field: 'unknown', reason: 'unknown-key' }]),
-        wrongType: applied(AFTER, moved, [{ field: 'threads', reason: 'wrong-type' }]),
-        overlong: applied({ ...AFTER, location: STATE.location }, ['characters.mood'], [{ field: 'location', reason: 'too-long' }]),
+        wrongType: applied(AFTER, moved, [{ field: 'weather', reason: 'wrong-type' }]),
+        overlong: applied({ ...AFTER, location: STATE.location }, ['characters.outfit'], [{ field: 'location', reason: 'too-long' }]),
         sixCharacters: applied(
-            { ...AFTER, characters: { ...AFTER.characters, Bram: { mood: 'bored' }, Cora: { mood: 'curious' }, Dell: { mood: 'tired' } } },
-            ['location', 'characters.arrived', 'characters.mood'],
+            { ...AFTER, characters: { ...AFTER.characters, Bram: { outfit: 'Harbour uniform' }, Cora: { hair: 'Short and grey' }, Dell: {} } },
+            ['location', 'characters.arrived', 'characters.outfit'],
             [{ field: 'characters', reason: 'too-many' }],
         ),
         unknownSubKey: applied(AFTER, moved, [{ field: 'characters.unknown', reason: 'unknown-key' }]),
         noChange: applied(STATE, []),
         nullRemovals: (() => {
             const { weather: _weather, ...rest } = AFTER;
-            return applied({ ...rest, characters: { Wren: AFTER.characters.Wren } }, ['location', 'weather', 'characters.left', 'characters.mood']);
+            return applied({ ...rest, characters: { Wren: AFTER.characters.Wren } }, ['location', 'weather', 'characters.left', 'characters.outfit']);
         })(),
         truncated: rejected('truncated'),
         unterminatedReasoning: rejected('truncated'),
@@ -223,17 +220,17 @@ describe('finding the patch in a reply', () => {
     });
 
     it('never takes an object nested inside one that does not parse', () => {
-        expect(parseStatePatch('{"characters": {"Wren": {"mood": "calmer"}},}')).toEqual({ ok: false, reason: 'format' });
+        expect(parseStatePatch('{"characters": {"Wren": {"outfit": "Grey jumper"}},}')).toEqual({ ok: false, reason: 'format' });
     });
 
     it('reads brackets and quotes inside strings as text', () => {
-        const patch = { threads: ['Who wrote "} ]" on the {board}', 'A back\\slash'] };
+        const patch = { location: 'Under a sign reading "} ]" on the {board}', weather: 'A back\\slash of rain' };
 
         expect(parseStatePatch(`Patch:\n${JSON.stringify(patch)}`)).toEqual({ ok: true, patch });
     });
 
     it('calls a reply cut off inside a nested object truncated, though it has closing braces', () => {
-        expect(parseStatePatch('{"characters": {"Wren": {"mood": "calmer"}, "Aster": {"mo'))
+        expect(parseStatePatch('{"characters": {"Wren": {"outfit": "Grey jumper"}, "Aster": {"ou'))
             .toEqual({ ok: false, reason: 'truncated' });
         expect(parseStatePatch('```json\n{"location": "The ferry')).toEqual({ ok: false, reason: 'truncated' });
     });

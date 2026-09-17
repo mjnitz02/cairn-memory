@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { createContext, extension_prompt_types, makeChat, makeMessage, openChat, receiveMessage, world_info_position } from './mocks/sillytavern.js';
+import {
+    createContext, extension_prompt_types, makeChat, makeCoreChat, makeMessage, newSwipe, openChat, receiveMessage, swipeTo, world_info_position,
+} from './mocks/sillytavern.js';
 import { badOutputs, badStateOutputs, createRequestService, deferred } from './mocks/llm.js';
 
 /**
@@ -19,6 +21,34 @@ describe('SillyTavern mock', () => {
         const b = makeMessage();
         a.extra.cairn = { state: 'x' };
         expect(b.extra).toEqual({});
+    });
+
+    it('builds the interceptor\'s chat as ST does: filtered, popped on a swipe, extra shared (public/script.js:4496-4527)', () => {
+        const chat = makeChat(4);
+        chat[1].is_system = true;
+        const core = makeCoreChat(chat);
+
+        expect(core.map((entry) => entry.index)).toEqual([0, 1, 2]);
+        expect(core[1]).not.toBe(chat[2]);
+        expect(core[1].extra).toBe(chat[2].extra);
+        expect(makeCoreChat(chat, { type: 'swipe' })).toHaveLength(2);
+    });
+
+    it('swipes as ST does: a new swipe keeps extra, swiping back restores a clone (:6676, :7015)', () => {
+        const message = makeMessage({ mes: 'First reply.', extra: { cairn: { v: 2 } } });
+        const extra = message.extra;
+
+        newSwipe(message, 'Second reply.');
+        expect(message.extra).toBe(extra);
+        expect([message.mes, message.swipe_id, message.swipes]).toEqual(['Second reply.', 1, ['First reply.', 'Second reply.']]);
+
+        message.extra.cairn.v = 3;
+        swipeTo(message, 0);
+        expect(message.mes).toBe('First reply.');
+        expect(message.extra).not.toBe(extra);
+        expect(message.extra.cairn.v).toBe(2);
+        swipeTo(message, 1);
+        expect(message.extra.cairn.v).toBe(3);
     });
 
     it('builds an alternating synthetic chat', () => {
@@ -143,8 +173,8 @@ describe('memory-model mock', () => {
     });
 
     it('offers the malformed state replies the patch parser must survive', () => {
-        const state = { location: 'The waiting room', characters: { Aster: { mood: 'resigned' }, Wren: { mood: 'impatient' } } };
-        const patch = { location: 'The outer pier', characters: { Wren: { mood: 'calmer' } } };
+        const state = { location: 'The waiting room', characters: { Aster: { outfit: 'Oilskin coat' }, Wren: { outfit: 'Wool coat, jeans' } } };
+        const patch = { location: 'The outer pier', characters: { Wren: { outfit: 'Grey jumper, jeans' } } };
 
         for (const [name, output] of Object.entries(badStateOutputs)) {
             expect(typeof output(patch, state), name).toBe('string');
@@ -153,7 +183,7 @@ describe('memory-model mock', () => {
         expect(() => JSON.parse(badStateOutputs.truncated(patch))).toThrow();
         expect(JSON.parse(badStateOutputs.fullState(patch, state))).toEqual({
             location: 'The outer pier',
-            characters: { Aster: { mood: 'resigned' }, Wren: { mood: 'calmer' } },
+            characters: { Aster: { outfit: 'Oilskin coat' }, Wren: { outfit: 'Grey jumper, jeans' } },
         });
         expect(Object.keys(JSON.parse(badStateOutputs.capitalisedKeys(patch)))).toEqual(['Location', 'Characters']);
         expect(Object.keys(JSON.parse(badStateOutputs.sixCharacters(patch)).characters)).toHaveLength(5);

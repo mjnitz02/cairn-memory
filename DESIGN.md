@@ -132,9 +132,11 @@ compaction under budget pressure.
 ST's own recent messages. Not ours. Carries the flavour that state deliberately omits.
 
 ### Tier 1 — World state
-Small, structured, **continuously rewritten**. Location, time, who is present, per-character mood
-/ intent / physical condition, relationship axes, open threads, last significant shift.
-~300-600 tokens. Bounded **by design**, not by eviction. Never grows.
+Small, structured, **continuously rewritten**. Only the hard facts a character's description
+fixes and the story then changes: location, weather, who is present, and each one's hair and
+outfit, as WTrackerLite keeps them. Mood, time and plot stay with the roleplay model, because
+tracking them gridlocks it into narrating a dictated lane (`docs/p3-plan.md` decision 4).
+At most ~330 tokens. Bounded **by design**, not by eviction. Never grows.
 
 Generated as a **diff against the previous state** plus the new messages, not regenerated from
 scratch — cheaper, more stable, and a small model can do it. Stored per-message in `extra` so it

@@ -81,7 +81,7 @@ export const badStateOutputs = {
         `Here is the patch for the new messages:\n\n${JSON.stringify(patch, null, 2)}\n\nLet me know if anything should change!`,
 
     /** Reasoning model leaks its thinking into content. */
-    leakedReasoning: (patch) => `<think>Wren moved outside. Location and mood change.</think>\n${JSON.stringify(patch)}`,
+    leakedReasoning: (patch) => `<think>Wren moved outside. Location and outfit change.</think>\n${JSON.stringify(patch)}`,
 
     /** The template opened the think block in the prompt, so only its close arrives. */
     orphanThinkClose: (patch) => `Wren moved outside, so the location changes.\n</think>\n\n${JSON.stringify(patch)}`,
@@ -99,7 +99,7 @@ export const badStateOutputs = {
     refusal: () => 'I’m sorry, but I can’t continue with this scene.',
 
     /** Describes the change in prose instead of writing the patch. */
-    prose: () => 'Wren has moved out to the outer pier of the ferry terminal and is calmer now.',
+    prose: () => 'Wren has taken off her coat and moved out to the outer pier of the ferry terminal.',
 
     /** Ignores "patch" and sends the whole state back, as a regenerating tracker would. */
     fullState: (patch, state) => JSON.stringify(mergePatch(state, patch), null, 2),
@@ -107,11 +107,11 @@ export const badStateOutputs = {
     /** Wraps the patch in an array. */
     array: (patch) => JSON.stringify([patch]),
 
-    /** Invents a field. */
-    unknownField: (patch) => JSON.stringify({ ...patch, tension: 'rising' }),
+    /** Tracks the time of day anyway, which the schema leaves to the roleplay model. */
+    unknownField: (patch) => JSON.stringify({ ...patch, time: 'Late evening' }),
 
-    /** threads as one string, not a list. */
-    wrongType: (patch) => JSON.stringify({ ...patch, threads: 'Whether the last ferry will run tonight' }),
+    /** weather broken into parts, not one phrase. */
+    wrongType: (patch) => JSON.stringify({ ...patch, weather: { condition: 'Rain', temperature: 'Cold' } }),
 
     /** Writes a paragraph where a phrase goes. */
     overlong: (patch) => JSON.stringify({
@@ -124,17 +124,17 @@ export const badStateOutputs = {
         ...patch,
         characters: {
             ...patch.characters,
-            Bram: { mood: 'bored' },
-            Cora: { mood: 'curious' },
-            Dell: { mood: 'tired' },
-            Ines: { mood: 'wary' },
+            Bram: { outfit: 'Harbour uniform' },
+            Cora: { hair: 'Short and grey' },
+            Dell: {},
+            Ines: { outfit: 'Rain cape' },
         },
     }),
 
-    /** A per-character field the schema does not have (Risa's WTracker schema had one). */
+    /** A mood beside the meant change: the kind of field upstream WTracker tracked and the schema leaves out. */
     unknownSubKey: (patch) => JSON.stringify({
         ...patch,
-        characters: { ...patch.characters, Wren: { ...patch.characters?.Wren, posture: 'leaning on the rail' } },
+        characters: { ...patch.characters, Wren: { ...patch.characters?.Wren, mood: 'calmer' } },
     }),
 
     /** Title-cased keys, as a model mirroring the `Location:` labels would write them. */

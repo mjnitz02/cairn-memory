@@ -22,19 +22,17 @@ export const STORE_V2 = Object.freeze({
     }),
     state: Object.freeze({
         value: Object.freeze({
-            time: 'Evening',
             location: 'The ferry terminal, waiting room',
             weather: 'Drizzle outside; damp and cold indoors',
             characters: Object.freeze({
-                Aster: Object.freeze({ appearance: 'Oilskin coat, hair pinned up', mood: 'resigned' }),
-                Wren: Object.freeze({ appearance: 'Wool coat, collar up', condition: 'soaked through', mood: 'impatient', intent: 'find out when the ferry runs' }),
+                Aster: Object.freeze({ hair: 'Pinned up', outfit: 'Oilskin coat over a fisherman\'s jumper' }),
+                Wren: Object.freeze({ hair: 'Loose, damp from the rain', outfit: 'Wool coat over a grey jumper, jeans, boots' }),
             }),
-            threads: Object.freeze(['Whether the last ferry will run tonight']),
         }),
         read: 2,
         // ST's getStringHash of "Wren: <user mes>\nAster: <reply mes>", computed by hand.
         hash: 'h:0f32bd0454b13c',
-        changed: Object.freeze(['location', 'characters.mood']),
+        changed: Object.freeze(['location', 'characters.arrived']),
         prompt: 'h:2b7d0c19e4a655',
         at: '2026-09-16T12:00:05.000Z',
     }),

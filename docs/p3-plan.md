@@ -1,6 +1,6 @@
 # P3 plan — Cairn keeps the world state
 
-**Status: proposal, 2026-09-16.** Nothing here is built. As each part lands, its
+**Status: in progress, 2026-09-16.** Build steps 1–4 are built. As each part lands, its
 decisions move into `decisions.md` and its mechanism into `how-it-works.md`, and
 this page is deleted when P3 closes.
 
@@ -89,15 +89,16 @@ Shapes and sizes only. Read from `~/workspaces/cairn-corpus`, never written.
    - **Cost on D-0034's layout.** Held turns are at about 97% on a prompt of about
      17,000 tokens (15,666–17,762). The step turn breaks at the block's tail, above
      all of these, so it stays at about 67% whichever option is chosen. The figures
-     use corpus sizes: user message U ≈ 300 tokens, reply R ≈ 320, state S ≈ 240.
+     use corpus sizes: user message U ≈ 300 tokens, reply R ≈ 320, state S ≈ 80
+     (decision 4's typical two-character state).
 
      | Placement | Extra re-read per turn | Held turn | Cycle mean (4 held + 1 step) |
      |---|---|---|---|
      | Today, no state | — | ~97% | ~91% (D-0041) |
      | `IN_PROMPT` after the block | 0 if unchanged. A change re-reads from the block's tail, like a step | ~71–79%* | ~70–77% |
-     | `IN_CHAT` depth 2 (§6) | R + U + S ≈ 860 (5.1%) | ~92% | ~87% |
-     | **`IN_CHAT` depth 1 (recommended)** | U + S ≈ 540 (3.2%) | ~94% | ~88.5% |
-     | `IN_CHAT` depth 0 | S ≈ 240 (1.4%) | ~95.5% | ~90% |
+     | `IN_CHAT` depth 2 (§6) | R + U + S ≈ 700 (4.1%) | ~93% | ~87.5% |
+     | **`IN_CHAT` depth 1 (recommended)** | U + S ≈ 380 (2.2%) | ~95% | ~89% |
+     | `IN_CHAT` depth 0 | S ≈ 80 (0.5%) | ~96.5% | ~90.5% |
 
      \* The state changed in 7 of Esin's 8 exchanges and 36 of Elizabeth's 59.
    - **Why not depth 0.** It's the cheapest, but the state would sit below the
@@ -137,43 +138,59 @@ Shapes and sizes only. Read from `~/workspaces/cairn-corpus`, never written.
      at D-0037's median of 6.9 s per call. Matt's median gap between turns is 12
      minutes, and p10 is 2.2 minutes.
 
-4. **A fixed schema, capped by construction at about 600 tokens.** Typical is about
-   200 tokens.
+4. **WTrackerLite's fields, and nothing else: the hard facts a description gets
+   stuck on.** Capped by construction at about 330 tokens, and typically about 55.
 
    ```js
    {
-     time: string,        // ≤ 60 chars   in-story time of day, and date if given
-     location: string,    // ≤ 120        most specific place first
+     location: string,    // ≤ 120 chars  most specific place first
      weather: string,     // ≤ 80         or indoor conditions
      characters: {        // ≤ 5 entries, keyed by name (≤ 40), present characters only
        [name]: {
-         appearance: string, // ≤ 160     clothing and how they look now
-         condition: string,  // ≤ 80      physical: injuries, fatigue, dress state
-         mood: string,       // ≤ 60
-         intent: string,     // ≤ 100     what they are trying to do next
+         hair: string,    // ≤ 80         hairstyle and its condition
+         outfit: string,  // ≤ 120        the complete outfit, underwear included
        },
      },
-     threads: string[],   // ≤ 3 × 120    unresolved matters the scene carries
    }
    ```
-   - **Evidence.** All three of Matt's schemas track location, weather, who is
-     present, hair and outfit. Risa's adds time, makeup, state of dress, posture
-     and tone. `appearance` covers hair, outfit and makeup, `condition` covers state
-     of dress, and `mood` covers tone. The corpus peaks at 5 characters present.
-   - **The bound.** The worst case is about 3,100 rendered characters, labels included. At about 5.3
-     characters per token (the current block is 21,287 characters in 4,015 tokens),
-     that's about 590 tokens, inside §5's 300–600. Two characters with typical
-     values come to about 1,000 characters, close to Risa's JSON.
-   - **Left out of §5's list.** Relationship axes change slowly and are what P4's
-     canon exists for. The last significant shift is already what the newest scene
-     summary says. Posture changes with every message, and the raw messages carry it.
+   - **What the tier is for** (Matt, from hundreds of roleplays). A card's
+     description fixes facts like "wears a combat uniform". When the story changes
+     them, the change is easily lost, because summaries leave it out, and ten
+     messages later the character is "wiping sweat off their combat uniform" in
+     the gym. The state carries the latest hair and outfit forward until they
+     change again. Location and who is present cement that, and weather has never
+     caused trouble.
+   - **Why nothing more.** Mood, time of day and scenario are dynamic. The card's
+     Description and Personality already give a range of emotions the roleplay
+     model expects to evolve, and no decent model reads five messages of trauma and
+     writes a happy character. Extra fields gridlock the roleplay model. It
+     "narrates the dictated lane", keeps characters frozen in a recorded mood, and
+     won't move the time forward until the user does. The memory model would then
+     be steering the story instead of the roleplay model telling it with the user.
+     Upstream WTracker tracked all of that. Matt forked WTrackerLite from it to fix
+     its bugs and cut the fields down to these.
+   - **Revised 2026-09-16, before release.** The first draft had `time`, and per
+     character `appearance`, `condition`, `mood` and `intent`, plus `threads`. Part
+     of its case was Risa's upstream-WTracker schema, which is the evidence above
+     discounts. A new field needs a stuck-hard-fact case from play, not a
+     might-help one.
+   - **Caps from the corpus.** WTrackerLite-shaped trackers (Esin, Elizabeth) peak
+     at hair 60, outfit 109, location 81 and weather 69 characters. Only Risa's
+     verbose upstream schema goes past a cap (hair 99, outfit 138), and that is the
+     verbosity to avoid. The corpus peaks at 5 characters present.
+   - **The bound.** The worst case renders to 1,754 characters, labels included,
+     which is about 330 tokens at about 5.3 characters per token (the current block
+     is 21,287 characters in 4,015 tokens). Two characters with typical values come
+     to about 290 characters, about 55 tokens.
+   - **Who is present renders as its own line**, as WTrackerLite's template did, so
+     a character with nothing recorded yet still counts as there.
    - **The token bound sits outside the block's 35% cap** (D-0038). It's small and
      fixed, and `prompt_near_limit` still covers the whole prompt.
 
 5. **Diffs are JSON Merge Patch** (RFC 7386) against the current state. The parser
    rejects what can't be read and drops only the fields that break the schema.
    - **The format.** Changed fields get new values, `null` clears a field or removes
-     a character who left, `threads` is replaced whole, and `{}` means no change.
+     a character who left, and `{}` means no change.
      Characters are keyed by name, so a merge reaches the right one.
    - **Why a patch, not a full state.** Fields the reply leaves out keep their bytes,
      so rewording can't creep in. Elizabeth's regenerate-everything tracker reworded
@@ -256,10 +273,10 @@ message.extra.cairn = {
     v: 2,                       // STORE_VERSION
     scene: { … },               // unchanged (D-0037)
     state: {
-        value: { time, location, weather, characters: { … }, threads: [ … ] },
+        value: { location, weather, characters: { [name]: { hair, outfit } } },
         read: 2,                // messages this update read, ending at this one (hidden ones skipped)
         hash: 'h:…',            // hash of those messages as `name: mes`, in order
-        changed: ['location', 'characters.appearance'],  // kinds only, worked out by Cairn
+        changed: ['location', 'characters.outfit'],  // kinds only, worked out by Cairn
         prompt: 'h:…',          // hash of the built-in prompt that wrote it
         at: '2026-…Z',
     },
@@ -295,51 +312,35 @@ message.extra.cairn = {
 - `maxTokens` is 2,048, as for summaries.
 - Estimate: about 1,200 tokens in, 30–150 out.
 
-**Prompt draft** (`DESIGN.md` §12 structure: positive instructions, `IMPORTANT:`,
-examples, a tiebreaker). As built, `STATE_PROMPT` also gives each field's cap, taken
-from the schema, because a value over its cap is dropped:
+**Prompt** (`STATE_PROMPT` in `state-strategy.js` is the source; `DESIGN.md` §12
+structure: positive instructions, `IMPORTANT:`, an example, a tiebreaker). It
+opens by saying what the record is for, and it gives each field's cap, taken from
+the schema, because a value over its cap is dropped. Its instructions, with the
+caps filled in:
 
 ```
-You keep the current state of a roleplay scene. Below are the state as it stood
-and the messages that came after it. Reply with a JSON merge patch that brings the
-state up to the end of the messages.
+You keep a short record of the hard facts of a roleplay scene: where it is, who
+is in it, and what each character's hair and outfit are right now. Character
+descriptions often fix these, so the record carries forward whatever the story
+has since changed. […] Reply with a JSON merge patch that brings the record up to
+the end of the messages.
 
 IMPORTANT: Include only what the messages change. Leave every other field out of
 the patch, so its wording stays exactly as it is.
 
-Fields:
-- time: the in-story time of day, and the date if the story gives one
-- location: where the characters are, most specific place first
-- weather: weather and temperature, or the conditions indoors
-- characters: one entry per character present, keyed by name, each with
-  appearance (clothing and how they look now), condition (injuries, fatigue,
-  state of dress), mood (a few words), intent (what they are trying to do next)
-- threads: up to 3 unresolved matters the scene is carrying, one sentence each
+Fields, with the most characters each value may use:
+- location: where the scene is, most specific place first (120)
+- weather: weather and temperature, or the conditions indoors (80)
+- characters: the characters actually present in the scene, at most 5, keyed by name (40), each with:
+  - hair: hairstyle and its condition (80)
+  - outfit: the complete outfit, underwear included (120)
 
 Patch rules:
 - A changed field gets its new value. A field that no longer applies gets null.
-- A character who leaves gets null. A character who arrives gets every field.
-- threads is always the complete new list.
-- Values are short phrases, except threads.
+- A character who leaves the scene gets null. A character who arrives gets an
+  entry, with hair and outfit if the messages describe them.
+- Values are short, plain phrases stating what the messages say. […]
 - When nothing changed, reply {}.
-
-Example. State: {"location": "The ferry terminal, waiting room", "characters":
-{"Wren": {"mood": "impatient", ...}}}. Messages: Wren walks out to the pier and
-starts to calm down. Patch:
-{"location": "The ferry terminal, outer pier", "characters": {"Wren": {"mood": "calmer"}}}
-
-When unsure whether something changed, leave it out.
-
-Current state:
-{{state}}
-
-{{#if earlier}}Earlier events:
-{{earlier}}
-{{/if}}
-New messages:
-{{messages}}
-
-Reply with the JSON patch only.
 ```
 
 **Rendering into the prompt** (`src/memory/state-schema.js`, pure). Fixed field
@@ -351,8 +352,9 @@ omitted. The same state always renders to the same bytes.
 Time: …
 Location: …
 Weather: …
-Wren — appearance: …; condition: …; mood: …; intent: …
-Open threads: …; …
+Present: Aster, Wren
+Aster — hair: …; outfit: …
+Wren — hair: …; outfit: …
 ```
 
 ## 3. When it runs
@@ -454,9 +456,10 @@ failures, average time, and the last change's kinds.
 
 **`badStateOutputs`** (in `test/mocks/llm.js`): fenced JSON, a preamble and a sign-off,
 leaked `<think>`, cut-off JSON, a refusal, prose with no JSON, a full state instead of
-a patch, an array at the top, an unknown field, a wrong type, an over-long value, 6
-characters, an unknown character sub-key, capitalised keys, `{}`, and `null`
-removals.
+a patch, an array at the top, a `time` field anyway, a wrong type, an over-long
+value, 6 characters, a `mood` beside a character's change, capitalised keys, `{}`,
+and `null` removals. A model that tracks what the schema leaves out has those
+fields dropped and counted.
 
 **Mocks:** the `coreChat` shape (`script.js:4496-4530`), the swipe and continue
 paths in `saveReply` (`:6671-6701`), and `MESSAGE_EDITED` (`:8405`).
@@ -473,8 +476,8 @@ paths in `saveReply` (`:6671-6701`), and `MESSAGE_EDITED` (`:8405`).
 
 **Measure:**
 - **Held turns:** the break lands in `cairn_state`, and stability drops by about the
-  state's share of the prompt. On Esin that's about 1.5 points, because its user
-  messages are about 2 tokens. The real-chat figure (about 3 points, decision 1) is
+  state's share of the prompt. On Esin that's about 0.5 points, because its user
+  messages are about 2 tokens. The real-chat figure (about 2 points, decision 1) is
   predicted from corpus sizes. *Optional:* 3–4 turns on a chat with real user
   messages would confirm it. That's mechanics only, not a quality run.
 - **Step turns:** unchanged, still breaking at the block's tail (about 67%).
@@ -482,7 +485,7 @@ paths in `saveReply` (`:6671-6701`), and `MESSAGE_EDITED` (`:8405`).
   from the previous state.
 - **Calls:** one state call per reply, with 0 failures in normal play. Record
   `state_dropped_fields`.
-- **Size:** `state_tokens` never exceeds about 600. Record the median.
+- **Size:** `state_tokens` never exceeds about 330. Record the median.
 - **Timing:** the burst after each reply (state plus summaries), and how many turns
   overlap a request (`state_in_flight`, `summary_in_flight`).
 - **Rollback:** the swipe discards or ignores the old state, and the new swipe gets
@@ -516,7 +519,8 @@ a new swipe keeping `extra` (`:6671`), `syncMesToSwipe` / `syncSwipeToMes` (`:69
 - Editing, regenerating or deleting a state by hand. Showing the state under each
   message
 - An editable schema or prompt
-- Relationship axes, and promoting state changes to canon (P4)
+- Mood, time of day, intentions, open threads and relationship axes (decision 4)
+- Promoting state changes to canon (P4)
 - Reading WTracker or WTrackerLite data
 - Cascading invalidation after an edit to an old message
 - Group chats

@@ -23,7 +23,7 @@ describe('the v1 store fixture', () => {
     it('is upgraded to the current version by the next write, keeping its scene', () => {
         const message = storeV1Message();
         const chat = [message];
-        writeState(chat, 0, { value: { time: 'Dusk' }, read: 1, changed: ['time'], prompt: 'h:1', at: 'T' });
+        writeState(chat, 0, { value: { weather: 'Dusk, clearing' }, read: 1, changed: ['weather'], prompt: 'h:1', at: 'T' });
 
         expect(message.extra.cairn.v).toBe(STORE_VERSION);
         expect(message.extra.cairn.scene).toEqual(STORE_V1.scene);
@@ -309,7 +309,7 @@ describe('writing a state', () => {
         const refused = [
             [plainChat(2), 1, { value: null, read: 1, changed: [], prompt: 'h:1' }],
             [plainChat(2), 1, { value: {}, read: 3, changed: [], prompt: 'h:1' }],
-            [plainChat(2), 1, { value: {}, read: 1, changed: 'time', prompt: 'h:1' }],
+            [plainChat(2), 1, { value: {}, read: 1, changed: 'weather', prompt: 'h:1' }],
             [plainChat(2), 1, { value: {}, read: 1, changed: [], prompt: 5 }],
             [plainChat(2), 4, { value: {}, read: 1, changed: [], prompt: 'h:1' }],
         ];
@@ -334,10 +334,10 @@ describe('writing a state', () => {
 
     it('replaces the previous state on the same message and keeps the scene', () => {
         const chat = storeV2Chat();
-        writeState(chat, 1, { value: { time: 'Night' }, read: 1, changed: ['time'], prompt: 'h:1', at: 'T' });
+        writeState(chat, 1, { value: { weather: 'Night, clear' }, read: 1, changed: ['weather'], prompt: 'h:1', at: 'T' });
 
         expect(chat[1].extra.cairn.scene).toEqual(STORE_V2.scene);
-        expect(chat[1].extra.cairn.state.value).toEqual({ time: 'Night' });
+        expect(chat[1].extra.cairn.state.value).toEqual({ weather: 'Night, clear' });
         expect(readState(chat, 1).status).toBe('valid');
     });
 

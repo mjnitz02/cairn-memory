@@ -5,7 +5,6 @@ import {
     MAX_CHARACTERS,
     MAX_NAME_CHARS,
     MAX_STATE_CHARS,
-    MAX_THREAD_CHARS,
     STATE_HEADER,
     TEXT_FIELDS,
     applyPatch,
@@ -15,16 +14,14 @@ import {
 import { STORE_V2 } from './fixtures/store-v2.js';
 import { mulberry32 } from './helpers/random.js';
 
-/** Synthetic. Two characters with typical values: about Risa's JSON size (docs/p3-plan.md decision 4). */
+/** Synthetic. Two characters with typical values: about Esin's WTrackerLite JSON size (docs/p3-plan.md decision 4). */
 const TERMINAL = Object.freeze({
-    time: 'Evening',
     location: 'The ferry terminal, waiting room',
     weather: 'Drizzle outside; damp and cold indoors',
     characters: Object.freeze({
-        Aster: Object.freeze({ appearance: 'Oilskin coat, hair pinned up', mood: 'resigned' }),
-        Wren: Object.freeze({ appearance: 'Wool coat, collar up', mood: 'impatient', intent: 'find out when the ferry runs' }),
+        Aster: Object.freeze({ hair: 'Pinned up', outfit: 'Oilskin coat over a fisherman\'s jumper' }),
+        Wren: Object.freeze({ hair: 'Loose, damp from the rain', outfit: 'Wool coat over a grey jumper, jeans, boots' }),
     }),
-    threads: Object.freeze(['Whether the last ferry will run tonight']),
 });
 
 const x = (n) => 'x'.repeat(n);
@@ -38,10 +35,10 @@ function deepFreeze(value) {
 }
 
 describe('the schema', () => {
-    it('is the plan\'s fields and caps (docs/p3-plan.md decision 4)', () => {
-        expect(TEXT_FIELDS).toEqual({ time: 60, location: 120, weather: 80 });
-        expect(CHARACTER_FIELDS).toEqual({ appearance: 160, condition: 80, mood: 60, intent: 100 });
-        expect([MAX_CHARACTERS, MAX_NAME_CHARS, MAX_THREAD_CHARS]).toEqual([5, 40, 120]);
+    it('is WTrackerLite\'s fields, with the plan\'s caps (docs/p3-plan.md decision 4)', () => {
+        expect(TEXT_FIELDS).toEqual({ location: 120, weather: 80 });
+        expect(CHARACTER_FIELDS).toEqual({ hair: 80, outfit: 120 });
+        expect([MAX_CHARACTERS, MAX_NAME_CHARS]).toEqual([5, 40]);
     });
 
     it('accepts the v2 fixture\'s stored state', () => {
@@ -52,21 +49,20 @@ describe('the schema', () => {
     it('rejects what applyPatch never writes', () => {
         expect(validState({})).toBe(true);
         for (const bad of [
-            null, [], 'Evening',
-            { mood: 'calm' },
-            { time: '' },
-            { time: '   ' },
-            { time: 7 },
+            null, [], 'The pier',
+            { time: 'Evening' },
+            { threads: ['Whether the ferry runs'] },
+            { location: '' },
+            { location: '   ' },
+            { location: 7 },
             { location: x(121) },
             { characters: {} },
-            { characters: { Wren: { posture: 'seated' } } },
+            { characters: { Wren: { mood: 'calm' } } },
+            { characters: { Wren: { outfit: x(121) } } },
             { characters: { Wren: 'present' } },
             { characters: { 7: {} } },
             { characters: { [x(41)]: {} } },
             { characters: Object.fromEntries(['A', 'B', 'C', 'D', 'E', 'F'].map((name) => [name, {}])) },
-            { threads: [] },
-            { threads: ['a', 'b', 'c', 'd'] },
-            { threads: [x(121)] },
         ]) {
             expect(validState(bad), JSON.stringify(bad)).toBe(false);
         }
@@ -77,15 +73,15 @@ describe('applying a patch', () => {
     it('changes what the patch names and keeps every other field\'s bytes', () => {
         const { value, changed, dropped } = applyPatch(TERMINAL, {
             location: 'The ferry terminal, outer pier',
-            characters: { Wren: { mood: 'calmer' } },
+            characters: { Wren: { outfit: 'Grey jumper, jeans, boots' } },
         });
 
         expect(value).toEqual({
             ...TERMINAL,
             location: 'The ferry terminal, outer pier',
-            characters: { ...TERMINAL.characters, Wren: { ...TERMINAL.characters.Wren, mood: 'calmer' } },
+            characters: { ...TERMINAL.characters, Wren: { ...TERMINAL.characters.Wren, outfit: 'Grey jumper, jeans, boots' } },
         });
-        expect(changed).toEqual(['location', 'characters.mood']);
+        expect(changed).toEqual(['location', 'characters.outfit']);
         expect(dropped).toEqual([]);
     });
 
@@ -104,24 +100,24 @@ describe('applying a patch', () => {
         const { value, changed } = applyPatch({}, structuredClone(TERMINAL));
 
         expect(value).toEqual(TERMINAL);
-        expect(changed).toEqual(['time', 'location', 'weather', 'characters.arrived', 'threads']);
+        expect(changed).toEqual(['location', 'weather', 'characters.arrived']);
     });
 
     it('clears a field on null or a blank string, leaving it out rather than empty', () => {
-        const { value, changed } = applyPatch(TERMINAL, { weather: null, time: '  ', characters: { Aster: { mood: '' } } });
+        const { value, changed } = applyPatch(TERMINAL, { weather: null, location: '  ', characters: { Aster: { hair: '' } } });
 
         expect(value).not.toHaveProperty('weather');
-        expect(value).not.toHaveProperty('time');
-        expect(value.characters.Aster).toEqual({ appearance: 'Oilskin coat, hair pinned up' });
-        expect(changed).toEqual(['time', 'weather', 'characters.mood']);
+        expect(value).not.toHaveProperty('location');
+        expect(value.characters.Aster).toEqual({ outfit: TERMINAL.characters.Aster.outfit });
+        expect(changed).toEqual(['location', 'weather', 'characters.hair']);
         expect(validState(value)).toBe(true);
     });
 
     it('matches key names case-insensitively', () => {
-        const { value, dropped } = applyPatch(TERMINAL, { Location: 'The pier', CHARACTERS: { Wren: { Mood: 'calmer' } } });
+        const { value, dropped } = applyPatch(TERMINAL, { Location: 'The pier', CHARACTERS: { Wren: { Outfit: 'Grey jumper' } } });
 
         expect(value.location).toBe('The pier');
-        expect(value.characters.Wren.mood).toBe('calmer');
+        expect(value.characters.Wren.outfit).toBe('Grey jumper');
         expect(dropped).toEqual([]);
     });
 
@@ -134,16 +130,16 @@ describe('applying a patch', () => {
 
     describe('characters', () => {
         it('reaches a character by name whatever the case, keeping the stored spelling', () => {
-            const { value, changed } = applyPatch(TERMINAL, { characters: { wren: { mood: 'calmer' } } });
+            const { value, changed } = applyPatch(TERMINAL, { characters: { wren: { hair: 'Tied back' } } });
 
             expect(Object.keys(value.characters)).toEqual(['Aster', 'Wren']);
-            expect(value.characters.Wren.mood).toBe('calmer');
-            expect(changed).toEqual(['characters.mood']);
+            expect(value.characters.Wren.hair).toBe('Tied back');
+            expect(changed).toEqual(['characters.hair']);
         });
 
         it('appends a newcomer after everyone already present', () => {
             const { value, changed } = applyPatch(TERMINAL, {
-                characters: { Brannock: { appearance: 'Harbour uniform', intent: 'close the terminal' } },
+                characters: { Brannock: { hair: 'Cropped', outfit: 'Harbour uniform' } },
             });
 
             expect(Object.keys(value.characters)).toEqual(['Aster', 'Wren', 'Brannock']);
@@ -169,7 +165,7 @@ describe('applying a patch', () => {
 
         it('lets one leave and another arrive in the same patch at the cap', () => {
             const five = applyPatch({}, { characters: Object.fromEntries(['A', 'B', 'C', 'D', 'E'].map((n) => [`Crew ${n}`, {}])) }).value;
-            const { value, dropped } = applyPatch(five, { characters: { 'Crew F': { mood: 'wary' }, 'Crew A': null } });
+            const { value, dropped } = applyPatch(five, { characters: { 'Crew F': { outfit: 'Deck boots' }, 'Crew A': null } });
 
             expect(Object.keys(value.characters)).toEqual(['Crew B', 'Crew C', 'Crew D', 'Crew E', 'Crew F']);
             expect(dropped).toEqual([]);
@@ -180,18 +176,9 @@ describe('applying a patch', () => {
         });
     });
 
-    it('replaces threads whole, and clears them on [] or null', () => {
-        const replaced = applyPatch(TERMINAL, { threads: ['Who sent the letter', 'Whether the last ferry will run tonight'] });
-        expect(replaced.value.threads).toEqual(['Who sent the letter', 'Whether the last ferry will run tonight']);
-        expect(replaced.changed).toEqual(['threads']);
-
-        expect(applyPatch(TERMINAL, { threads: [] }).value).not.toHaveProperty('threads');
-        expect(applyPatch(TERMINAL, { threads: null }).value).not.toHaveProperty('threads');
-    });
-
     it('never mutates the current state or the patch, and shares no object with either', () => {
         const current = deepFreeze(structuredClone(TERMINAL));
-        const patch = deepFreeze({ characters: { Wren: { mood: 'calmer' }, Brannock: { mood: 'bored' } }, threads: ['A new matter'] });
+        const patch = deepFreeze({ characters: { Wren: { hair: 'Tied back' }, Brannock: { outfit: 'Harbour uniform' } } });
 
         const { value } = applyPatch(current, patch);
 
@@ -199,14 +186,13 @@ describe('applying a patch', () => {
         expect(value.characters).not.toBe(current.characters);
         expect(value.characters.Aster).not.toBe(current.characters.Aster);
         expect(value.characters.Brannock).not.toBe(patch.characters.Brannock);
-        expect(value.threads).not.toBe(patch.threads);
     });
 
     it('refuses a patch that is not an object and a current state that is not valid', () => {
         for (const patch of [null, [], 'no change', 3]) {
             expect(() => applyPatch(TERMINAL, patch)).toThrow(TypeError);
         }
-        expect(() => applyPatch({ time: x(61) }, {})).toThrow(TypeError);
+        expect(() => applyPatch({ location: x(121) }, {})).toThrow(TypeError);
         expect(() => applyPatch(undefined, {})).toThrow(TypeError);
     });
 });
@@ -214,23 +200,21 @@ describe('applying a patch', () => {
 describe('dropping what breaks the schema', () => {
     /** Each drops exactly one field; the location change beside it always applies. */
     const cases = [
-        ['an unknown key', { mood: 'tense' }, { field: 'unknown', reason: 'unknown-key' }],
-        ['a WTrackerLite field', { charactersPresent: ['Wren'] }, { field: 'unknown', reason: 'unknown-key' }],
-        ['a wrong type', { time: 1900 }, { field: 'time', reason: 'wrong-type' }],
+        ['a time of day, which the roleplay model keeps', { time: 'Late evening' }, { field: 'unknown', reason: 'unknown-key' }],
+        ['open threads, which the roleplay model keeps', { threads: ['Whether the ferry runs'] }, { field: 'unknown', reason: 'unknown-key' }],
+        ['WTrackerLite\'s list of who is present', { charactersPresent: ['Wren'] }, { field: 'unknown', reason: 'unknown-key' }],
+        ['a wrong type', { weather: { condition: 'Rain' } }, { field: 'weather', reason: 'wrong-type' }],
         ['a value over its cap', { weather: x(81) }, { field: 'weather', reason: 'too-long' }],
-        ['a character sub-field over its cap', { characters: { Wren: { mood: x(61) } } }, { field: 'characters.mood', reason: 'too-long' }],
-        ['an unknown character sub-key', { characters: { Wren: { posture: 'seated' } } }, { field: 'characters.unknown', reason: 'unknown-key' }],
+        ['a character sub-field over its cap', { characters: { Wren: { hair: x(81) } } }, { field: 'characters.hair', reason: 'too-long' }],
+        ['a mood, which the roleplay model keeps', { characters: { Wren: { mood: 'calmer' } } }, { field: 'characters.unknown', reason: 'unknown-key' }],
         ['a character that is not an object', { characters: { Wren: 'still here' } }, { field: 'characters', reason: 'wrong-type' }],
         ['characters as a list', { characters: ['Wren'] }, { field: 'characters', reason: 'wrong-type' }],
         ['a name over its cap', { characters: { [x(41)]: {} } }, { field: 'characters', reason: 'bad-name' }],
         ['a blank name', { characters: { ' ': {} } }, { field: 'characters', reason: 'bad-name' }],
         ['an integer-like name, which would enumerate out of order', { characters: { 7: {} } }, { field: 'characters', reason: 'bad-name' }],
-        ['__proto__ as a name', JSON.parse('{"characters": {"__proto__": {"mood": "sly"}}}'), { field: 'characters', reason: 'bad-name' }],
-        ['the same character twice', { characters: { Wren: { mood: 'calm' }, WREN: { mood: 'tense' } } }, { field: 'characters', reason: 'duplicate-key' }],
-        ['threads as a string', { threads: 'The letter' }, { field: 'threads', reason: 'wrong-type' }],
-        ['a blank thread', { threads: ['The letter', ''] }, { field: 'threads', reason: 'wrong-type' }],
-        ['a fourth thread', { threads: ['a', 'b', 'c', 'd'] }, { field: 'threads', reason: 'too-many' }],
-        ['a thread over its cap', { threads: [x(121)] }, { field: 'threads', reason: 'too-long' }],
+        ['__proto__ as a name', JSON.parse('{"characters": {"__proto__": {"hair": "Slicked back"}}}'), { field: 'characters', reason: 'bad-name' }],
+        ['the same character twice', { characters: { Wren: { hair: 'Tied back' }, WREN: { hair: 'Loose' } } }, { field: 'characters', reason: 'duplicate-key' }],
+        ['an outfit as a list of garments', { characters: { Wren: { outfit: ['Jumper', 'jeans'] } } }, { field: 'characters.outfit', reason: 'wrong-type' }],
     ];
 
     it.each(cases)('drops %s and applies the rest', (_label, bad, drop) => {
@@ -242,14 +226,14 @@ describe('dropping what breaks the schema', () => {
     });
 
     it('keeps the old value rather than clamping a new one', () => {
-        const { value } = applyPatch(TERMINAL, { location: x(121), characters: { Wren: { intent: x(101) } } });
+        const { value } = applyPatch(TERMINAL, { location: x(121), characters: { Wren: { outfit: x(121) } } });
 
         expect(value.location).toBe(TERMINAL.location);
-        expect(value.characters.Wren.intent).toBe(TERMINAL.characters.Wren.intent);
+        expect(value.characters.Wren.outfit).toBe(TERMINAL.characters.Wren.outfit);
     });
 
     it('takes a value exactly at its cap', () => {
-        const { value, dropped } = applyPatch({}, { time: x(60), characters: { [x(40)]: { appearance: x(160) } }, threads: [x(120), x(120), x(120)] });
+        const { value, dropped } = applyPatch({}, { location: x(120), characters: { [x(40)]: { hair: x(80), outfit: x(120) } } });
 
         expect(dropped).toEqual([]);
         expect(validState(value)).toBe(true);
@@ -257,18 +241,18 @@ describe('dropping what breaks the schema', () => {
 
     it('drops a sixth character and keeps the five', () => {
         const names = ['A', 'B', 'C', 'D', 'E', 'F'].map((n) => `Crew ${n}`);
-        const { value, dropped } = applyPatch({}, { characters: Object.fromEntries(names.map((name) => [name, { mood: 'wary' }])) });
+        const { value, dropped } = applyPatch({}, { characters: Object.fromEntries(names.map((name) => [name, { outfit: 'Deck boots' }])) });
 
         expect(Object.keys(value.characters)).toEqual(names.slice(0, 5));
         expect(dropped).toEqual([{ field: 'characters', reason: 'too-many' }]);
     });
 
     it('drops a bad sub-field and keeps the character\'s other changes', () => {
-        const { value, changed, dropped } = applyPatch(TERMINAL, { characters: { Wren: { mood: 'calmer', intent: 42 } } });
+        const { value, changed, dropped } = applyPatch(TERMINAL, { characters: { Wren: { outfit: 'Grey jumper', hair: 42 } } });
 
-        expect(value.characters.Wren).toEqual({ ...TERMINAL.characters.Wren, mood: 'calmer' });
-        expect(changed).toEqual(['characters.mood']);
-        expect(dropped).toEqual([{ field: 'characters.intent', reason: 'wrong-type' }]);
+        expect(value.characters.Wren).toEqual({ ...TERMINAL.characters.Wren, outfit: 'Grey jumper' });
+        expect(changed).toEqual(['characters.outfit']);
+        expect(dropped).toEqual([{ field: 'characters.hair', reason: 'wrong-type' }]);
     });
 });
 
@@ -276,22 +260,19 @@ describe('rendering', () => {
     it('renders the plan\'s format in fixed order (docs/p3-plan.md §2)', () => {
         expect(renderState(STORE_V2.state.value)).toBe([
             '[Current scene]',
-            'Time: Evening',
             'Location: The ferry terminal, waiting room',
             'Weather: Drizzle outside; damp and cold indoors',
-            'Aster — appearance: Oilskin coat, hair pinned up; mood: resigned',
-            'Wren — appearance: Wool coat, collar up; condition: soaked through; mood: impatient; intent: find out when the ferry runs',
-            'Open threads: Whether the last ferry will run tonight',
+            'Present: Aster, Wren',
+            'Aster — hair: Pinned up; outfit: Oilskin coat over a fisherman\'s jumper',
+            'Wren — hair: Loose, damp from the rain; outfit: Wool coat over a grey jumper, jeans, boots',
         ].join('\n'));
     });
 
     it('gives the same bytes for the same state, however it was built or stored', () => {
         const reordered = {
-            threads: [...TERMINAL.threads],
-            characters: { Aster: { mood: 'resigned', appearance: 'Oilskin coat, hair pinned up' }, Wren: { ...TERMINAL.characters.Wren } },
+            characters: { Aster: { outfit: TERMINAL.characters.Aster.outfit, hair: TERMINAL.characters.Aster.hair }, Wren: { ...TERMINAL.characters.Wren } },
             weather: TERMINAL.weather,
             location: TERMINAL.location,
-            time: TERMINAL.time,
         };
 
         expect(renderState(reordered)).toBe(renderState(TERMINAL));
@@ -299,16 +280,23 @@ describe('rendering', () => {
         expect(renderState(applyPatch({}, structuredClone(TERMINAL)).value)).toBe(renderState(TERMINAL));
     });
 
-    it('puts a newcomer on the last character line', () => {
-        const lines = renderState(applyPatch(TERMINAL, { characters: { Brannock: { mood: 'bored' } } }).value).split('\n');
+    it('appends a newcomer to who is present and puts their line last', () => {
+        const lines = renderState(applyPatch(TERMINAL, { characters: { Brannock: { outfit: 'Harbour uniform' } } }).value).split('\n');
 
-        expect(lines.at(-2)).toBe('Brannock — mood: bored');
+        expect(lines).toContain('Present: Aster, Wren, Brannock');
+        expect(lines.at(-1)).toBe('Brannock — outfit: Harbour uniform');
+    });
+
+    it('lists a character with nothing recorded as present, with no line of their own', () => {
+        const { value } = applyPatch({}, { characters: { Wren: {} } });
+
+        expect(renderState(value)).toBe(`${STATE_HEADER}\nPresent: Wren`);
     });
 
     it('collapses whitespace, so a value cannot open a line of its own', () => {
-        const { value } = applyPatch({}, { location: 'The pier\nTime: Midnight', characters: { Wren: {} } });
+        const { value } = applyPatch({}, { location: 'The pier\nPresent: Nobody', characters: { Wren: {} } });
 
-        expect(renderState(value)).toBe(`${STATE_HEADER}\nLocation: The pier Time: Midnight\nWren`);
+        expect(renderState(value)).toBe(`${STATE_HEADER}\nLocation: The pier Present: Nobody\nPresent: Wren`);
     });
 
     it('renders nothing for an empty or invalid state', () => {
@@ -319,14 +307,14 @@ describe('rendering', () => {
 });
 
 describe('the bound', () => {
-    it('is about 3,100 characters, the widest state (docs/p3-plan.md decision 4)', () => {
-        expect(MAX_STATE_CHARS).toBe(3117);
+    it('is about 1,750 characters, the widest state (docs/p3-plan.md decision 4)', () => {
+        expect(MAX_STATE_CHARS).toBe(1754);
     });
 
     it('is reached exactly by a state with every field full', () => {
         const names = ['A', 'B', 'C', 'D', 'E'].map((letter) => letter.repeat(MAX_NAME_CHARS));
         const full = (caps) => Object.fromEntries(Object.entries(caps).map(([field, cap]) => [field, x(cap)]));
-        const patch = { ...full(TEXT_FIELDS), characters: Object.fromEntries(names.map((name) => [name, full(CHARACTER_FIELDS)])), threads: [x(120), x(120), x(120)] };
+        const patch = { ...full(TEXT_FIELDS), characters: Object.fromEntries(names.map((name) => [name, full(CHARACTER_FIELDS)])) };
 
         expect(renderState(applyPatch({}, patch).value)).toHaveLength(MAX_STATE_CHARS);
     });
@@ -342,7 +330,7 @@ describe('the bound', () => {
             const pick = (items) => items[Math.floor(random() * items.length)];
             const text = (cap) => pick([
                 null, '', '  ', 42, ['a list'], { an: 'object' },
-                'a\nb', x(cap - 1), x(cap), x(cap + 1), `${pick(['calm', 'wet', 'hurt'])} ${Math.floor(random() * 3)}`,
+                'a\nb', x(cap - 1), x(cap), x(cap + 1), `${pick(['wet', 'torn', 'pinned'])} ${Math.floor(random() * 3)}`,
             ]);
             const names = ['Wren', 'wren', 'Aster', 'Brannock', 'Crew A', 'Crew B', 'Crew C', 'Crew D', '7', '__proto__', x(41), ' '];
             const key = (name) => pick([name, name.toUpperCase(), name[0].toUpperCase() + name.slice(1)]);
@@ -357,14 +345,14 @@ describe('the bound', () => {
                     const characters = {};
                     for (let n = Math.floor(random() * 7); n > 0; n--) {
                         const entry = pick([null, 'present', {}, Object.fromEntries(
-                            [...Object.keys(CHARACTER_FIELDS), 'posture'].filter(() => random() < 0.5)
+                            [...Object.keys(CHARACTER_FIELDS), 'mood'].filter(() => random() < 0.5)
                                 .map((field) => [key(field), text(CHARACTER_FIELDS[field] ?? 20)]),
                         )]);
                         characters[pick(names)] = entry;
                     }
                     patch.characters = random() < 0.1 ? pick([null, ['Wren']]) : characters;
                 }
-                if (random() < 0.3) patch.threads = pick([null, [], 'one', [text(120)], [x(120), x(120), x(120)], ['a', 'b', 'c', 'd']]);
+                if (random() < 0.1) patch.time = text(60);
                 if (random() < 0.1) patch.charactersPresent = ['Wren'];
 
                 const before = deepFreeze(state);

@@ -87,6 +87,48 @@ export function makeChat(turns = 6) {
     return chat;
 }
 
+/**
+ * The generate interceptor's `chat` (public/script.js:4496-4527): hidden and system
+ * messages filtered out, the last popped on a swipe, each entry a fresh object that
+ * shares `extra` with the live message. Regex scripts and attachments are not
+ * modelled, so `mes` comes through unchanged.
+ */
+export function makeCoreChat(chat, { type = 'normal' } = {}) {
+    const core = chat.filter((message) => !message.is_system);
+    if (type === 'swipe') core.pop();
+    return core.map((message, index) => ({ ...message, index }));
+}
+
+/**
+ * A new swipe on a reply. The current swipe is saved first, `extra` cloned into its
+ * `swipe_info` (public/script.js:10340 → :6932-6939). The new reply then replaces
+ * `mes` and keeps the same `extra` object (:6671-6684).
+ */
+export function newSwipe(message, mes) {
+    saveSwipe(message);
+    message.swipes.push(mes);
+    message.swipe_id = message.swipes.length - 1;
+    message.mes = mes;
+    saveSwipe(message);
+}
+
+/**
+ * Swiping to an existing swipe: the current one is saved (:10340), then `mes` and a
+ * clone of that swipe's saved `extra` replace the message's own (:7012-7015).
+ */
+export function swipeTo(message, swipeId) {
+    saveSwipe(message);
+    message.swipe_id = swipeId;
+    message.mes = message.swipes[swipeId];
+    message.extra = structuredClone(message.swipe_info[swipeId]?.extra) ?? {};
+}
+
+function saveSwipe(message) {
+    message.swipe_info ??= [];
+    message.swipes[message.swipe_id] = message.mes;
+    message.swipe_info[message.swipe_id] = { send_date: message.send_date, extra: structuredClone(message.extra) };
+}
+
 /** Minimal eventSource: registration plus await-all emit, as ST's does. */
 function makeEventSource() {
     const handlers = new Map();

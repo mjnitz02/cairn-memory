@@ -91,6 +91,10 @@ literally against the cited line.
 | `let coreChat = chat.filter` | The interceptor's array is **filtered**, so its indexes are not the chat's | `public/script.js` | 4496 |
 | `...chatItem,` | Its entries are fresh objects that **share `extra` by reference** with the real chat | `public/script.js` | 4525 |
 | `index,` | The index they carry counts the *filtered* array — never use it as a chat index | `public/script.js` | 4527 |
+| `coreChat.pop();` | A swipe drops the reply being replaced, so the state used is the one before it | `public/script.js` | 4498 |
+| `lastMessage.mes = getMessage;` | A new swipe replaces `mes` and keeps `extra`, so the state on it goes stale by its hash | `public/script.js` | 6676 |
+| `targetMessage.extra = structuredClone(targetSwipeInfo?.extra) ?? {};` | Swiping back restores that swipe's `extra`, state included, as a new object | `public/script.js` | 7015 |
+| `if (typeof globalThis[interceptorKey] === 'function') {` | An extension's interceptor is called by its manifest name, so a defined one means WTracker or WTrackerLite is running | `public/scripts/extensions.js` | 2035 |
 | `message.is_system = hide;` | Hiding a message sets `is_system`, so `summarisable()` skips hidden messages | `public/scripts/chats.js` | 157 |
 | `structuredClone(chat.slice(0, Number(mesId) + 1))` | A branch copies the messages it keeps, `extra` and all, so their scenes go with them | `public/scripts/bookmarks.js` | 173 |
 | `ConnectionManagerRequestService` | Profile-routed summary calls | `public/scripts/st-context.js` | 294 |
@@ -178,3 +182,8 @@ its repository clones into. Its `auto_summarize` (default on, `index.js:116`, re
 through `?? default_settings[key]` at `:655`) and `exclude_messages_after_threshold`
 (default on, `:136`) are read only while it is loaded. A disabled or uninstalled
 Qvink leaves both in the settings, and Cairn ignores them.
+
+WTrackerLite and upstream WTracker are looked for under `third-party/SillyTavern-WTrackerLite`
+and `third-party/SillyTavern-WTracker`, and by the interceptors their manifests name,
+`wtrackerliteGenerateInterceptor` and `wtrackerGenerateInterceptor`. Cairn reads nothing else
+from either, and no settings, since those outlive the extension.
