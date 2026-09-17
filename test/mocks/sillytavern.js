@@ -187,7 +187,10 @@ export function createContext({
             WORLD_INFO_ACTIVATED: 'world_info_activated',
             WORLDINFO_FORCE_ACTIVATE: 'worldinfo_force_activate',
             WORLDINFO_UPDATED: 'worldinfo_updated',
+            /** public/scripts/events.js:8-10 */
+            MESSAGE_SENT: 'message_sent',
             MESSAGE_RECEIVED: 'message_received',
+            MESSAGE_EDITED: 'message_edited',
             CHAT_CHANGED: 'chat_id_changed',
         },
 
@@ -277,6 +280,46 @@ export function createContext({
 export async function receiveMessage(context, message, type = 'normal') {
     context.chat.push(message);
     await context.eventSource.emit(context.eventTypes.MESSAGE_RECEIVED, context.chat.length - 1, type);
+}
+
+/**
+ * The user sending a message: ST pushes it, saves, then emits its index
+ * (public/script.js:5914-5917) before it is rendered.
+ */
+export async function sendMessage(context, message) {
+    context.chat.push(message);
+    await context.eventSource.emit(context.eventTypes.MESSAGE_SENT, context.chat.length - 1);
+}
+
+/**
+ * A new swipe on the last reply, generated: the reply replaces `mes` and keeps
+ * `extra` (public/script.js:6671-6684), then MESSAGE_RECEIVED fires with type
+ * `swipe` (:6691).
+ */
+export async function swipeReply(context, mes) {
+    newSwipe(context.chat.at(-1), mes);
+    await context.eventSource.emit(context.eventTypes.MESSAGE_RECEIVED, context.chat.length - 1, 'swipe');
+}
+
+/**
+ * A continue: the new text is appended to the last message's `mes` (public/script.js:6701),
+ * then MESSAGE_RECEIVED fires with type `continue` (:6716).
+ */
+export async function continueReply(context, text) {
+    context.chat.at(-1).mes += text;
+    await context.eventSource.emit(context.eventTypes.MESSAGE_RECEIVED, context.chat.length - 1, 'continue');
+}
+
+/**
+ * An edit through the message editor: `updateMessage` writes the new text to `mes`
+ * and to the current swipe (public/script.js:8178-8182), then `messageEditDone`
+ * emits the index and awaits every listener before re-rendering (:8405).
+ */
+export async function editMessage(context, index, mes) {
+    const message = context.chat[index];
+    message.mes = mes;
+    if (message.swipe_id !== undefined) message.swipes[message.swipe_id] = mes;
+    await context.eventSource.emit(context.eventTypes.MESSAGE_EDITED, index);
 }
 
 /**

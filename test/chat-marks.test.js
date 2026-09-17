@@ -91,7 +91,7 @@ describe('following a summarizer run', () => {
         });
         const seen = [];
         const summarizer = createSummarizer(() => context, {
-            settings: () => ({ memoryProfileId: MEMORY.id }),
+            settings: () => ({ memoryProfileId: MEMORY.id, worldState: false }),
             onUpdate: () => seen.push(states(markMessages(context.chat, summarizer.status))),
         });
         return { context, summarizer, seen };

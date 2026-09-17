@@ -38,7 +38,7 @@ literally against the cited line.
 | `GENERATE_AFTER_COMBINE_PROMPTS` | Text-completion prompt, read-only in P0 | `public/script.js` | 5243 |
 | `CHAT_COMPLETION_PROMPT_READY` | Chat-completion prompt, read-only in P0 | `public/scripts/openai.js` | 1619 |
 | `WORLD_INFO_ACTIVATED` | Observe which WI entries fired | `public/scripts/world-info.js` | 902 |
-| `CHAT_CHANGED` | Drop the stability baseline on a new chat; abandon a summary request for the chat being left | `public/scripts/events.js` | 19 |
+| `CHAT_CHANGED` | Drop the stability baseline on a new chat; abandon a memory request for the chat being left | `public/scripts/events.js` | 19 |
 | `GENERATE_AFTER_COMBINE_PROMPTS` | Event name | `public/scripts/events.js` | 57 |
 | `WORLD_INFO_ACTIVATED` | Event name | `public/scripts/events.js` | 62 |
 | `CHAT_COMPLETION_PROMPT_READY` | Event name | `public/scripts/events.js` | 65 |
@@ -110,6 +110,11 @@ literally against the cited line.
 | `MESSAGE_RECEIVED` | Event name; the summarizer's trigger | `public/scripts/events.js` | 9 |
 | `event_types.MESSAGE_RECEIVED, chat_id, type` | Emitted for a new reply with its chat index, **before** the reply is rendered | `public/script.js` | 6781 |
 | `event_types.MESSAGE_RECEIVED, this.messageId, this.type` | ...and for a streamed one | `public/script.js` | 3799 |
+| `!fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);` | ...and for a generated swipe, so the state that read the replaced reply is redone | `public/script.js` | 6691 |
+| `!fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);` | ...and for a continue, whose text is appended to the reply first (:6701) | `public/script.js` | 6716 |
+| `MESSAGE_EDITED` | Event name; a trigger, so an edited message's summary and state are redone without waiting for a reply | `public/scripts/events.js` | 10 |
+| `mes.mes = text;` | `updateMessage` writes the edit to the message... | `public/script.js` | 8178 |
+| `await eventSource.emit(event_types.MESSAGE_EDITED, this_edit_mes_id);` | ...before the event, which is awaited before the message is re-rendered | `public/script.js` | 8405 |
 | `await listeners[i].apply(this, args);` | ST awaits every listener in turn, so the summarizer starts its work and returns | `public/lib/eventemitter.js` | 146 |
 | `chat.splice(0, chat.length, ...data);` | Opening or reloading a chat refills the same array with **new** message objects, so a late reply's message is no longer in it | `public/script.js` | 7658 |
 | `await reloadCurrentChat();` | A rename reloads the chat too | `public/script.js` | 10713 |

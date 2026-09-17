@@ -193,7 +193,7 @@ function summaryFields(status) {
 
     return {
         summary_reported: true,
-        // Why Cairn is or is not summarising (src/pipeline/summarizer.js).
+        // Why Cairn is or is not summarising (src/pipeline/gates.js).
         summary_gate: status.gate ?? null,
         // A request was out while this prompt was built: the overlap docs/decisions.md D-0041 counts.
         summary_in_flight: status.inFlight != null,

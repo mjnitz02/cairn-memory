@@ -147,8 +147,8 @@ turn on, the block only changes at its end until it outgrows the limit again.
 
 ## Writing summaries
 
-After each reply, Cairn summarises the messages waiting for a summary, one
-request at a time, oldest first, through the **Memory connection** profile. Each
+After each reply, and as soon as you edit a message, Cairn summarises the
+messages waiting for a summary, one request at a time, oldest first, through the **Memory connection** profile. Each
 request carries the message and the five summaries before it. A reply that
 arrives after you have switched or reloaded the chat, edited the message or
 deleted it is thrown away. The request is cancelled when the chat changes.

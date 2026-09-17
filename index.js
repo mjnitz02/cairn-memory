@@ -42,9 +42,8 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
         injector.setHoldEnabled(settings.holdWorldInfo);
         globalThis.cairn_intercept = injector.intercept;
 
-        // Writes Cairn's own summaries after each reply. It gates itself on a memory
-        // profile and a quiet qvink (src/pipeline/summarizer.js), so only `enabled`
-        // starts and stops it here.
+        // Writes Cairn's own summaries and world state after each reply. Each kind gates
+        // itself (src/pipeline/gates.js), so only `enabled` starts and stops it here.
         let inspector;
         const summarizer = createSummarizer(getContext, {
             settings: () => settings,

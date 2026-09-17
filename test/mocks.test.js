@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-    createContext, extension_prompt_types, makeChat, makeCoreChat, makeMessage, newSwipe, openChat, receiveMessage, swipeTo, world_info_position,
+    continueReply, createContext, editMessage, extension_prompt_types, makeChat, makeCoreChat, makeMessage, newSwipe, openChat,
+    receiveMessage, sendMessage, swipeReply, swipeTo, world_info_position,
 } from './mocks/sillytavern.js';
 import { badOutputs, badStateOutputs, createRequestService, deferred } from './mocks/llm.js';
 
@@ -94,6 +95,30 @@ describe('SillyTavern mock', () => {
         await receiveMessage(context, makeMessage({ mes: 'reply' }));
 
         expect(seen).toEqual([{ index: 4, type: 'normal', present: true }]);
+    });
+
+    it('emits each chat event with the text already changed, and the swipe or continue type (:5917, :6691, :6716, :8405)', async () => {
+        const context = createContext({ chat: makeChat(4) });
+        const seen = [];
+        const { MESSAGE_SENT, MESSAGE_RECEIVED, MESSAGE_EDITED } = context.eventTypes;
+        for (const event of [MESSAGE_SENT, MESSAGE_RECEIVED, MESSAGE_EDITED]) {
+            context.eventSource.on(event, (index, type) => seen.push([event, index, type, context.chat[index].mes]));
+        }
+        const extra = context.chat[3].extra;
+
+        await swipeReply(context, 'Another answer.');
+        await continueReply(context, ' And more.');
+        await editMessage(context, 1, 'Aster, edited.');
+        await sendMessage(context, makeMessage({ name: 'Wren', isUser: true, mes: 'Wren again.' }));
+
+        expect(seen).toEqual([
+            ['message_received', 3, 'swipe', 'Another answer.'],
+            ['message_received', 3, 'continue', 'Another answer. And more.'],
+            ['message_edited', 1, undefined, 'Aster, edited.'],
+            ['message_sent', 4, undefined, 'Wren again.'],
+        ]);
+        expect(context.chat[3].extra).toBe(extra);
+        expect(context.chat[1].swipes[0]).toBe('Aster, edited.');
     });
 
     it('opens a chat by refilling the same array, as getChat does', async () => {

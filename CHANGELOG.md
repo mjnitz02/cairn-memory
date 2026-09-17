@@ -11,8 +11,8 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ### Added
 
-- Cairn writes its own summaries. After each reply it summarises the messages
-  waiting for one, one request at a time, through the **Memory connection**
+- Cairn writes its own summaries. After each reply, and as soon as you edit a
+  message, it summarises the messages waiting for one, one request at a time, through the **Memory connection**
   profile, and stores each summary on its message in `message.extra.cairn`. It
   starts after the newest summary your existing extension wrote, and waits while
   Qvink Memory is enabled with Auto Summarize on. A failed summary writes nothing and warns

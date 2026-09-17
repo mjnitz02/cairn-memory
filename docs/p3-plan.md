@@ -1,6 +1,6 @@
 # P3 plan — Cairn keeps the world state
 
-**Status: in progress, 2026-09-16.** Build steps 1–4 are built. As each part lands, its
+**Status: in progress, 2026-09-16.** Build steps 1–5 are built. As each part lands, its
 decisions move into `decisions.md` and its mechanism into `how-it-works.md`, and
 this page is deleted when P3 closes.
 
@@ -349,7 +349,6 @@ omitted. The same state always renders to the same bytes.
 
 ```
 [Current scene]
-Time: …
 Location: …
 Weather: …
 Present: Aster, Wren
@@ -364,7 +363,7 @@ kind of job, not a second queue.
 
 - **Triggers:** `MESSAGE_RECEIVED` (`script.js:6781`, `:3799`, and `:6691` for a
   swipe) and `CHAT_CHANGED`, as now. `MESSAGE_EDITED` is new (`script.js:8405`):
-  `updateMessage` has already written the new `mes` (`:8139`). So an edit no longer
+  `updateMessage` has already written the new `mes` (`:8178`). So an edit no longer
   waits for the next reply, for summaries too. Still nothing on `MESSAGE_SENT`.
 - **Order in a run:** the state job first, then summaries oldest first, one request
   at a time. The state goes into the very next prompt. A summary is needed only when
@@ -372,6 +371,10 @@ kind of job, not a second queue.
 - **The state job:** when the newest valid state isn't on the newest non-hidden
   message, read everything after it, up to 6 messages (§2). There's at most one
   state job per run. If a reply lands during the run, `again` picks it up, as now.
+- **A state job never ends the run.** Written, failed or discarded, the summaries
+  still run after it. A summary failure still ends the run. *Why:* a state prompt
+  the memory model keeps failing would otherwise starve the summaries, and the
+  step would hold forever. *Cost:* an outage costs two requests per reply, not one.
 - **Gate:** summaries' gate (profile, Connection Manager, group chat, no chat), plus
   the World state setting and decision 8's check. The qvink gate stays with
   summaries alone.
@@ -407,9 +410,10 @@ kind of job, not a second queue.
 
 - **A failure writes nothing** (CLAUDE.md §4.17), and the previous valid state stays
   in the prompt at its own depth. The streak and give-up count are separate for
-  each kind. A failed state job toasts once per streak. After 3 failures on the
-  same read range, the state tier gives up on it for the session, and the panel
-  says so. The state then only goes stale, and at the step it drops out (§4).
+  each kind (`pipeline/tally.js`). A failed state job toasts once per streak. After
+  3 failures on the same read range, the state tier gives up on it for the session,
+  and the panel says so. A new message or an edit changes the range, so it tries
+  again then. The state then only goes stale, and at the step it drops out (§4).
 - **Rollback needs no code.** Deletion, branching, swipes and edits all come down
   to "the newest valid state wins" (decisions 2 and 7). Nothing lives in
   `chatMetadata`.
@@ -503,7 +507,9 @@ paths in `saveReply` (`:6671-6701`), and `MESSAGE_EDITED` (`:8405`).
    the WTracker check.
 5. The queue: a state job ahead of summaries, per-kind stats and streaks, the
    `MESSAGE_EDITED` trigger. Split `summarizer.js` if it goes past the ~400-line
-   ceiling.
+   ceiling. *Built:* the gates moved to `pipeline/gates.js` and the per-kind counts to
+   `pipeline/tally.js`. World state is read as on unless set to `false`, and step 6
+   adds the setting.
 6. The injector's `cairn_state` placement, the step clamp and release. Then the log,
    panel and World state setting.
 7. The run (§8), decision entries, `DESIGN.md` §5–6 (depth 1, the schema),
