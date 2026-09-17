@@ -43,13 +43,13 @@ secrets: ## Scan history for leaked secrets (needs gitleaks on PATH)
 	}
 	gitleaks detect --config .gitleaks.toml --redact --no-banner -v
 
-verify-st: ## Re-check .claude/docs/st-api-surface.md against a local SillyTavern checkout
+verify-st: ## Re-check docs/st-api-surface.md against a local SillyTavern checkout
 	ST_PATH=$(ST_PATH) npm run verify-st
 
-verify-rules: ## Check every rule, docs page and decision reference still resolves (local only)
+verify-rules: ## Check every rule, docs page and decision reference still resolves
 	npm run verify-rules
 
-check: lint version-check verify-rules test secrets verify-st ## Full local gate (CI skips verify-st and verify-rules)
+check: lint version-check verify-rules test secrets verify-st ## Full local gate (CI runs all but verify-st)
 
 clean: ## Remove installed dependencies and coverage output
 	rm -rf node_modules coverage
