@@ -69,6 +69,46 @@ export function makeMessage({ name = 'Aster', isUser = false, mes = '', extra = 
 }
 
 /**
+ * What `getCharacterCardFields()` returns (public/script.js:3476-3493). Every
+ * field is present and a string, as ST's is; `version`, `creatorNotes`,
+ * `firstMessage` and `alternateGreetings` are on it too and never reach the
+ * story string (`storyStringParams`, :4703-4718).
+ *
+ * Content is invented — no real cards, ever (CLAUDE.md §3.13).
+ */
+export function makeCardFields(overrides = {}) {
+    return {
+        system: '',
+        mesExamples: '',
+        description: '',
+        personality: '',
+        persona: '',
+        scenario: '',
+        jailbreak: '',
+        version: '1.0',
+        charDepthPrompt: '',
+        creatorNotes: '',
+        firstMessage: '',
+        alternateGreetings: [],
+        ...overrides,
+    };
+}
+
+/**
+ * The slice of `power_user` the prompt's system-prompt choice reads
+ * (public/scripts/power-user.js:203, :267-272; the choice at
+ * public/script.js:4686-4696). Exposed as `powerUserSettings`
+ * (public/scripts/st-context.js:229).
+ */
+export function makePowerUser(overrides = {}) {
+    return {
+        prefer_character_prompt: true,
+        sysprompt: { enabled: true, name: 'Neutral - Chat', content: '', post_history: '' },
+        ...overrides,
+    };
+}
+
+/**
  * A synthetic chat. Names and content are invented — no real logs, ever
  * (CLAUDE.md §3.13).
  */
@@ -229,6 +269,8 @@ export function createContext({
     selectedProfile = null,
     requestService = null,
     extensions = [],
+    cardFields = makeCardFields(),
+    powerUser = makePowerUser(),
 } = {}) {
     const extensionPrompts = {};
     const context = {
@@ -318,6 +360,12 @@ export function createContext({
 
         /** public/scripts/st-context.js:302 — the ignore flag's home. */
         symbols: { ignore: Symbol.for('ignore') },
+
+        /** public/scripts/st-context.js:232 — the card as the story string gets it. */
+        getCharacterCardFields: () => cardFields,
+
+        /** public/scripts/st-context.js:229 — `power_user` itself, not a copy. */
+        powerUserSettings: powerUser,
 
         saveSettingsDebounced: () => { context.saved.settings++; },
         saveMetadataDebounced: () => { context.saved.metadata++; },

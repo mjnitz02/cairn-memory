@@ -77,8 +77,22 @@ literally against the cited line.
 | `runGenerationInterceptors` | Our push runs here... | `public/script.js` | 4564 |
 | `getWorldInfoPrompt` | ...which is before the scan reads it | `public/script.js` | 4635 |
 | `if (!dryRun) {` | Dry runs skip interceptors, so they cannot pollute the held set | `public/script.js` | 4562 |
-| `getMaxPromptTokens` | What the memory cap is 35% of — context window minus the reserved response | `public/script.js` | 5981 |
+| `getMaxPromptTokens` | What the memory cap is a share of — context window minus the reserved response | `public/script.js` | 5981 |
 | `if (tokenCount < this_max_context) {` | Text completion stops adding history at the limit, so a prompt that dropped messages ends just under it — the near-limit flag | `public/script.js` | 4920 |
+| `if (tokenCount < this_max_context) {` | ...then fits unpinned example messages into what is left, so a full prompt loses the card's examples before anything of ours | `public/script.js` | 4964 |
+| `let this_max_context = getMaxPromptTokens();` | The same number ST works its own World Info budget out from | `public/script.js` | 4560 |
+| `getCharacterCardFields,` | The card fields, for the card reserve | `public/scripts/st-context.js` | 232 |
+| `export function getCharacterCardFields` | What it returns: `description`, `personality`, `scenario`, `persona`, `mesExamples`, `jailbreak`, `charDepthPrompt` and more | `public/script.js` | 3476 |
+| `const storyStringParams = {` | Which of those fields actually reach the prompt | `public/script.js` | 4703 |
+| `powerUserSettings: power_user,` | `sysprompt.enabled`, `sysprompt.content` and `prefer_character_prompt`, for the system prompt | `public/scripts/st-context.js` | 229 |
+| `system = power_user.prefer_character_prompt && system` | The system prompt ST uses: the character's own, else the instruct one, else nothing | `public/script.js` | 4689 |
+| `export async function getSortedEntries` | Every lorebook entry ST scans — global, character, chat and persona | `public/scripts/world-info.js` | 4590 |
+| `await eventSource.emit(event_types.WORLDINFO_ENTRIES_LOADED` | Calling it emits this, so our call fires it a second time per generation | `public/scripts/world-info.js` | 4604 |
+| `export let world_info_budget = 25;` | The World Info budget, as a percentage of the max prompt | `public/scripts/world-info.js` | 73 |
+| `export let world_info_budget_cap = 0;` | An absolute cap on it, when set | `public/scripts/world-info.js` | 81 |
+| `let budget = Math.round(world_info_budget * maxContext / 100)` | How the budget is worked out, and never zero | `public/scripts/world-info.js` | 4736 |
+| `if (!entry.ignoreBudget && (textToScanTokens` | ST stops adding entries at the budget, so lore cannot pass it | `public/scripts/world-info.js` | 5061 |
+| `ignoreBudget: entry.extensions?.ignore_budget ?? false,` | ...except an entry marked to ignore it, which is added on top | `public/scripts/world-info.js` | 5669 |
 | `src="script.js"` | The URL ST loads it under, so `/script.js` is the same module however deeply we are installed | `public/index.html` | 8218 |
 | `setExtensionPrompt` | Park the memory block | `public/scripts/st-context.js` | 153 |
 | `setExtensionPrompt` | Signature: `(key, value, position, depth, scan, role, filter)` | `public/script.js` | 8926 |

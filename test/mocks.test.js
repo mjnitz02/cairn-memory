@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
     assembleTextPrompt, continueReply, createContext, getExtensionPrompt, editMessage, extension_prompt_types, makeChat, makeCoreChat, makeMessage, newSwipe, openChat,
-    receiveMessage, sendMessage, swipeReply, swipeTo, world_info_position,
+    makePowerUser, receiveMessage, sendMessage, swipeReply, swipeTo, world_info_position,
 } from './mocks/sillytavern.js';
+import { makeBook, makeWorldInfoModule } from './mocks/world-info.js';
 import { badOutputs, badStateOutputs, createRequestService, deferred } from './mocks/llm.js';
 
 /**
@@ -252,5 +253,47 @@ describe('memory-model mock', () => {
         expect(Object.keys(JSON.parse(badStateOutputs.capitalisedKeys(patch)))).toEqual(['Location', 'Characters']);
         expect(Object.keys(JSON.parse(badStateOutputs.sixCharacters(patch)).characters)).toHaveLength(5);
         expect(badStateOutputs.overlong(patch).length).toBeGreaterThan(160);
+    });
+});
+
+/**
+ * The shapes the memory cap's reserves read (docs/decisions.md D-0052). A card
+ * mock missing a field, or a budget mock that snapshots instead of binding, would
+ * make a reserve that reads nothing look correct.
+ */
+describe('card and World Info mocks', () => {
+    it('gives the card every field getCharacterCardFields returns (public/script.js:3476-3493)', () => {
+        const fields = createContext().getCharacterCardFields();
+
+        for (const name of [
+            'system', 'mesExamples', 'description', 'personality', 'persona', 'scenario',
+            'jailbreak', 'version', 'charDepthPrompt', 'creatorNotes', 'firstMessage', 'alternateGreetings',
+        ]) {
+            expect(fields, name).toHaveProperty(name);
+        }
+    });
+
+    it('exposes power_user as ST does, not a copy (public/scripts/st-context.js:229)', () => {
+        const powerUser = makePowerUser();
+        const context = createContext({ powerUser });
+
+        powerUser.sysprompt.enabled = false;
+        expect(context.powerUserSettings.sysprompt.enabled).toBe(false);
+    });
+
+    it('binds the World Info budget live, as `export let` does (world-info.js:73, :81)', async () => {
+        const worldInfo = makeWorldInfoModule({ entries: makeBook(), budget: 25, budgetCap: 0 });
+        expect(worldInfo.world_info_budget).toBe(25);
+
+        worldInfo.set({ budget: 10, budgetCap: 1_500 });
+        expect(worldInfo.world_info_budget).toBe(10);
+        expect(worldInfo.world_info_budget_cap).toBe(1_500);
+    });
+
+    it('gives every lorebook entry the fields the scan filters on (:5669)', async () => {
+        for (const entry of await makeWorldInfoModule({ entries: makeBook() }).getSortedEntries()) {
+            expect(entry).toHaveProperty('disable', false);
+            expect(entry).toHaveProperty('ignoreBudget', false);
+        }
     });
 });

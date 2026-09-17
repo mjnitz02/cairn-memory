@@ -1,8 +1,16 @@
 # P6 plan — a cap the chat can actually hold
 
-**Status: proposal, 2026-09-17.** Nothing here is built. P6 moves ahead of P4
-(D-0051). As each part lands, its decisions move into `decisions.md` and its
-mechanism into `how-it-works.md`, and this page is deleted when P6 closes.
+**Status: built, awaiting the run (§5), 2026-09-17.** Steps 1–5 of the build order
+are done; the decision is `decisions.md` D-0052 and the mechanism is in
+`how-it-works.md` ("How much room the block gets"). What is left is §5: play the
+run, record the numbers against §8's table, and then close P6 in `DESIGN.md` §13
+and delete this page.
+
+Two things came out different from the proposal below, both noted in place:
+the world state's reserve is **439** tokens, not 330 — it is derived from
+`MAX_STATE_CHARS` at 4 characters per token rather than typed in, so a schema
+change carries it — and the 35% share of a 23,040 max prompt floors to **8,063**,
+not 8,064.
 
 Today the memory block's cap is a fixed 35% of the max prompt (D-0038). P6 keeps 35%
 as the ceiling and lowers the cap when the rest of the prompt doesn't leave that

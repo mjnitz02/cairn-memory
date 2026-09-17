@@ -428,31 +428,30 @@ before ST trims the prompt.
 
 **P5 — Episodes + entity retrieval.** The long tail.
 
-**P6 — A budget worked out from the chat.** *Proposed in `docs/p6-plan.md`*, which works each
-reserve out from the chat and settings instead of watching the prompt, so it needs neither the
-lore floor nor the pause described below. Until P6, the block's cap is a fixed 35% of the max
-prompt (`docs/decisions.md` D-0038). P6 works the cap out from the chat's own parts, so the
-block uses the room the chat actually leaves, and P4 and P5 get more space to work with. The
-prompt splits into four parts:
+**P6 — A budget worked out from the chat.** *Built, awaiting its run* (`docs/decisions.md`
+D-0052; the plan and its measurements are `docs/p6-plan.md`). The block's cap is the smaller of
+D-0038's fixed 35% of the max prompt and the room the rest of the prompt leaves, never below
+10%. Each reserve is worked out from the chat and the settings — no watching the prompt, so
+neither the lore floor nor the pause first sketched here is needed — and each is an upper
+bound:
 
-- **Fixed:** system prompt, card, persona and example messages. These can be counted directly,
-  and they only change when the user edits them.
-- **World Info:** a reserve that starts at a floor, with no reserve for a chat that has no
-  lorebook. It is raised only when observed lore goes past it.
-- **Raw window:** the see-saw's most messages times the measured average message length, plus
-  a buffer, with a floor it never goes below.
-- **Memory block:** whatever is left, minus a safety margin.
-
-If a check shows the next turn would overflow, Cairn pauses and works the budget out again.
+- **Card:** the card fields that reach the story string, plus the system prompt ST would use.
+  Counted directly; they change only when the user edits them.
+- **World Info:** ST's own budget (`world_info_budget` of the max prompt, capped), or every
+  enabled entry in the books ST scans if they come to less. No lorebook, no reserve.
+- **Raw window:** the heaviest `RAW_WINDOW + STEP − 1` consecutive visible messages the chat
+  has had — the widest the window ever gets, with no guess about message length.
+- **World state:** its schema bound, 0 while it is off or a WTracker is loaded.
+- **Margin:** 5% of the max prompt, the same line `prompt_near_limit` watches.
 
 **How this differs from what D-0033 removed** (D-0028, D-0030 to D-0032). Those budgets were
 measured again every turn and fed the plan straight away. Every turn had a different cap, each
-piece had its own cold start, and the patches piled up. In P6, each reserve changes only at a
-discrete event, when a ceiling is crossed. Each change is at most one rebuild, and in between,
-the cap holds still. Raising the cap costs nothing, because the block simply has more room to
-grow. Lowering it costs a rebuild only if the block is already bigger than the new cap. P6 has
-to show, with a trace, that the cap holds still between those events. If it can't, D-0033
-stands.
+piece had its own cold start, and the patches piled up. Here each reserve changes only at a
+discrete event — a card or book edit, a context change, a heavier run of messages. Each change
+is at most one rebuild, and in between the cap holds still. Raising the cap costs nothing,
+because the block simply has more room to grow. Lowering it costs a rebuild only if the block is
+already bigger than the new cap. **The gate stands:** P6's run has to show, with a trace, that
+the cap holds still between those events. If it can't, D-0038's fixed share stands.
 
 ---
 

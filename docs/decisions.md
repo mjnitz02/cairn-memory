@@ -8,6 +8,72 @@ what we believed and why it changed.
 
 ---
 
+## D-0052 — The memory cap is the smaller of 35% and what the chat leaves
+**2026-09-17.** P6, from `docs/p6-plan.md`. Supersedes the fixed share in D-0038,
+which stands as the ceiling and as the fallback.
+
+**The decision.** `cap = min(35% of the max prompt, the room)`, never below 10%.
+
+```
+room = max prompt − card − lore − raw window − world state − margin
+```
+
+Each reserve is worked out from the chat and the settings, and each is an *upper
+bound*:
+
+| Reserve | Worked out from | Esin |
+|---|---|---|
+| Card | The card fields in the story string, plus the system prompt ST would use | 4,500 |
+| Lore | ST's World Info budget, or every enabled entry if they come to less | ~5,000 |
+| Raw window | The heaviest 19 consecutive visible messages the chat has had | 7,968 |
+| World state | Its schema bound, 0 while the state is off or a WTracker is loaded | 439 |
+| Margin | 5% of the max prompt | 1,152 |
+
+On Esin that is a cap of about 4,000 against a share of 8,063, so the block holds
+33–38 summaries and rebuilds about every two steps instead of four.
+
+**Why nothing is measured.** D-0028 and D-0030–D-0032 measured the rest of the
+prompt and fed it into the next plan; each piece had its own cold start, errors
+fed forward, and a reload took until turn 4 to settle. D-0033 removed all of it.
+Working each reserve out from the chat gives the same numbers with no cold start,
+nothing stored and no schema change — and the cap stays a function of the chat,
+so the same chat always gets the same block.
+
+**19 is `RAW_WINDOW + STEP − 1`**, the widest the window gets before a step. Taking
+the heaviest such run in the whole chat needs no guess about message length, and
+over a growing chat it can only rise — so the cap moves on the turn a heavier run
+is written and on no other turn. A deletion or a branch can lower it, which raises
+the cap, and a rise costs nothing.
+
+**The margin turns `prompt_near_limit` into a check.** 5% is the complement of
+`NEAR_LIMIT_FRACTION`. Every other reserve is an upper bound, so a prompt at its
+fullest should land under that line; the warning firing now means a reserve
+missed something rather than that the cap was optimistic.
+
+**What it cannot see:** other extensions' injections, the story string's own
+wording, and the instruct wrappers (about 10 tokens a message). The margin covers
+them, and `budget_window_now` in the log says what it actually had to cover.
+
+**Degrading.** A failed world-info import or a card that will not read gives
+`limitedBy: 'unknown'` and D-0038's fixed share, with one console warning. A
+reserve of zero would be the dangerous guess, not the safe one.
+
+**What this replaces.** `DESIGN.md` §13's P6 reserved lore by *watching* it and
+re-ran the budget when a check showed an overflow. Both depended on what had been
+seen; neither is needed.
+
+**The cost, stated plainly.** On a 24k context with a 9k card and lorebook the
+block gets about 4,000 tokens. Today the same space is taken silently from the
+card's example messages and the oldest raw messages (`script.js:4920`, `:4959`).
+P4's compaction is what gives the dropped summaries somewhere to go.
+
+**Reopens if:** the run shows the cap moving on turns §8 of the plan does not
+name — then D-0038's fixed share stands and P6 is abandoned. Raising the ceiling
+above 35% is a separate decision, for when P4 and P5 have something to fill it
+with.
+
+---
+
 ## D-0051 — P6 comes before P4: the fixed cap is bigger than the room
 **2026-09-17.** Reorders `DESIGN.md` §13. The plan is `docs/p6-plan.md`.
 

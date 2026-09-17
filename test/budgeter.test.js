@@ -1,23 +1,117 @@
 import { describe, expect, it } from 'vitest';
-import { CAP_FRACTION, createBudget, FLOOR_FRACTION, memoryCap } from '../src/pipeline/budgeter.js';
+import {
+    CAP_FRACTION, MARGIN_FRACTION, MIN_CAP_FRACTION,
+    createBudget, deriveCap, FLOOR_FRACTION,
+} from '../src/pipeline/budgeter.js';
+import { NEAR_LIMIT_FRACTION } from '../src/util/context-size.js';
+import { mulberry32 } from './helpers/random.js';
 
 /** Each scene costs 10 tokens; nothing here depends on the real tokenizer. */
 const scenes = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => ({ index: from + i }));
 const tokensOf = (list) => list.length * 10;
 
-/** A fixed share of the max prompt, with no setting (docs/decisions.md D-0038). */
+/** A chat with room to spare: the ceiling binds and nothing else does. */
+const roomy = { card: 500, lore: 0, window: 800, state: 0 };
+
+/**
+ * The smaller of a fixed share and what the chat leaves, with no setting either
+ * way (docs/decisions.md D-0038, D-0052).
+ */
 describe('how much room the block gets', () => {
-    it('is 35% of the max prompt, rounded down', () => {
+    it('is 35% of the max prompt while the chat leaves that much', () => {
         expect(CAP_FRACTION).toBe(0.35);
+        const derived = deriveCap({ maxPromptTokens: 22_016, reserves: roomy });
+
+        expect(derived.cap).toBe(7_705);
+        expect(derived.limitedBy).toBe('share');
         // Esin: at least the 7,500 tokens qvink's limit gave it.
-        expect(memoryCap(22_016)).toBe(7_705);
-        expect(memoryCap(22_016)).toBeGreaterThanOrEqual(7_500);
+        expect(derived.cap).toBeGreaterThanOrEqual(7_500);
+    });
+
+    /**
+     * Esin's own numbers (docs/decisions.md D-0052): a 4,500-token card, a ~5,000
+     * lorebook and a heaviest 19-message run of 7,968 leave about half the share.
+     */
+    it('is what the chat leaves when the rest of the prompt wants more', () => {
+        const derived = deriveCap({
+            maxPromptTokens: 23_040,
+            reserves: { card: 4_500, lore: 5_000, window: 7_968, state: 330 },
+        });
+
+        expect(derived.margin).toBe(1_152);
+        expect(derived.room).toBe(4_090);
+        expect(derived.cap).toBe(4_090);
+        expect(derived.limitedBy).toBe('room');
+        expect(derived.share).toBe(8_063);
+    });
+
+    it('keeps a tenth for a chat that cannot fit at all, and says so', () => {
+        const derived = deriveCap({
+            maxPromptTokens: 23_040,
+            reserves: { card: 9_000, lore: 5_760, window: 9_000, state: 330 },
+        });
+
+        expect(derived.room).toBeLessThan(derived.minimum);
+        expect(derived.cap).toBe(2_304);
+        expect(derived.limitedBy).toBe('starved');
+    });
+
+    /**
+     * A reserve that could not be read is not a reserve of zero: guessing low
+     * would hand the block room the prompt does not have. Fall back to the share
+     * that has been shipping, and say the cap is unexplained (CLAUDE.md §4.17).
+     */
+    it('falls back to the plain share when the reserves are unreadable', () => {
+        const derived = deriveCap({ maxPromptTokens: 23_040, reserves: null });
+
+        expect(derived.cap).toBe(8_063);
+        expect(derived.limitedBy).toBe('unknown');
+        expect(derived.parts).toBeNull();
+        expect(derived.room).toBeNull();
     });
 
     it('is nothing when the max prompt is unknown, never negative', () => {
-        expect(memoryCap(undefined)).toBe(0);
-        expect(memoryCap(Number.NaN)).toBe(0);
-        expect(memoryCap(-100)).toBe(0);
+        for (const max of [undefined, Number.NaN, -100]) {
+            expect(deriveCap({ maxPromptTokens: max, reserves: roomy }).cap).toBe(0);
+            expect(deriveCap({ maxPromptTokens: max, reserves: null }).cap).toBe(0);
+        }
+    });
+
+    it('treats a missing or nonsense reserve as zero rather than throwing', () => {
+        const derived = deriveCap({
+            maxPromptTokens: 10_000,
+            reserves: { card: undefined, lore: Number.NaN, window: -5, state: '7' },
+        });
+
+        expect(derived.parts).toEqual({ card: 0, lore: 0, window: 0, state: 0 });
+        expect(derived.cap).toBe(3_500);
+    });
+
+    /** The ceiling and the minimum, against parts that add to anything at all. */
+    it('always lands between a tenth and 35% of the max prompt', () => {
+        const random = mulberry32(0x0652);
+
+        for (let i = 0; i < 500; i++) {
+            const max = 2_048 + Math.floor(random() * 120_000);
+            const part = () => Math.floor(random() * max * 0.7);
+            const derived = deriveCap({
+                maxPromptTokens: max,
+                reserves: { card: part(), lore: part(), window: part(), state: part() },
+            });
+
+            expect(derived.cap).toBeGreaterThanOrEqual(Math.floor(max * MIN_CAP_FRACTION));
+            expect(derived.cap).toBeLessThanOrEqual(Math.floor(max * CAP_FRACTION));
+        }
+    });
+
+    /**
+     * The margin is the same 5% `prompt_near_limit` watches, which is what turns
+     * that warning into a check: every other reserve is an upper bound, so a full
+     * prompt should land under the line, and a prompt that does not means a
+     * reserve missed something (docs/decisions.md D-0052).
+     */
+    it('leaves the margin prompt_near_limit is measured against', () => {
+        expect(MARGIN_FRACTION).toBeCloseTo(1 - NEAR_LIMIT_FRACTION, 10);
     });
 });
 

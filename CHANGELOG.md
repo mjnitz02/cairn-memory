@@ -76,11 +76,23 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
   `unplaced` are gone. Log fields `memory_placement`,
   `memory_placement_defaulted`, `memory_fidelity`, `memory_fidelity_resolved`,
   `memory_fidelity_diverge_at` and `memory_live_chars` are gone.
-- **The memory block's cap is 35% of the max prompt**, with no setting. It
-  replaces Qvink's short-term limit, which Cairn no longer reads. With a
-  7,500-token Qvink limit on a 22,016-token prompt, the cap moves to 7,705 tokens.
-  That costs one rebuild on the first turn after updating. The log field
-  `memory_cap_type` is gone.
+- **The memory block's cap is 35% of the max prompt, or less when the rest of the
+  prompt needs the room.** It replaces Qvink's short-term limit, which Cairn no
+  longer reads, and there is still no setting. Cairn now reserves what your
+  character card, lorebook, raw history and world state can cost — each worked out
+  from the chat and your settings, never measured from a prompt that went out —
+  and the block gets what is left, down to a floor of 10% of the prompt. On a
+  chat with a large card and lorebook on a small context this is about half the
+  old cap, which is the space SillyTavern was already taking from the card's
+  example messages and the oldest raw messages without saying so. The cap changes
+  only when one of those inputs does; a fall costs one rebuild at most and a rise
+  costs nothing. The first turn after updating rebuilds the block and may drop a
+  lot of summaries. The log field `memory_cap_type` is gone.
+- The inspector's memory section says where the cap came from and what each
+  reserve costs, and warns when a chat is starved — its card, lorebook and history
+  leave the block less than a tenth of the prompt.
+- Log fields `budget_*`: `limited_by`, `share`, `room`, `minimum`, `margin`,
+  `card`, `lore`, `lore_bound`, `window`, `window_now` and `state`.
 - A memory step now waits for a missing summary. The block stays where it is
   instead of moving past a message with no summary, so no message leaves the
   history without a summary to replace it. This can't happen while your

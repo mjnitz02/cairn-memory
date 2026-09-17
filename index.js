@@ -34,7 +34,12 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
 
         // Plans the memory block every turn. Whether the plan is written is the
         // handover gate's call (src/prompt/handover.js, docs/decisions.md D-0027).
-        const assembler = createAssembler(getContext, { own: settings.ownMemoryBlock });
+        // `settings` is read for the world state's reserve, which is 0 while the
+        // state is off (src/prompt/reserves.js).
+        const assembler = createAssembler(getContext, {
+            own: settings.ownMemoryBlock,
+            settings: () => settings,
+        });
 
         // ST resolves the manifest's `generate_interceptor` off globalThis
         // (extensions.js:2035), so the name here must match manifest.json. It is

@@ -419,3 +419,73 @@ describe('disk log — P3 world state', () => {
         expect(await line({})).toMatchObject({ state_reported: false, state_injected: false, state_reason: null, state_calls: null });
     });
 });
+
+/**
+ * The cap's own accounting (docs/decisions.md D-0052). The P6 run is read off
+ * this file: whether the cap held still, and what the margin actually had to
+ * cover. Neither can be told from `memory_cap` alone.
+ */
+describe('disk log — P6 the cap and its reserves', () => {
+    const memory = {
+        source: 'cairn', cairnScenes: 40, stepWaiting: false, scenes: 84, included: 38,
+        summarisedThrough: 73, stepped: false, stepReason: 'held', evicted: 0,
+        cap: 4_090, floor: 2_045, maxPromptTokens: 23_040, chars: 17_000, tokens: 4_000,
+        budget: {
+            share: 8_063, room: 4_090, minimum: 2_304, margin: 1_152, limitedBy: 'room',
+            card: 4_500, lore: 5_000, loreBound: 'books', window: 7_968, windowNow: 5_120, state: 439,
+        },
+        change: { stabilityPercent: 100, divergenceAt: null, divergencePercent: null },
+    };
+
+    async function line(overrides) {
+        const log = createDiskLog({ delayMs: 0 });
+        log.setEnabled(true);
+        log.append(snapshot(overrides), getContext);
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        return JSON.parse(writtenLines().at(-1));
+    }
+
+    it('carries every reserve and which of the two limits bound the cap', async () => {
+        expect(await line({ memory })).toMatchObject({
+            memory_cap: 4_090,
+            budget_reported: true,
+            budget_limited_by: 'room',
+            budget_share: 8_063,
+            budget_room: 4_090,
+            budget_minimum: 2_304,
+            budget_margin: 1_152,
+            budget_card: 4_500,
+            budget_lore: 5_000,
+            budget_lore_bound: 'books',
+            budget_window: 7_968,
+            budget_window_now: 5_120,
+            budget_state: 439,
+        });
+    });
+
+    /**
+     * The margin check: everything the prompt carried that is not the block or
+     * the state should be the card, the lore and this turn's raw window. What is
+     * left over is what the margin had to cover.
+     */
+    it('leaves the margin check computable from one line', async () => {
+        const entry = await line({ memory, promptTokens: 19_500 });
+        const unexplained = entry.prompt_tokens - entry.memory_tokens - (entry.state_tokens ?? 0)
+            - entry.budget_card - entry.budget_lore - entry.budget_window_now;
+
+        expect(unexplained).toBe(19_500 - 4_000 - 4_500 - 5_000 - 5_120);
+        expect(unexplained).toBeLessThan(entry.budget_margin);
+    });
+
+    it('says so plainly when the reserves could not be read', async () => {
+        const unknown = { ...memory, cap: 8_063, budget: { ...memory.budget, limitedBy: 'unknown', card: null } };
+
+        expect(await line({ memory: unknown })).toMatchObject({
+            budget_reported: true, budget_limited_by: 'unknown', budget_card: null,
+        });
+    });
+
+    it('says so plainly when no block was planned', async () => {
+        expect(await line({})).toMatchObject({ memory_planned: false, budget_reported: false });
+    });
+});

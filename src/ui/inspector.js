@@ -222,8 +222,54 @@ function renderMemory(memory) {
             ${row('Written by', describeSource(memory))}
             ${row('See-saw', `${step} at message ${memory.summarisedThrough}, ${memory.rawWindow} kept raw${waiting}`)}
             ${row('Budget', budget)}
+            ${renderCap(memory.budget)}
             ${row('Block change', change)}
         </details>`;
+}
+
+/** How the cap was arrived at, in words rather than as four bare numbers. */
+const CAP_LIMITS = Object.freeze({
+    share: 'the fixed 35% share of the prompt',
+    room: 'what the rest of the prompt leaves',
+    starved: 'the 10% minimum — the card, lore and history already fill the prompt',
+    unknown: 'the fixed 35% share — the rest of the prompt could not be read',
+});
+
+/** Where the lore reserve stopped. */
+const LORE_BOUNDS = Object.freeze({
+    budget: 'World Info budget',
+    books: 'whole book',
+    none: 'no lorebook',
+});
+
+/**
+ * What the cap is made of (docs/decisions.md D-0052). The four reserves are the
+ * difference between a block that fits and one that quietly pushes the card's
+ * example messages and the oldest raw history out of the prompt — and from
+ * inside Cairn that looks identical, because the block is under its cap either
+ * way.
+ */
+function renderCap(budget) {
+    if (!budget) return '';
+
+    const limit = CAP_LIMITS[budget.limitedBy] ?? budget.limitedBy;
+    const starved = budget.limitedBy === 'starved'
+        ? `<div class="${SLUG}-warn">This chat's card, lorebook and raw history leave the memory block
+            less than a tenth of the prompt, so it is keeping the minimum and SillyTavern is trimming
+            the history to fit.</div>`
+        : '';
+
+    if (budget.limitedBy === 'unknown') return starved + row('Cap from', limit);
+
+    const lore = `${fmt(budget.lore)} <span class="dim">(${LORE_BOUNDS[budget.loreBound] ?? ''})</span>`;
+    const reserves = [
+        ['card', budget.card], ['lore', lore], ['history', budget.window],
+        ['world state', budget.state], ['margin', budget.margin],
+    ].map(([name, value]) => `${escapeHtml(name)} ${typeof value === 'string' ? value : fmt(value)}`).join(', ');
+
+    return starved
+        + row('Cap from', `${limit} <span class="dim">(share ${fmt(budget.share)}, room ${fmt(budget.room)})</span>`)
+        + row('Reserved', reserves);
 }
 
 function describeSource(memory) {

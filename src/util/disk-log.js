@@ -149,7 +149,7 @@ function toEntry(snapshot) {
  * changed the head and nothing was gained.
  */
 function memoryFields(memory) {
-    if (!memory) return { memory_planned: false };
+    if (!memory) return { memory_planned: false, ...budgetFields(null) };
 
     return {
         memory_planned: true,
@@ -172,15 +172,48 @@ function memoryFields(memory) {
         memory_step_reason: memory.stepReason,
         memory_evicted: memory.evicted,
         memory_over_cap: memory.overCap,
-        // A fixed share of the max prompt (docs/decisions.md D-0038).
+        // The cap in use: the smaller of the fixed share and what the chat leaves
+        // (docs/decisions.md D-0038, D-0052).
         memory_cap: memory.cap,
         memory_floor: memory.floor,
         memory_max_prompt_tokens: memory.maxPromptTokens,
+        ...budgetFields(memory.budget),
         memory_chars: memory.chars,
         memory_tokens: memory.tokens,
         memory_stability_percent: memory.change?.stabilityPercent ?? null,
         memory_change_at: memory.change?.divergenceAt ?? null,
         memory_change_percent: memory.change?.divergencePercent ?? null,
+    };
+}
+
+/**
+ * Where the cap came from (docs/decisions.md D-0052). Every reserve is worked
+ * out from the chat and the settings, so these numbers hold still between a card
+ * edit, a book edit, a context change and a heavier run of messages — and a run
+ * that shows otherwise is the evidence against D-0052, not a detail.
+ *
+ * `budget_window_now` is the exception: it is what the raw window weighs *this*
+ * turn, reported so the margin can be checked against
+ * `prompt_tokens − memory_tokens − state_tokens`, and never planned against.
+ */
+function budgetFields(budget) {
+    if (!budget) return { budget_reported: false };
+
+    return {
+        budget_reported: true,
+        // share, room, starved or unknown — which of the two limits bound the cap.
+        budget_limited_by: budget.limitedBy ?? null,
+        budget_share: budget.share ?? null,
+        budget_room: budget.room ?? null,
+        budget_minimum: budget.minimum ?? null,
+        budget_margin: budget.margin ?? null,
+        budget_card: budget.card ?? null,
+        budget_lore: budget.lore ?? null,
+        // budget, books or none — what bound the lore reserve.
+        budget_lore_bound: budget.loreBound ?? null,
+        budget_window: budget.window ?? null,
+        budget_window_now: budget.windowNow ?? null,
+        budget_state: budget.state ?? null,
     };
 }
 

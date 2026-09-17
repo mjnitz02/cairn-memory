@@ -3,7 +3,10 @@ import { BLOCK_PLACEMENT, BLOCK_RENDERING, blockChars, createAssembler, renderBl
 import { QVINK_EXTENSION, readScenes } from '../src/memory/scenes.js';
 import { CAP_FRACTION, createBudget } from '../src/pipeline/budgeter.js';
 import { createSeeSaw } from '../src/pipeline/scheduler.js';
+import { createObserver } from '../src/prompt/observer.js';
+import { createReserves, heaviestRun } from '../src/prompt/reserves.js';
 import { collectedKeys, createContext, extension_prompt_types } from './mocks/sillytavern.js';
+import { makeBook, makeWorldInfoModule } from './mocks/world-info.js';
 import { makeQvinkChat, makeQvinkSettings, makeSummary } from './mocks/qvink.js';
 import { cairnStore, cairnSummary, makeMixedChat } from './mocks/cairn.js';
 import { pendingScenes } from '../src/memory/scenes.js';
@@ -23,14 +26,19 @@ function asQvinkWouldRender(scenes) {
 }
 
 /**
- * `cap` is sugar for the max prompt that gives it: the cap is a fixed share of the
- * max prompt (docs/decisions.md D-0038), and rounding up keeps it exact.
+ * `cap` is sugar for the max prompt that gives it. The default `reserves` reads
+ * nothing, which is the degrade the budgeter answers with the fixed share
+ * (docs/decisions.md D-0038) — so a test that is not about the cap gets exactly
+ * the cap it asked for. The reserves themselves are exercised below.
  */
+const NO_RESERVES = Object.freeze({ read: async () => null, reset() {} });
+
 function harness({
     seeSaw = createSeeSaw(),
     budget = createBudget(),
     cap = 1_000_000,
     maxPrompt = Math.ceil(cap / CAP_FRACTION),
+    reserves = NO_RESERVES,
     settings = makeQvinkSettings(),
     qvink = true,
 } = {}) {
@@ -40,6 +48,7 @@ function harness({
     const assembler = createAssembler(() => context, {
         seeSaw,
         budget,
+        reserves,
         maxPromptTokens: async () => maxPrompt,
     });
 
@@ -679,5 +688,197 @@ describe('P2: a block read from qvink and Cairn together', () => {
                 }
             }
         }
+    });
+});
+
+/**
+ * Where the cap comes from (docs/decisions.md D-0052). The block is planned
+ * against a number worked out from the rest of the prompt, so these are the
+ * tests that the number is a *function of the chat*: still between events,
+ * unchanged by a reload, and cheap when it does move.
+ */
+describe('the cap the block is planned against', () => {
+    /** Reserves under our hand, so a "card edit" is one line rather than a fixture. */
+    function stubReserves(values) {
+        const state = { card: 0, lore: 0, loreBound: 'none', window: 0, windowNow: 0, state: 0, ...values };
+        return {
+            read: async () => ({ ...state }),
+            reset() {},
+            set(next) {
+                Object.assign(state, next);
+            },
+        };
+    }
+
+    /** A chat with real-length messages and a summary on every one. */
+    function corpusChat(length) {
+        return makeQvinkChat({ length, summarisedThrough: length });
+    }
+
+    it('is what the chat leaves once the rest of the prompt is reserved', async () => {
+        const reserves = stubReserves({ card: 4_500, lore: 5_000, loreBound: 'books', window: 7_968, state: 330 });
+        const run = harness({ maxPrompt: 23_040, reserves });
+        run.context.chat = corpusChat(40);
+
+        const report = await run.plan();
+
+        expect(report.cap).toBe(4_090);
+        expect(report.budget).toMatchObject({
+            limitedBy: 'room', share: 8_063, room: 4_090, margin: 1_152,
+            card: 4_500, lore: 5_000, loreBound: 'books', window: 7_968, state: 330,
+        });
+    });
+
+    it('keeps the fixed share when the chat leaves that much room', async () => {
+        const reserves = stubReserves({ card: 500, window: 800 });
+        const run = harness({ maxPrompt: 23_040, reserves });
+        run.context.chat = corpusChat(40);
+
+        const report = await run.plan();
+
+        expect(report.cap).toBe(8_063);
+        expect(report.budget.limitedBy).toBe('share');
+    });
+
+    it('falls back to the fixed share when the reserves cannot be read', async () => {
+        const run = harness({ maxPrompt: 23_040, reserves: NO_RESERVES });
+        run.context.chat = corpusChat(40);
+
+        const report = await run.plan();
+
+        expect(report.cap).toBe(8_063);
+        expect(report.budget).toMatchObject({ limitedBy: 'unknown', card: null, lore: null });
+    });
+
+    /**
+     * D-0033, mechanically. The observer reports what a prompt cost and the
+     * assembler is handed that report — this is the test that nothing flows the
+     * other way.
+     */
+    it('is unmoved by what the last prompt turned out to cost', async () => {
+        const reserves = stubReserves({ card: 4_500, lore: 5_000, window: 7_968, state: 330 });
+        const run = harness({ maxPrompt: 23_040, reserves });
+        run.context.chat = corpusChat(40);
+        const first = await run.write();
+
+        const observer = createObserver(() => run.context, { memory: () => run.assembler.latest });
+        observer.start();
+        for (const prompt of ['x'.repeat(400_000), '', 'y'.repeat(9)]) {
+            await run.context.eventSource.emit(
+                run.context.eventTypes.GENERATE_AFTER_COMBINE_PROMPTS, { prompt, dryRun: false },
+            );
+        }
+
+        const again = await run.write();
+
+        expect(again.report.cap).toBe(first.report.cap);
+        expect(again.text).toBe(first.text);
+    });
+
+    it('is the same after a reload as before it', async () => {
+        const reserves = stubReserves({ card: 4_500, lore: 5_000, window: 7_968, state: 330 });
+        const before = harness({ maxPrompt: 23_040, reserves });
+        before.context.chat = corpusChat(60);
+        const first = await before.plan();
+
+        // A reload is a new assembler, a new see-saw and a new budget on the same chat.
+        const after = harness({ maxPrompt: 23_040, reserves });
+        after.context.chat = corpusChat(60);
+
+        expect((await after.plan()).cap).toBe(first.cap);
+    });
+
+    /**
+     * A card or book edit, or a heavier run of messages, lowers the cap. The cost
+     * has to be one rebuild at most, or the cap would be a second eviction
+     * cadence on top of the budget's (docs/decisions.md D-0019).
+     */
+    it('costs one rebuild when it falls below the block, and nothing when it does not', async () => {
+        const reserves = stubReserves({ card: 500, window: 800 });
+        const run = harness({ maxPrompt: 16_000, reserves });
+        run.context.chat = corpusChat(40);
+        // The first turn is a rebuild whatever the cap is; measure from the second.
+        await run.plan();
+        const full = await run.write();
+        expect(full.report.cap).toBe(5_600);
+        expect(full.report.evicted).toBe(0);
+
+        // A book edit that takes the cap down, but not past the block.
+        reserves.set({ lore: 9_000 });
+        const easy = await run.write();
+        expect(easy.report.cap).toBeLessThan(full.report.cap);
+        expect(easy.report.cap).toBeGreaterThan(easy.report.tokens);
+        expect(easy.report.evicted).toBe(0);
+        expect(easy.text).toBe(full.text);
+
+        // And a heavier run of messages that takes it below the block: one
+        // rebuild, to the new floor.
+        reserves.set({ lore: 9_000, window: 8_000 });
+        const hard = await run.write();
+        expect(hard.report.budget.limitedBy).toBe('starved');
+        expect(hard.report.evicted).toBeGreaterThan(0);
+        expect(hard.report.tokens).toBeLessThanOrEqual(hard.report.floor);
+
+        // ...and only one. The turn after it is byte-identical.
+        expect((await run.write()).text).toBe(hard.text);
+    });
+
+    /** A rise is free, and never re-admits what the mark has already passed. */
+    it('costs nothing when it rises, and does not bring evicted summaries back', async () => {
+        const reserves = stubReserves({ card: 500, lore: 9_000, window: 8_000 });
+        const run = harness({ maxPrompt: 16_000, reserves });
+        run.context.chat = corpusChat(40);
+        const evicting = await run.write();
+        expect(evicting.report.evicted).toBeGreaterThan(0);
+
+        reserves.set({ lore: 0, window: 800 });
+        const risen = await run.write();
+
+        expect(risen.report.cap).toBeGreaterThan(evicting.report.cap);
+        expect(risen.report.evicted).toBe(0);
+        expect(risen.text).toBe(evicting.text);
+        expect(risen.report.oldest).toBe(evicting.report.oldest);
+    });
+
+    /**
+     * The P6 gate (DESIGN.md §13): the cap has to hold still between events. Over
+     * a 200-message chat with corpus-sized messages, the only turns it may move on
+     * are the ones that write a heavier 19-message run — and after the early
+     * turns those become rare.
+     */
+    it('holds still across a 200-message chat but for a heavier run of messages', async () => {
+        const context = createContext({ chat: [], extensions: [QVINK_EXTENSION] });
+        context.extensionSettings.qvink_memory = makeQvinkSettings();
+        const worldInfo = makeWorldInfoModule({ entries: makeBook(), budget: 25 });
+        const reserves = createReserves(() => context, { load: async () => worldInfo, scope: {} });
+        const assembler = createAssembler(() => context, {
+            reserves, maxPromptTokens: async () => 23_040,
+        });
+
+        const random = mulberry32(0x0652);
+        const whole = corpusChat(200);
+        // Corpus-shaped spread: a median around 300 tokens, with heavy replies.
+        for (const message of whole) message.mes = 'x'.repeat(Math.round((180 + random() * 420) * 4));
+
+        const sizes = whole.map((message) => Math.ceil(message.mes.length / 4));
+        const moved = [];
+        let previousCap = null;
+        let previousRun = -1;
+
+        for (let length = 1; length <= whole.length; length++) {
+            context.chat = whole.slice(0, length);
+            const { cap } = await assembler.plan().then((plan) => plan.report);
+            const run = heaviestRun(sizes.slice(0, length), 19);
+
+            if (cap !== previousCap) moved.push({ length, heavier: run > previousRun });
+            previousCap = cap;
+            previousRun = run;
+        }
+
+        // Every move is a turn that wrote a heavier run; no move happens otherwise.
+        expect(moved.every((turn) => turn.heavier)).toBe(true);
+        // And once the window is full they are rare: most of them are the first
+        // nineteen turns, where each message added is itself a heavier run.
+        expect(moved.filter((turn) => turn.length > 19).length).toBeLessThan(15);
     });
 });

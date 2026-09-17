@@ -170,6 +170,38 @@ export function makeBook(world = "Wren's Lorebook") {
         delayUntilRecursion: false,
         outletName: '',
         group: '',
+        // public/scripts/world-info.js:5669 — `extensions.ignore_budget ?? false`.
+        ignoreBudget: false,
         decorators: [],
     }));
+}
+
+/**
+ * The part of `/scripts/world-info.js` the reserves import: the entry list and
+ * the two budget settings.
+ *
+ * `world_info_budget` and `world_info_budget_cap` are `export let`
+ * (public/scripts/world-info.js:73, :81), so they are live bindings — a getter
+ * here, so a test that changes the budget mid-run is seen at the point of use
+ * the way ST's own would be (docs/decisions.md D-0016).
+ *
+ * `getSortedEntries` (:4590) returns the global, character, chat and persona
+ * books together, disabled entries included: the filtering happens in the scan,
+ * not here.
+ */
+export function makeWorldInfoModule({ entries = [], budget = 25, budgetCap = 0 } = {}) {
+    const settings = { budget, budgetCap };
+    return {
+        get world_info_budget() {
+            return settings.budget;
+        },
+        get world_info_budget_cap() {
+            return settings.budgetCap;
+        },
+        getSortedEntries: async () => entries,
+        /** Test-only, not part of ST's surface. */
+        set(next) {
+            Object.assign(settings, next);
+        },
+    };
 }

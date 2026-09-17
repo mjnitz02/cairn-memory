@@ -27,14 +27,15 @@
  * D-0027).
  *
  * **The plan is a function of the chat, not of what was measured.** The cap is
- * a fixed share of the max prompt and every size is counted from the block itself, so the same
- * chat always gets the same block and nothing learned last turn can bend this one
- * (docs/decisions.md D-0033).
+ * worked out from the chat and the settings (prompt/reserves.js) and every size is
+ * counted from the block itself, so the same chat always gets the same block and
+ * nothing learned last turn can bend this one (docs/decisions.md D-0033, D-0052).
  */
 import { pendingScenes, qvinkExcluding, qvinkInjecting, readScenes } from '../memory/scenes.js';
-import { createBudget, memoryCap, recoupled } from '../pipeline/budgeter.js';
+import { createBudget, deriveCap, recoupled } from '../pipeline/budgeter.js';
 import { createSeeSaw } from '../pipeline/scheduler.js';
 import { assessHandover } from './handover.js';
+import { createReserves } from './reserves.js';
 import { comparePrompts } from '../util/prefix.js';
 import { createMaxPromptTokens } from '../util/context-size.js';
 import { countTokens } from '../util/tokens.js';
@@ -100,15 +101,20 @@ export function blockChars(scenes, { template, separator, macro } = BLOCK_RENDER
  * Takes a *getter*, not a context (docs/st-api-surface.md, Hazards).
  *
  * @param {() => object} getContext Returns a fresh SillyTavern.getContext()
- * @param {{seeSaw?: object, budget?: object, maxPromptTokens?: Function, own?: boolean}} [options]
+ * @param {{seeSaw?: object, budget?: object, maxPromptTokens?: Function,
+ *          reserves?: object, settings?: () => object, own?: boolean}} [options]
  */
 export function createAssembler(getContext, {
     seeSaw = createSeeSaw(),
     budget = createBudget(),
     maxPromptTokens = createMaxPromptTokens(),
+    settings = null,
+    reserves = createReserves(getContext, { settings }),
     own = false,
 } = {}) {
     let previousBlock = null;
+    /** Last turn's cap, so a change is logged once rather than every turn. */
+    let previousCap = null;
     let ownInjection = Boolean(own);
     /** The report the observer logs, from the plan made earlier this turn. */
     let latest = null;
@@ -131,11 +137,19 @@ export function createAssembler(getContext, {
             excluding: qvinkExcluding(context),
         });
 
-        const maxPrompt = await maxPromptTokens(context);
-        const cap = memoryCap(maxPrompt);
-
         const pending = pendingScenes(chat);
         const step = seeSaw.advance(chat.length, { firstPending: pending[0] ?? null });
+
+        // How much room the rest of the prompt leaves. Every part of it is worked
+        // out from this chat and these settings — nothing measured from a prompt
+        // that went out (docs/decisions.md D-0033, D-0052).
+        const maxPrompt = await maxPromptTokens(context);
+        const reserved = await reserves.read(maxPrompt, {
+            runLength: seeSaw.rawWindow + seeSaw.step - 1,
+            since: step.summarisedThrough,
+        });
+        const budgeted = deriveCap({ maxPromptTokens: maxPrompt, reserves: reserved });
+        const cap = budgeted.cap;
         // Every summary the block speaks for. The budget may drop the oldest of
         // them from the prompt, but they stay held back from the raw history
         // either way: an evicted summary's message is older still, and putting
@@ -176,6 +190,13 @@ export function createAssembler(getContext, {
             : 0;
         const stuck = recoupled({ cap, floor: fit.floor, stepTokens });
 
+        // The cap is meant to hold still between a card edit, a book edit, a
+        // context change and a heavier run of messages. Saying when it moves is
+        // how a run shows whether it does (docs/decisions.md D-0052).
+        if (cap !== previousCap) {
+            debug(`Memory block: cap ${previousCap ?? '—'} → ${cap} tokens, limited by ${budgeted.limitedBy}.`);
+            previousCap = cap;
+        }
         if (fit.evicted) {
             debug(`Memory block: evicted ${fit.evicted} scene(s) to the floor (${fit.tokens}/${cap} tokens).`);
         }
@@ -205,6 +226,22 @@ export function createAssembler(getContext, {
             evicted: fit.evicted,
             overCap: fit.over,
             cap,
+            // Where the cap came from, so a log says whether the ceiling or the
+            // chat is what bound it (docs/decisions.md D-0052).
+            budget: {
+                share: budgeted.share,
+                room: budgeted.room,
+                margin: budgeted.margin,
+                minimum: budgeted.minimum,
+                limitedBy: budgeted.limitedBy,
+                card: budgeted.parts?.card ?? null,
+                lore: budgeted.parts?.lore ?? null,
+                loreBound: reserved?.loreBound ?? null,
+                window: budgeted.parts?.window ?? null,
+                // Reported, never planned against: it swings across a see-saw cycle.
+                windowNow: reserved?.windowNow ?? null,
+                state: budgeted.parts?.state ?? null,
+            },
             floor: fit.floor,
             slack: Math.max(0, cap - fit.floor),
             stepTokens,
@@ -248,7 +285,9 @@ export function createAssembler(getContext, {
         reset() {
             seeSaw.reset();
             budget.reset();
+            reserves.reset();
             previousBlock = null;
+            previousCap = null;
             latest = null;
         },
 

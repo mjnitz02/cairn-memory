@@ -99,16 +99,45 @@ Cairn separates the two:
   then it drops to half the budget rather than shaving off the one summary that
   overflowed, so the next rebuild is half a budget of growth away.
 
-The block gets 35% of the prompt SillyTavern may send: the context window minus
-the reserved response. There is no setting for it, and Qvink's short-term limit
-no longer counts (`docs/decisions.md` D-0038). Cairn does not measure the rest
-of the prompt and adjust: the same chat always gets the same block, so nothing it
-saw last turn can change this one.
+### How much room the block gets
 
-The fixed share cannot see a large card and lorebook on a small context. On text
-completion, SillyTavern then drops the oldest raw messages without saying so. The
-inspector warns, and the log sets `prompt_near_limit`, when a prompt is within 5% of
-its limit. A prompt that lost messages ends just under the limit, not at it.
+At most 35% of the prompt SillyTavern may send — the context window minus the
+reserved response — and less than that when the rest of the prompt does not leave
+that much (`docs/decisions.md` D-0038, D-0052). There is no setting for it, and
+Qvink's short-term limit no longer counts.
+
+What is left over is what the rest of the prompt does not need:
+
+| Reserved for | Worked out from |
+|---|---|
+| The character card | The card fields that reach the prompt, and the system prompt SillyTavern would use |
+| The lorebook | SillyTavern's own World Info budget, or every enabled entry if they come to less |
+| The raw history | The heaviest nineteen messages in a row your chat has had — the widest the raw window ever gets |
+| The world state | Its largest possible size, or nothing while it is switched off |
+| Everything else | 5% of the prompt, for instruct wrappers, other extensions and the tokenizer's own error |
+
+**None of it is measured from a prompt that went out.** Every number above comes
+from the chat and your settings, so the same chat always gets the same block,
+nothing Cairn saw last turn can change this one, and reloading the page costs no
+warm-up. Nothing is stored, either.
+
+That also means the cap holds still. It moves when one of its inputs moves — you
+edit the card or a lorebook, you change the context size or response length, or
+your chat writes a heavier run of messages than it ever has — and on no other
+turn. A cap that falls below the block costs one rebuild; a cap that rises costs
+nothing and never brings evicted summaries back. If a reserve cannot be read at
+all, the block keeps the flat 35% and the inspector says so.
+
+On a chat whose card, lorebook and history already fill the prompt, the block
+keeps a tenth of it and the inspector calls the chat starved: an empty block
+would lose all of the memory to save a few raw messages.
+
+Because every reserve is a ceiling, a full prompt should land under 95% of the
+limit. The inspector warns, and the log sets `prompt_near_limit`, when one does
+not — which now means a reserve missed something rather than that the block was
+too greedy. On text completion SillyTavern fills the history to the limit and
+then fits the card's example messages into what is left, so an overfull prompt
+loses the examples and the oldest messages without saying so.
 
 Two things the inspector says about this, because neither is visible in play:
 

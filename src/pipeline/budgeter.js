@@ -9,11 +9,13 @@
  * dropping down to a floor rather than shaving the single summary that happened
  * to overflow.
  *
- * Two numbers, both fixed for the chat rather than measured turn to turn
- * (docs/decisions.md D-0033):
+ * Two numbers, both worked out from the chat and the settings rather than
+ * measured turn to turn (docs/decisions.md D-0033):
  *
- *   `cap`   — a fixed share of the max prompt, `CAP_FRACTION` (docs/decisions.md
- *             D-0038). No setting, and nothing measured feeds it.
+ *   `cap`   — the smaller of `CAP_FRACTION` of the max prompt and the room the
+ *             rest of the prompt leaves, never below `MIN_CAP_FRACTION`
+ *             (docs/decisions.md D-0038, D-0052). No setting, and nothing
+ *             measured feeds it.
  *   `floor` — where a rebuild lands. Half the cap, so the next rebuild is half a
  *             cap of growth away instead of one summary away (D-0026).
  *
@@ -33,18 +35,72 @@
 export const FLOOR_FRACTION = 0.5;
 
 /**
- * The block's share of the max prompt. 35% rather than 30% keeps Esin at least the
- * 7,500 tokens qvink's limit gave it (docs/decisions.md D-0038).
+ * The block's **ceiling** share of the max prompt. 35% rather than 30% keeps Esin
+ * at least the 7,500 tokens qvink's limit gave it (docs/decisions.md D-0038).
  */
 export const CAP_FRACTION = 0.35;
 
 /**
- * @param {number} maxPromptTokens ST's `getMaxPromptTokens` (util/context-size.js).
- * @returns {number} The cap, in tokens. Fixed for the chat (docs/decisions.md D-0033).
+ * Left unreserved for what no reserve can see: the instruct wrappers, the story
+ * string's own wording, ST's token padding, other extensions' injections and the
+ * gap between ST's tokenizer and the model's. Deliberately the same 5% as
+ * `NEAR_LIMIT_FRACTION`'s complement (util/context-size.js), so with every other
+ * reserve at its upper bound a full prompt lands under that line — and
+ * `prompt_near_limit` firing means a reserve missed something (D-0052).
  */
-export function memoryCap(maxPromptTokens) {
+export const MARGIN_FRACTION = 0.05;
+
+/**
+ * The floor under the cap. A card, lorebook and raw window that already fill the
+ * prompt would otherwise leave the block nothing; keeping a tenth means the chat
+ * keeps some memory while ST trims history as it does today. Reported as
+ * `starved`, because it is a judgement call and not a budget that adds up
+ * (docs/decisions.md D-0052).
+ */
+export const MIN_CAP_FRACTION = 0.10;
+
+/**
+ * How much room the memory block gets, from what the rest of the prompt needs.
+ *
+ * Pure arithmetic over reserves someone else worked out (prompt/reserves.js).
+ * Nothing measured from a prompt reaches it, which is what keeps the cap a
+ * function of the chat: the same chat and settings always give the same number,
+ * and a reload costs nothing (docs/decisions.md D-0033).
+ *
+ * @param {{maxPromptTokens: number,
+ *          reserves?: {card: number, lore: number, window: number, state: number}|null}} input
+ *        `reserves` null means a reserve could not be read at all; the cap falls
+ *        back to the plain share rather than guessing (CLAUDE.md §4.17).
+ * @returns {{cap: number, share: number, room: number|null, margin: number|null,
+ *            minimum: number, parts: object|null,
+ *            limitedBy: 'share'|'room'|'starved'|'unknown'}}
+ */
+export function deriveCap({ maxPromptTokens, reserves } = {}) {
     const max = Number.isFinite(maxPromptTokens) ? Math.max(0, maxPromptTokens) : 0;
-    return Math.floor(max * CAP_FRACTION);
+    const share = Math.floor(max * CAP_FRACTION);
+    const minimum = Math.floor(max * MIN_CAP_FRACTION);
+
+    if (!reserves) {
+        return { cap: share, share, room: null, margin: null, minimum, parts: null, limitedBy: 'unknown' };
+    }
+
+    const parts = {
+        card: nonNegative(reserves.card),
+        lore: nonNegative(reserves.lore),
+        window: nonNegative(reserves.window),
+        state: nonNegative(reserves.state),
+    };
+    const margin = Math.floor(max * MARGIN_FRACTION);
+    const room = max - parts.card - parts.lore - parts.window - parts.state - margin;
+
+    const limitedBy = share <= room ? 'share' : (room >= minimum ? 'room' : 'starved');
+    const cap = { share, room, starved: minimum }[limitedBy];
+
+    return { cap, share, room, margin, minimum, parts, limitedBy };
+}
+
+function nonNegative(value) {
+    return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
 }
 
 /**
