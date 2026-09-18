@@ -1,10 +1,10 @@
 /**
- * The state strategy: a JSON merge patch against the current state, after each
- * reply (docs/decisions.md D-0044).
+ * The state strategy: the whole record back from the model, after each reply
+ * (docs/decisions.md D-0053, superseding D-0044's merge patch).
  *
  * The same boundary as `perMessage` (DESIGN.md §11): what the prompt says and how
- * a reply is read live here. Merging the patch belongs to the schema
- * (state-schema.js), so this parser only finds the patch or rejects the reply.
+ * a reply is read live here. Merging the record belongs to the schema
+ * (state-schema.js), so this parser only finds the record or rejects the reply.
  *
  * Pure: no ST, no network. ST's macro expansion comes in as `expand`.
  */
@@ -14,13 +14,12 @@ import {
     MAX_CHARACTERS,
     MAX_NAME_CHARS,
     TEXT_FIELDS,
-    renderState,
     validState,
 } from './state-schema.js';
 import { hashString } from '../util/hash.js';
 import { renderTemplate } from '../util/template.js';
 
-/** As for summaries: room for a reasoning model's thinking before a short patch. */
+/** As for summaries: room for a reasoning model's thinking before a short record. */
 export const STATE_MAX_TOKENS = 2048;
 
 /** The most messages one update reads. The caller picks the newest ones. */
@@ -30,19 +29,12 @@ export const STATE_MAX_MESSAGES = 6;
 export const STATE_MAX_EARLIER = 5;
 
 /**
- * Built in, not a setting (D-0044): the field list and caps are the schema's,
+ * Built in, not a setting (D-0044, D-0053): the field list and caps are the schema's,
  * so an edit could only break the parser. A value over its cap is dropped, not
  * cut, which is why the model is told the caps. It records stated facts only, so
  * the memory model never takes over telling the story (D-0043).
  */
-export const STATE_PROMPT = `You keep a short record of the hard facts of a roleplay scene: where it is, who is in it, and what each character's hair and outfit are right now. Character descriptions often fix these, so the record carries forward whatever the story has since changed. Below are the record as it stood and the messages that came after it. Reply with a JSON merge patch that brings the record up to the end of the messages.
-
-{{#if first}}
-IMPORTANT: The record is empty, so this patch is its first entry. Fill in every field the messages and earlier events establish, including hair and outfit for each character present, even where they are only mentioned in passing. Leave out only what they don't say.
-{{/if}}
-{{#if update}}
-IMPORTANT: Include only what the messages change. Leave every other field out of the patch, so its wording stays exactly as it is.
-{{/if}}
+export const STATE_PROMPT = `You keep a short record of the hard facts of a roleplay scene: where it is, who is in it, and what each character's hair and outfit are right now. Character descriptions often fix these, so the record carries forward whatever the story has since changed. Below are the record as it stands and the messages that came after it. Reply with the complete record as it stands at the end of those messages.
 
 Fields, with the most characters each value may use:
 - location: where the scene is, most specific place first (${TEXT_FIELDS.location})
@@ -51,25 +43,20 @@ Fields, with the most characters each value may use:
   - hair: hairstyle and its condition (${CHARACTER_FIELDS.hair})
   - outfit: the complete outfit, underwear included (${CHARACTER_FIELDS.outfit})
 
-Patch rules:
-- A changed field gets its new value. A field that no longer applies gets null.
-- A character who leaves the scene gets null. A character who arrives gets an entry, with hair and outfit if the messages describe them.
-- Values are short, plain phrases stating what the messages say. Keep each value within its limit; a longer one is thrown away.
-- When nothing changed, reply {}.
+Rules:
+- Write every field every time. Where the messages changed nothing, copy the value across exactly as it stands rather than rewording it.
+- Fill in any field the record is missing whenever the messages or the characters' own descriptions establish it, even in passing. A blank field is worse than an old one.
+- List exactly the characters present at the end of the messages. Anyone you leave out has left the scene.
+- Values are short, plain phrases stating what the messages say. Keep each value within its limit; a longer one is thrown away and the stored value kept.
 
 Example.
-State: {"location":"The ferry terminal, waiting room","characters":{"Wren":{"hair":"Loose, damp from the rain","outfit":"Wool coat over a grey jumper, jeans, boots"}}}
+Record: {"location":"The ferry terminal, waiting room","weather":"Drizzle outside; damp and cold indoors","characters":{"Wren":{"hair":"Loose, damp from the rain","outfit":"Wool coat over a grey jumper, jeans, boots"}}}
 Messages: Wren shrugs off her soaked coat, ties her hair back and walks out to the pier.
-Patch: {"location":"The ferry terminal, outer pier","characters":{"Wren":{"hair":"Tied back","outfit":"Grey jumper, jeans, boots"}}}
+Reply: {"location":"The ferry terminal, outer pier","weather":"Drizzle outside; damp and cold indoors","characters":{"Wren":{"hair":"Tied back","outfit":"Grey jumper, jeans, boots"}}}
 
-{{#if first}}
-When unsure whether a detail still holds at the end of the messages, leave it out.
-{{/if}}
-{{#if update}}
-When unsure whether something changed, leave it out.
-{{/if}}
+Where the messages leave a detail unsettled, carry the record's own value across unchanged.
 
-Current state:
+Current record:
 {{state}}
 
 {{#if earlier}}
@@ -80,10 +67,10 @@ Earlier events:
 New messages:
 {{messages}}
 
-Reply with the JSON patch only.`;
+Reply with the complete record as JSON, and nothing else.`;
 
-export const statePatch = {
-    id: 'state-patch-v1',
+export const stateRecord = {
+    id: 'state-record-v1',
 
     /**
      * @param {object} request
@@ -106,12 +93,7 @@ export const statePatch = {
             throw new RangeError(`A state request takes at most ${STATE_MAX_EARLIER} earlier scenes`);
         }
 
-        // A changes-only instruction on an empty record leaves out whatever was set before
-        // these messages, hair most of all (docs/decisions.md D-0048).
-        const first = renderState(state) === '';
         const content = renderTemplate(STATE_PROMPT, {
-            first: first ? 'yes' : '',
-            update: first ? '' : 'yes',
             state: JSON.stringify(state),
             earlier: earlier.map((scene) => (typeof scene === 'string' ? scene : scene?.text ?? '')).join('\n'),
             messages: messages.map((message) => `${message?.name ?? ''}: ${message?.mes ?? ''}`).join('\n\n'),
@@ -124,27 +106,27 @@ export const statePatch = {
         };
     },
 
-    parse: parseStatePatch,
+    parse: parseStateReply,
 };
 
 /**
- * Find the patch in a reply, or reject it. The first JSON object in the reply is
- * the patch, wherever the model put it; field-level problems are left to
- * `applyPatch`, which drops them one at a time. A bracket still open when the
+ * Find the record in a reply, or reject it. The first JSON object in the reply is
+ * the record, wherever the model put it; field-level problems are left to
+ * `mergeReply`, which drops them one at a time. A bracket still open when the
  * reply ends is a cut-off reply: ST returns no finish reason
  * (public/scripts/custom-request.js:60).
  *
  * @param {string} content
- * @returns {{ok: true, patch: object} | {ok: false, reason: 'empty'|'refusal'|'format'|'truncated'}}
+ * @returns {{ok: true, record: object} | {ok: false, reason: 'empty'|'refusal'|'format'|'truncated'}}
  */
-export function parseStatePatch(content) {
+export function parseStateReply(content) {
     const thought = stripThinking(content);
     if (thought.truncated) return reject('truncated');
     const text = unfence(thought.text).trim();
     if (!text) return reject('empty');
 
     const found = firstJson(text);
-    if (found.parsed) return isObject(found.value) ? { ok: true, patch: found.value } : reject('format');
+    if (found.parsed) return isObject(found.value) ? { ok: true, record: found.value } : reject('format');
     if (looksLikeRefusal(text)) return reject('refusal');
     if (found.unclosed) return reject('truncated');
     return reject('format');
@@ -153,7 +135,7 @@ export function parseStatePatch(content) {
 /**
  * The first bracketed span that parses as JSON. Spans that do not parse, like a
  * `[Current scene]` echoed in a preamble, are skipped whole, so an object nested
- * inside a broken one is never taken for the patch.
+ * inside a broken one is never taken for the record.
  */
 function firstJson(text) {
     for (let start = text.search(/[{[]/); start >= 0;) {

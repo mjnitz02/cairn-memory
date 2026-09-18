@@ -8,6 +8,91 @@ what we believed and why it changed.
 
 ---
 
+## D-0053 — The model sends the whole world state back, and nothing is ever cleared
+**2026-09-18.** Supersedes D-0044's "why a patch", and folds in D-0048, whose
+first-build branch this removes.
+
+**The objective this is judged against.** Cairn's only goal is *the next message in
+the story, written as well as possible*. Producing a perfect delta, a perfect
+summary or a perfect world state are not goals — each only looks like one when
+taken in isolation. The roleplay model already has the card, the world info, the
+summaries, the recent messages **and** the state, and writes from all of them
+together. So the state's job is narrow: flag the few hard facts the card or the
+summaries fix that the story has since contradicted. A *filled* field is the
+nudge. A **missing** field is the real loss, because the card's stale value then
+wins uncontested. A character who lingers a turn too long costs nothing, because
+the recent messages say where everyone is. This is the same asymmetry D-0023
+settled for lorebook entries, and it applies here for the same reason.
+
+**What went wrong.** Under D-0044 the model was asked for a JSON merge patch of
+what changed. A field that was never set was never a change, so it was never asked
+for again — the record could only be repaired by the story happening to mention the
+fact. D-0048 patched the fully-empty case, but the moment one field landed, every
+remaining hole became permanent. In the 18 September run on Esin branch #2, the
+baseline state at message 84 had been written before D-0048 shipped and held a
+location and two bare characters. The next four updates re-established weather and
+outfit, then hair, over four turns, and one of them removed a character. Hair had
+been missing for a day of play.
+
+**The decision.**
+1. **The reply is the whole record, every turn.** "Here is the record, here are the
+   messages, return the record as it stands now." One prompt with no branches, so
+   one prompt hash covers every state.
+2. **Nothing is ever cleared.** Nothing in this schema can legitimately become
+   unknown: `weather` already covers indoor conditions, and a character always has
+   hair and is either wearing something or isn't. A `null`, a blank or a value over
+   its cap is dropped and the stored value kept. The prompt no longer mentions
+   `null` at all, which is what used to invite it.
+3. **Fields merge, the cast replaces.** A field the reply leaves out keeps its
+   stored bytes, so a reply that forgets hair loses nothing. The characters the
+   reply lists are the characters present, so leaving someone out is how they
+   leave — except that a reply emptying the cast is refused, since an empty
+   `Present:` line nudges nothing.
+
+**Why the cast replaces, and it is not about departures.** Departures do not matter
+much on their own. `MAX_CHARACTERS` is 5, and under never-remove, five departed
+characters hold every slot and the character who actually walks into the scene is
+rejected as `too-many`. That is a hole in a field that matters. Replacement makes
+the slots self-clearing.
+
+**Why not a `charactersPresent` roster**, as WTrackerLite has (`src/config.ts:52-60`).
+It is a schema change, a store bump and a migration (CLAUDE.md §8.32) to fix a
+problem the objective above says is not one.
+
+**Why the tokens don't argue for the patch.** From the same run, output tokens per
+call were 1, 76, 104 and 63, against a rendered state of 47–65 tokens and a full
+JSON record of about 80. The turn that changed four field groups cost *more* as a
+patch than sending everything would have. Against ~1,450 input tokens a request,
+the difference either way is noise.
+
+**Why D-0044's rewording argument no longer holds.** It kept the patch so that
+untouched fields kept their bytes. But D-0042 put the state at depth 1, and its own
+reasoning is that the depth matters more than the change rate: two messages go in
+below it every turn, so its position no longer matches *even when the text didn't
+change*. The prefix is re-read either way. The prompt still asks the model to copy
+an unchanged value across exactly, which is the cheap half of the protection.
+
+**What we keep.** The merge, the caps, falling back to the stored value when one is
+over its cap, and computing `changed` by comparing before and after rather than
+believing the model (CLAUDE.md §4.18).
+
+**Costs we accept.**
+- `state_change_kinds` gets noisier: rewording now registers as a real change, so
+  the change rate stops being a clean signal that the scene moved.
+- A no-change turn costs ~80 output tokens rather than 1.
+- A character who leaves and returns comes back with empty fields, so one turn may
+  show them present with no hair or outfit. The next reply refills it.
+
+**What this does not fix.** A state built under the old prompt keeps its holes: the
+merge repairs a field once the model writes it, but there is no way to clear a
+state and force a fresh build. Naming it here rather than building it.
+
+**Reopens if:** replies start arriving sparse often enough that the cast churns in
+play, or a run shows fields still missing after the model has been asked for them
+outright.
+
+---
+
 ## D-0052 — The memory cap is the smaller of 35% and what the chat leaves
 **2026-09-17.** P6, from `docs/p6-plan.md`. Supersedes the fixed share in D-0038,
 which stands as the ceiling and as the fallback.

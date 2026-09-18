@@ -411,8 +411,9 @@ after P4 or P5.
 **P3 — State.** Structured, diffed, per-message. Replaces WTrackerLite.
 
 *Landed:* WTrackerLite's fields and nothing more, so the memory model never steers the story
-(`docs/decisions.md` D-0043). One update per reply, a JSON merge patch from a built-in prompt
-(D-0044), with a first build that records everything the messages establish (D-0048). A full
+(`docs/decisions.md` D-0043). One update per reply, from a built-in prompt (D-0044), which asks
+for the whole record back and never clears a field, so a hole heals instead of persisting
+(D-0053, superseding the merge patch of D-0044 and the first build of D-0048). A full
 snapshot on the newest message read, valid while what it read hashes the same, so swipes,
 edits, deletions and branches roll back with no code (D-0045). Placed just after that message
 (D-0042), independent of the handover gate (D-0047), and never while WTracker is loaded

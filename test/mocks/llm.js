@@ -65,65 +65,81 @@ export const badOutputs = {
 };
 
 /**
- * Realistic replies to the state prompt, which asks for a JSON merge patch
- * (docs/decisions.md D-0044). Each takes the patch the model *meant* and the
- * state it was sent. No Cairn state reply has been seen in play yet, so the
- * shapes are the summary catalogue's, carried over to JSON, plus WTrackerLite's
- * habit of regenerating the whole state. Every one has a case in
+ * Realistic replies to the state prompt, which asks for the whole record back
+ * (docs/decisions.md D-0053). Each takes the record the model *meant* to send and
+ * the state it was sent. No Cairn state reply has been seen in play yet, so the
+ * shapes are the summary catalogue's, carried over to JSON, plus the ways a model
+ * asked for a whole record sends less than one. Every one has a case in
  * test/state-strategy.test.js (CLAUDE.md §3.12).
  */
 export const badStateOutputs = {
     /** A json fence, pretty-printed. */
-    fenced: (patch) => '```json\n' + JSON.stringify(patch, null, 2) + '\n```',
+    fenced: (record) => '```json\n' + JSON.stringify(record, null, 2) + '\n```',
 
     /** Preamble and sign-off around bare JSON. */
-    preambleAndSignOff: (patch) =>
-        `Here is the patch for the new messages:\n\n${JSON.stringify(patch, null, 2)}\n\nLet me know if anything should change!`,
+    preambleAndSignOff: (record) =>
+        `Here is the updated record for the new messages:\n\n${JSON.stringify(record, null, 2)}\n\nLet me know if anything should change!`,
 
     /** Reasoning model leaks its thinking into content. */
-    leakedReasoning: (patch) => `<think>Wren moved outside. Location and outfit change.</think>\n${JSON.stringify(patch)}`,
+    leakedReasoning: (record) => `<think>Wren moved outside. Location and outfit change.</think>\n${JSON.stringify(record)}`,
 
     /** The template opened the think block in the prompt, so only its close arrives. */
-    orphanThinkClose: (patch) => `Wren moved outside, so the location changes.\n</think>\n\n${JSON.stringify(patch)}`,
+    orphanThinkClose: (record) => `Wren moved outside, so the location changes.\n</think>\n\n${JSON.stringify(record)}`,
 
     /** Ran out of tokens while still thinking. */
     unterminatedReasoning: () => '<think>Wren moved outside. First I should check whether the weather',
 
     /** Hit max_tokens partway through the object. ST reports no finish reason (custom-request.js:60). */
-    truncated: (patch) => {
-        const json = JSON.stringify(patch, null, 2);
+    truncated: (record) => {
+        const json = JSON.stringify(record, null, 2);
         return json.slice(0, Math.floor(json.length * 0.6));
     },
 
     /** Content-policy refusal in place of output. */
     refusal: () => 'I’m sorry, but I can’t continue with this scene.',
 
-    /** Describes the change in prose instead of writing the patch. */
+    /** Describes the change in prose instead of writing the record. */
     prose: () => 'Wren has taken off her coat and moved out to the outer pier of the ferry terminal.',
 
-    /** Ignores "patch" and sends the whole state back, as a regenerating tracker would. */
-    fullState: (patch, state) => JSON.stringify(mergePatch(state, patch), null, 2),
+    /** Falls back into sending a delta: one field, no cast at all. Everything else must stand. */
+    sparse: (record) => JSON.stringify({ location: record.location }),
 
-    /** Wraps the patch in an array. */
-    array: (patch) => JSON.stringify([patch]),
+    /** The reported failure: a full cast with hair left out of every character (D-0053). */
+    missingFields: (record) => JSON.stringify({
+        ...record,
+        characters: Object.fromEntries(Object.entries(record.characters)
+            .map(([name, fields]) => [name, { outfit: fields.outfit }])),
+    }),
+
+    /** Lists one of the two characters present, which is how a character leaves. */
+    castDropped: (record) => JSON.stringify({
+        ...record,
+        characters: Object.fromEntries(Object.entries(record.characters).slice(1)),
+    }),
+
+    /** Sends nobody at all, which is a lazy reply rather than an empty room. */
+    emptyCast: (record) => JSON.stringify({ ...record, characters: {} }),
+
+    /** Wraps the record in an array. */
+    array: (record) => JSON.stringify([record]),
 
     /** Tracks the time of day anyway, which the schema leaves to the roleplay model. */
-    unknownField: (patch) => JSON.stringify({ ...patch, time: 'Late evening' }),
+    unknownField: (record) => JSON.stringify({ ...record, time: 'Late evening' }),
 
     /** weather broken into parts, not one phrase. */
-    wrongType: (patch) => JSON.stringify({ ...patch, weather: { condition: 'Rain', temperature: 'Cold' } }),
+    wrongType: (record) => JSON.stringify({ ...record, weather: { condition: 'Rain', temperature: 'Cold' } }),
 
     /** Writes a paragraph where a phrase goes. */
-    overlong: (patch) => JSON.stringify({
-        ...patch,
+    overlong: (record) => JSON.stringify({
+        ...record,
         location: 'The outer pier of the ferry terminal, past the ticket office and the shuttered café, where the boards are slick with rain and the harbour lights are just coming on',
     }),
 
     /** A crowd arrives: four newcomers join two present characters, one past the cap. */
-    sixCharacters: (patch) => JSON.stringify({
-        ...patch,
+    sixCharacters: (record) => JSON.stringify({
+        ...record,
         characters: {
-            ...patch.characters,
+            ...record.characters,
             Bram: { outfit: 'Harbour uniform' },
             Cora: { hair: 'Short and grey' },
             Dell: {},
@@ -132,38 +148,27 @@ export const badStateOutputs = {
     }),
 
     /** A mood beside the meant change: the kind of field upstream WTracker tracked and the schema leaves out. */
-    unknownSubKey: (patch) => JSON.stringify({
-        ...patch,
-        characters: { ...patch.characters, Wren: { ...patch.characters?.Wren, mood: 'calmer' } },
+    unknownSubKey: (record) => JSON.stringify({
+        ...record,
+        characters: { ...record.characters, Wren: { ...record.characters?.Wren, mood: 'calmer' } },
     }),
 
     /** Title-cased keys, as a model mirroring the `Location:` labels would write them. */
-    capitalisedKeys: (patch) => JSON.stringify(capitalise(patch)),
+    capitalisedKeys: (record) => JSON.stringify(capitalise(record)),
 
     /** Nothing changed. */
     noChange: () => '{}',
 
-    /** A character leaves and a field stops applying, beside the meant change. */
-    nullRemovals: (patch) => JSON.stringify({
-        ...patch,
+    /** Still writing nulls, as the merge-patch prompt asked for: a field ended, a character gone. */
+    nullRemovals: (record) => JSON.stringify({
+        ...record,
         weather: null,
-        characters: { ...patch.characters, Aster: null },
+        characters: { ...record.characters, Aster: null },
     }),
 
     /** Empty, which a stalled endpoint returns with a 200. */
     empty: () => '',
 };
-
-/** RFC 7386 §2's MergePatch, as written there: what a model sending the full state meant. */
-function mergePatch(target, patch) {
-    if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) return patch;
-    const result = typeof target === 'object' && target !== null && !Array.isArray(target) ? { ...target } : {};
-    for (const [name, value] of Object.entries(patch)) {
-        if (value === null) delete result[name];
-        else result[name] = mergePatch(result[name], value);
-    }
-    return result;
-}
 
 /** Title-case the schema's keys, leaving character names and values alone. */
 function capitalise(patch) {

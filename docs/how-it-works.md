@@ -270,13 +270,21 @@ recorded, because the roleplay model is the one telling the story. A typical
 state is about 55 tokens, and the largest the fields allow is about 330.
 
 **When it runs.** In the same run as the summaries, before them, because the next
-prompt carries it. After each reply, and as soon as you edit a message, Cairn asks
-the memory model for a JSON merge patch against the current state, from the
-messages since it (at most 6 of the newest). The patch holds only what changed,
-except on a first build into an empty record, which asks for every field the
-messages establish, so a hairstyle set earlier isn't skipped for not changing. A
+prompt carries it. After each reply, and as soon as you edit a message, Cairn sends
+the memory model the record as it stands and the messages since it (at most 6 of
+the newest), and asks for the whole record back, accurate as of the last message. A
 cold start on a long chat sends the summaries just before those 6 as background,
-so it is still one request. The
+so it is still one request.
+
+**Nothing is ever cleared.** A field the reply leaves out keeps the value it had,
+and so does one the model sends blank or too long. A filled field is the whole
+point of the tier — an empty one lets the character card's original wording win
+again — and nothing here can stop being true: a character always has hair, and is
+either wearing something or isn't. What the reply *does* decide is who is in the
+scene: the characters it lists are the characters present, so leaving someone out
+is how they leave. A reply that lists nobody at all is ignored.
+
+The
 state is stored on the newest message it read, in `message.extra.cairn.state`,
 with a hash of the messages it read. A reply that arrives after any of those
 messages changed, or after you left the chat, is thrown away. A failed state

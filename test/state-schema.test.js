@@ -7,7 +7,7 @@ import {
     MAX_STATE_CHARS,
     STATE_HEADER,
     TEXT_FIELDS,
-    applyPatch,
+    mergeReply,
     renderState,
     validState,
 } from '../src/memory/state-schema.js';
@@ -46,7 +46,7 @@ describe('the schema', () => {
         expect(STORE_V2.state.changed.every((kind) => CHANGE_KINDS.includes(kind))).toBe(true);
     });
 
-    it('rejects what applyPatch never writes', () => {
+    it('rejects what mergeReply never writes', () => {
         expect(validState({})).toBe(true);
         for (const bad of [
             null, [], 'The pier',
@@ -69,11 +69,14 @@ describe('the schema', () => {
     });
 });
 
-describe('applying a patch', () => {
-    it('changes what the patch names and keeps every other field\'s bytes', () => {
-        const { value, changed, dropped } = applyPatch(TERMINAL, {
+/** The stored cast, as a reply that keeps everyone present would list it. */
+const cast = (extra = {}) => ({ ...structuredClone(TERMINAL.characters), ...extra });
+
+describe('merging a reply', () => {
+    it('changes what the reply names and keeps every other field\'s bytes', () => {
+        const { value, changed, dropped } = mergeReply(TERMINAL, {
             location: 'The ferry terminal, outer pier',
-            characters: { Wren: { outfit: 'Grey jumper, jeans, boots' } },
+            characters: cast({ Wren: { outfit: 'Grey jumper, jeans, boots' } }),
         });
 
         expect(value).toEqual({
@@ -86,35 +89,54 @@ describe('applying a patch', () => {
     });
 
     it('reads {} as no change', () => {
-        expect(applyPatch(TERMINAL, {})).toEqual({ value: TERMINAL, changed: [], dropped: [] });
+        expect(mergeReply(TERMINAL, {})).toEqual({ value: TERMINAL, changed: [], dropped: [] });
     });
 
     it('records nothing when a patch repeats current values, as a model resending the whole state does', () => {
-        const { value, changed } = applyPatch(TERMINAL, structuredClone(TERMINAL));
+        const { value, changed } = mergeReply(TERMINAL, structuredClone(TERMINAL));
 
         expect(value).toEqual(TERMINAL);
         expect(changed).toEqual([]);
     });
 
     it('builds a state from {} on a cold start', () => {
-        const { value, changed } = applyPatch({}, structuredClone(TERMINAL));
+        const { value, changed } = mergeReply({}, structuredClone(TERMINAL));
 
         expect(value).toEqual(TERMINAL);
         expect(changed).toEqual(['location', 'weather', 'characters.arrived']);
     });
 
-    it('clears a field on null or a blank string, leaving it out rather than empty', () => {
-        const { value, changed } = applyPatch(TERMINAL, { weather: null, location: '  ', characters: { Aster: { hair: '' } } });
+    it('never clears a field: a null or a blank keeps the stored value (docs/decisions.md D-0053)', () => {
+        const { value, changed, dropped } = mergeReply(TERMINAL, {
+            weather: null,
+            location: '  ',
+            characters: cast({ Aster: { hair: '', outfit: TERMINAL.characters.Aster.outfit } }),
+        });
 
-        expect(value).not.toHaveProperty('weather');
-        expect(value).not.toHaveProperty('location');
-        expect(value.characters.Aster).toEqual({ outfit: TERMINAL.characters.Aster.outfit });
-        expect(changed).toEqual(['location', 'weather', 'characters.hair']);
-        expect(validState(value)).toBe(true);
+        expect(value).toEqual(TERMINAL);
+        expect(changed).toEqual([]);
+        expect(dropped).toEqual([
+            { field: 'location', reason: 'blank' },
+            { field: 'weather', reason: 'blank' },
+            { field: 'characters.hair', reason: 'blank' },
+        ]);
+    });
+
+    it('fills a field the record is missing, which is how a hole heals (D-0053)', () => {
+        const held = mergeReply({}, { location: 'The pier', characters: { Wren: { outfit: 'Grey jumper' } } }).value;
+        const { value, changed } = mergeReply(held, {
+            location: 'The pier',
+            weather: 'Wind off the water',
+            characters: { Wren: { hair: 'Tied back', outfit: 'Grey jumper' } },
+        });
+
+        expect(value.weather).toBe('Wind off the water');
+        expect(value.characters.Wren.hair).toBe('Tied back');
+        expect(changed).toEqual(['weather', 'characters.hair']);
     });
 
     it('matches key names case-insensitively', () => {
-        const { value, dropped } = applyPatch(TERMINAL, { Location: 'The pier', CHARACTERS: { Wren: { Outfit: 'Grey jumper' } } });
+        const { value, dropped } = mergeReply(TERMINAL, { Location: 'The pier', CHARACTERS: { Wren: { Outfit: 'Grey jumper' } } });
 
         expect(value.location).toBe('The pier');
         expect(value.characters.Wren.outfit).toBe('Grey jumper');
@@ -122,7 +144,7 @@ describe('applying a patch', () => {
     });
 
     it('takes the first spelling of a key and drops the second', () => {
-        const { value, dropped } = applyPatch(TERMINAL, { location: 'The pier', Location: 'The car park' });
+        const { value, dropped } = mergeReply(TERMINAL, { location: 'The pier', Location: 'The car park' });
 
         expect(value.location).toBe('The pier');
         expect(dropped).toEqual([{ field: 'location', reason: 'duplicate-key' }]);
@@ -130,16 +152,18 @@ describe('applying a patch', () => {
 
     describe('characters', () => {
         it('reaches a character by name whatever the case, keeping the stored spelling', () => {
-            const { value, changed } = applyPatch(TERMINAL, { characters: { wren: { hair: 'Tied back' } } });
+            const { value, changed } = mergeReply(TERMINAL, {
+                characters: { Aster: { ...TERMINAL.characters.Aster }, wren: { hair: 'Tied back' } },
+            });
 
             expect(Object.keys(value.characters)).toEqual(['Aster', 'Wren']);
             expect(value.characters.Wren.hair).toBe('Tied back');
             expect(changed).toEqual(['characters.hair']);
         });
 
-        it('appends a newcomer after everyone already present', () => {
-            const { value, changed } = applyPatch(TERMINAL, {
-                characters: { Brannock: { hair: 'Cropped', outfit: 'Harbour uniform' } },
+        it('keeps everyone still listed in their place and puts a newcomer last', () => {
+            const { value, changed } = mergeReply(TERMINAL, {
+                characters: { Brannock: { hair: 'Cropped', outfit: 'Harbour uniform' }, ...cast() },
             });
 
             expect(Object.keys(value.characters)).toEqual(['Aster', 'Wren', 'Brannock']);
@@ -147,32 +171,50 @@ describe('applying a patch', () => {
         });
 
         it('keeps a newcomer with no fields, since being present is news', () => {
-            const { value } = applyPatch(TERMINAL, { characters: { Brannock: {} } });
+            const { value } = mergeReply(TERMINAL, { characters: cast({ Brannock: {} }) });
 
             expect(value.characters.Brannock).toEqual({});
             expect(validState(value)).toBe(true);
         });
 
-        it('removes a character on null, and all of them on characters: null', () => {
-            const one = applyPatch(TERMINAL, { characters: { Aster: null } });
-            expect(Object.keys(one.value.characters)).toEqual(['Wren']);
-            expect(one.changed).toEqual(['characters.left']);
+        it('removes whoever the reply leaves out, which is how a character leaves (D-0053)', () => {
+            const { value, changed } = mergeReply(TERMINAL, { characters: { Wren: { ...TERMINAL.characters.Wren } } });
 
-            const all = applyPatch(TERMINAL, { characters: null });
-            expect(all.value).not.toHaveProperty('characters');
-            expect(all.changed).toEqual(['characters.left']);
+            expect(Object.keys(value.characters)).toEqual(['Wren']);
+            expect(changed).toEqual(['characters.left']);
         });
 
-        it('lets one leave and another arrive in the same patch at the cap', () => {
-            const five = applyPatch({}, { characters: Object.fromEntries(['A', 'B', 'C', 'D', 'E'].map((n) => [`Crew ${n}`, {}])) }).value;
-            const { value, dropped } = applyPatch(five, { characters: { 'Crew F': { outfit: 'Deck boots' }, 'Crew A': null } });
+        it('keeps the stored cast rather than emptying it, however the reply empties it', () => {
+            for (const characters of [null, {}, 'nobody', ['Wren'], { Aster: null, Wren: null }]) {
+                const { value } = mergeReply(TERMINAL, { characters });
+
+                expect(value.characters, JSON.stringify(characters)).toEqual(TERMINAL.characters);
+            }
+        });
+
+        it('frees a slot for a newcomer when someone is left out at the cap', () => {
+            const five = mergeReply({}, { characters: Object.fromEntries(['A', 'B', 'C', 'D', 'E'].map((n) => [`Crew ${n}`, {}])) }).value;
+            const { value, dropped } = mergeReply(five, {
+                characters: { 'Crew B': {}, 'Crew C': {}, 'Crew D': {}, 'Crew E': {}, 'Crew F': { outfit: 'Deck boots' } },
+            });
 
             expect(Object.keys(value.characters)).toEqual(['Crew B', 'Crew C', 'Crew D', 'Crew E', 'Crew F']);
             expect(dropped).toEqual([]);
         });
 
-        it('changes nothing when removing a character who is not present', () => {
-            expect(applyPatch(TERMINAL, { characters: { Brannock: null } })).toEqual({ value: TERMINAL, changed: [], dropped: [] });
+        it('holds the cap however a reply reaches it, including a malformed entry for someone stored', () => {
+            const newcomers = Object.fromEntries(['A', 'B', 'C', 'D', 'E'].map((n) => [`Crew ${n}`, { outfit: 'Deck boots' }]));
+            const { value, dropped } = mergeReply(TERMINAL, { characters: { ...newcomers, Aster: 'still here', Wren: {} } });
+
+            expect(Object.keys(value.characters)).toHaveLength(MAX_CHARACTERS);
+            expect(dropped).toEqual([
+                { field: 'characters', reason: 'too-many' },
+                { field: 'characters', reason: 'too-many' },
+            ]);
+        });
+
+        it('changes nothing when a reply lists the cast as it stands', () => {
+            expect(mergeReply(TERMINAL, { characters: cast() })).toEqual({ value: TERMINAL, changed: [], dropped: [] });
         });
     });
 
@@ -180,7 +222,7 @@ describe('applying a patch', () => {
         const current = deepFreeze(structuredClone(TERMINAL));
         const patch = deepFreeze({ characters: { Wren: { hair: 'Tied back' }, Brannock: { outfit: 'Harbour uniform' } } });
 
-        const { value } = applyPatch(current, patch);
+        const { value } = mergeReply(current, patch);
 
         expect(current).toEqual(TERMINAL);
         expect(value.characters).not.toBe(current.characters);
@@ -190,10 +232,10 @@ describe('applying a patch', () => {
 
     it('refuses a patch that is not an object and a current state that is not valid', () => {
         for (const patch of [null, [], 'no change', 3]) {
-            expect(() => applyPatch(TERMINAL, patch)).toThrow(TypeError);
+            expect(() => mergeReply(TERMINAL, patch)).toThrow(TypeError);
         }
-        expect(() => applyPatch({ location: x(121) }, {})).toThrow(TypeError);
-        expect(() => applyPatch(undefined, {})).toThrow(TypeError);
+        expect(() => mergeReply({ location: x(121) }, {})).toThrow(TypeError);
+        expect(() => mergeReply(undefined, {})).toThrow(TypeError);
     });
 });
 
@@ -207,18 +249,18 @@ describe('dropping what breaks the schema', () => {
         ['a value over its cap', { weather: x(81) }, { field: 'weather', reason: 'too-long' }],
         ['a character sub-field over its cap', { characters: { Wren: { hair: x(81) } } }, { field: 'characters.hair', reason: 'too-long' }],
         ['a mood, which the roleplay model keeps', { characters: { Wren: { mood: 'calmer' } } }, { field: 'characters.unknown', reason: 'unknown-key' }],
-        ['a character that is not an object', { characters: { Wren: 'still here' } }, { field: 'characters', reason: 'wrong-type' }],
+        ['a character that is not an object', { characters: cast({ Wren: 'still here' }) }, { field: 'characters', reason: 'wrong-type' }],
         ['characters as a list', { characters: ['Wren'] }, { field: 'characters', reason: 'wrong-type' }],
-        ['a name over its cap', { characters: { [x(41)]: {} } }, { field: 'characters', reason: 'bad-name' }],
-        ['a blank name', { characters: { ' ': {} } }, { field: 'characters', reason: 'bad-name' }],
-        ['an integer-like name, which would enumerate out of order', { characters: { 7: {} } }, { field: 'characters', reason: 'bad-name' }],
-        ['__proto__ as a name', JSON.parse('{"characters": {"__proto__": {"hair": "Slicked back"}}}'), { field: 'characters', reason: 'bad-name' }],
-        ['the same character twice', { characters: { Wren: { hair: 'Tied back' }, WREN: { hair: 'Loose' } } }, { field: 'characters', reason: 'duplicate-key' }],
-        ['an outfit as a list of garments', { characters: { Wren: { outfit: ['Jumper', 'jeans'] } } }, { field: 'characters.outfit', reason: 'wrong-type' }],
+        ['a name over its cap', { characters: cast({ [x(41)]: {} }) }, { field: 'characters', reason: 'bad-name' }],
+        ['a blank name', { characters: cast({ ' ': {} }) }, { field: 'characters', reason: 'bad-name' }],
+        ['an integer-like name, which would enumerate out of order', { characters: cast({ 7: {} }) }, { field: 'characters', reason: 'bad-name' }],
+        ['__proto__ as a name', { characters: JSON.parse(`{"__proto__": {"hair": "Slicked back"}, ${JSON.stringify('Aster')}: {}, "Wren": {}}`) }, { field: 'characters', reason: 'bad-name' }],
+        ['the same character twice', { characters: cast({ WREN: { hair: 'Loose' } }) }, { field: 'characters', reason: 'duplicate-key' }],
+        ['an outfit as a list of garments', { characters: cast({ Wren: { outfit: ['Jumper', 'jeans'] } }) }, { field: 'characters.outfit', reason: 'wrong-type' }],
     ];
 
     it.each(cases)('drops %s and applies the rest', (_label, bad, drop) => {
-        const { value, dropped } = applyPatch(TERMINAL, { location: 'The pier', ...bad });
+        const { value, dropped } = mergeReply(TERMINAL, { location: 'The pier', ...bad });
 
         expect(dropped).toEqual([drop]);
         expect(value.location).toBe('The pier');
@@ -226,14 +268,14 @@ describe('dropping what breaks the schema', () => {
     });
 
     it('keeps the old value rather than clamping a new one', () => {
-        const { value } = applyPatch(TERMINAL, { location: x(121), characters: { Wren: { outfit: x(121) } } });
+        const { value } = mergeReply(TERMINAL, { location: x(121), characters: { Wren: { outfit: x(121) } } });
 
         expect(value.location).toBe(TERMINAL.location);
         expect(value.characters.Wren.outfit).toBe(TERMINAL.characters.Wren.outfit);
     });
 
     it('takes a value exactly at its cap', () => {
-        const { value, dropped } = applyPatch({}, { location: x(120), characters: { [x(40)]: { hair: x(80), outfit: x(120) } } });
+        const { value, dropped } = mergeReply({}, { location: x(120), characters: { [x(40)]: { hair: x(80), outfit: x(120) } } });
 
         expect(dropped).toEqual([]);
         expect(validState(value)).toBe(true);
@@ -241,14 +283,14 @@ describe('dropping what breaks the schema', () => {
 
     it('drops a sixth character and keeps the five', () => {
         const names = ['A', 'B', 'C', 'D', 'E', 'F'].map((n) => `Crew ${n}`);
-        const { value, dropped } = applyPatch({}, { characters: Object.fromEntries(names.map((name) => [name, { outfit: 'Deck boots' }])) });
+        const { value, dropped } = mergeReply({}, { characters: Object.fromEntries(names.map((name) => [name, { outfit: 'Deck boots' }])) });
 
         expect(Object.keys(value.characters)).toEqual(names.slice(0, 5));
         expect(dropped).toEqual([{ field: 'characters', reason: 'too-many' }]);
     });
 
     it('drops a bad sub-field and keeps the character\'s other changes', () => {
-        const { value, changed, dropped } = applyPatch(TERMINAL, { characters: { Wren: { outfit: 'Grey jumper', hair: 42 } } });
+        const { value, changed, dropped } = mergeReply(TERMINAL, { characters: cast({ Wren: { outfit: 'Grey jumper', hair: 42 } }) });
 
         expect(value.characters.Wren).toEqual({ ...TERMINAL.characters.Wren, outfit: 'Grey jumper' });
         expect(changed).toEqual(['characters.outfit']);
@@ -277,24 +319,24 @@ describe('rendering', () => {
 
         expect(renderState(reordered)).toBe(renderState(TERMINAL));
         expect(renderState(JSON.parse(JSON.stringify(TERMINAL)))).toBe(renderState(TERMINAL));
-        expect(renderState(applyPatch({}, structuredClone(TERMINAL)).value)).toBe(renderState(TERMINAL));
+        expect(renderState(mergeReply({}, structuredClone(TERMINAL)).value)).toBe(renderState(TERMINAL));
     });
 
     it('appends a newcomer to who is present and puts their line last', () => {
-        const lines = renderState(applyPatch(TERMINAL, { characters: { Brannock: { outfit: 'Harbour uniform' } } }).value).split('\n');
+        const lines = renderState(mergeReply(TERMINAL, { characters: cast({ Brannock: { outfit: 'Harbour uniform' } }) }).value).split('\n');
 
         expect(lines).toContain('Present: Aster, Wren, Brannock');
         expect(lines.at(-1)).toBe('Brannock — outfit: Harbour uniform');
     });
 
     it('lists a character with nothing recorded as present, with no line of their own', () => {
-        const { value } = applyPatch({}, { characters: { Wren: {} } });
+        const { value } = mergeReply({}, { characters: { Wren: {} } });
 
         expect(renderState(value)).toBe(`${STATE_HEADER}\nPresent: Wren`);
     });
 
     it('collapses whitespace, so a value cannot open a line of its own', () => {
-        const { value } = applyPatch({}, { location: 'The pier\nPresent: Nobody', characters: { Wren: {} } });
+        const { value } = mergeReply({}, { location: 'The pier\nPresent: Nobody', characters: { Wren: {} } });
 
         expect(renderState(value)).toBe(`${STATE_HEADER}\nLocation: The pier Present: Nobody\nPresent: Wren`);
     });
@@ -316,7 +358,7 @@ describe('the bound', () => {
         const full = (caps) => Object.fromEntries(Object.entries(caps).map(([field, cap]) => [field, x(cap)]));
         const patch = { ...full(TEXT_FIELDS), characters: Object.fromEntries(names.map((name) => [name, full(CHARACTER_FIELDS)])) };
 
-        expect(renderState(applyPatch({}, patch).value)).toHaveLength(MAX_STATE_CHARS);
+        expect(renderState(mergeReply({}, patch).value)).toHaveLength(MAX_STATE_CHARS);
     });
 
     /**
@@ -356,7 +398,7 @@ describe('the bound', () => {
                 if (random() < 0.1) patch.charactersPresent = ['Wren'];
 
                 const before = deepFreeze(state);
-                const { value, changed } = applyPatch(before, deepFreeze(patch));
+                const { value, changed } = mergeReply(before, deepFreeze(patch));
                 const where = `seed ${seed} turn ${turn}`;
 
                 expect(validState(value), where).toBe(true);

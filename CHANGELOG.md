@@ -43,8 +43,11 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
   and each character's hair and outfit. After each reply, and as soon as you edit a
   message, it updates the state through the **Memory connection**, before the
   summaries, and stores it on the newest message it read, in
-  `message.extra.cairn.state`. The first update fills in everything the recent
-  messages say; after that, only what changed. The state goes into the prompt just above your
+  `message.extra.cairn.state`. Each update asks for the whole record back, so a
+  field that was missed once is asked for again every turn until it is filled. A
+  field is never cleared: what the model leaves out, sends blank or writes too long
+  keeps the value it had. The characters the model lists are the ones present, so a
+  character leaves by being left out. The state goes into the prompt just above your
   newest message. Swipes, edits, deletions and branches fall back to the previous
   state on their own. A failed update writes nothing and warns once per run of
   failures. Cairn does nothing with the state while WTracker or WTrackerLite is

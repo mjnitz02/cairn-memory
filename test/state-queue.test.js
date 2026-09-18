@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_ATTEMPTS, createSummarizer } from '../src/pipeline/summarizer.js';
 import { QVINK_EXTENSION } from '../src/memory/scenes.js';
 import { pendingStateJob, WTRACKERS } from '../src/memory/state.js';
-import { STATE_MAX_TOKENS, STATE_PROMPT, statePatch } from '../src/memory/state-strategy.js';
+import { STATE_MAX_TOKENS, STATE_PROMPT, stateRecord } from '../src/memory/state-strategy.js';
 import { hashRange, readScene, readState, writeState } from '../src/store/chat-store.js';
 import { STORE_VERSION } from '../src/store/schema.js';
 import { hashString } from '../src/util/hash.js';
@@ -28,11 +28,13 @@ const PIER = Object.freeze({
     weather: 'Drizzle',
     characters: { Wren: { hair: 'Loose, damp from the rain', outfit: 'Wool coat over a grey jumper, jeans, boots' } },
 });
-const TO_PIER = { location: 'The ferry terminal, outer pier', characters: { Wren: { outfit: 'Grey jumper, jeans, boots' } } };
-const TO_DECK = { location: 'The ferry, upper deck', characters: { Aster: { outfit: 'Oilskin coat' } } };
+/** Whole records, as the prompt now asks for them (docs/decisions.md D-0053). */
+const WREN = { hair: 'Loose, damp from the rain', outfit: 'Grey jumper, jeans, boots' };
+const TO_PIER = { location: 'The ferry terminal, outer pier', weather: PIER.weather, characters: { Wren: { ...WREN } } };
+const TO_DECK = { location: 'The ferry, upper deck', weather: 'Wind over open water', characters: { Wren: { ...WREN }, Aster: { outfit: 'Oilskin coat' } } };
 
-/** A patch as the model sends it: plain JSON, the plausible good case. */
-const reply = (patch) => JSON.stringify(patch);
+/** A record as the model sends it: plain JSON, the plausible good case. */
+const reply = (record) => JSON.stringify(record);
 
 /** Synthetic, finished, and the length of a real reply: the corpus median is ~350 characters. */
 const summary = (index) => `Wren and Aster settled matter ${index} before the tide turned, and agreed to speak of it again at dawn. `
@@ -109,7 +111,7 @@ describe('bringing the state up to date', () => {
         expect(call.maxTokens).toBe(STATE_MAX_TOKENS);
         expect(call.custom).toMatchObject({ stream: false, includePreset: true, includeInstruct: true });
         expect(call.custom.signal).toBeInstanceOf(AbortSignal);
-        expect(call.prompt).toEqual(statePatch.build({ ...job, expand: (text) => context.substituteParams(text) }).messages);
+        expect(call.prompt).toEqual(stateRecord.build({ ...job, expand: (text) => context.substituteParams(text) }).messages);
 
         expect(context.chat[5].extra.cairn).toEqual({
             v: STORE_VERSION,
@@ -117,7 +119,7 @@ describe('bringing the state up to date', () => {
                 value: TO_PIER,
                 read: 6,
                 hash: hashRange(context.chat.slice(0, 6)),
-                changed: ['location', 'characters.arrived'],
+                changed: ['location', 'weather', 'characters.arrived'],
                 prompt: hashString(STATE_PROMPT),
                 at: '2026-09-16T18:00:00.000Z',
             },
@@ -155,7 +157,7 @@ describe('bringing the state up to date', () => {
     });
 
     it('records the change it applied, not the one claimed: repeated values change nothing (CLAUDE.md §4.18)', async () => {
-        const repeated = badStateOutputs.fullState({}, PIER);
+        const repeated = reply(PIER);
         const { context, summarizer } = harness({ chat: playedChat(), responses: [repeated] });
         summarizer.start();
         await exchange(context, 6);
@@ -231,7 +233,7 @@ describe('when it runs', () => {
         expect(stateOf(context.chat, 5).value).toEqual(TO_PIER);
         expect(stateOf(context.chat, 7)).toMatchObject({
             read: 2,
-            value: { location: TO_DECK.location, characters: { Wren: TO_PIER.characters.Wren, Aster: TO_DECK.characters.Aster } },
+            value: TO_DECK,
         });
     });
 
@@ -441,7 +443,7 @@ describe('a state reply that arrives after the chat moved on', () => {
 
 /** CLAUDE.md §4.17: a failure writes nothing, and says so once per streak. */
 describe('state failure', () => {
-    const rejected = Object.keys(badStateOutputs).filter((name) => !statePatch.parse(badStateOutputs[name](TO_PIER, PIER)).ok);
+    const rejected = Object.keys(badStateOutputs).filter((name) => !stateRecord.parse(badStateOutputs[name](TO_PIER, PIER)).ok);
 
     it('covers the rejected bad outputs', () => {
         expect(rejected.sort()).toEqual(['array', 'empty', 'prose', 'refusal', 'truncated', 'unterminatedReasoning']);
@@ -457,7 +459,7 @@ describe('state failure', () => {
             expect(context.chat.some((message) => message.extra.cairn)).toBe(false);
             expect(context.saved.chat).toBe(0);
             expect(warning).toHaveBeenCalledTimes(1);
-            expect(summarizer.status.state).toMatchObject({ calls: 1, written: 0, failures: 1, lastReason: statePatch.parse(badStateOutputs[name](TO_PIER, {})).reason });
+            expect(summarizer.status.state).toMatchObject({ calls: 1, written: 0, failures: 1, lastReason: stateRecord.parse(badStateOutputs[name](TO_PIER, {})).reason });
         });
     }
 
@@ -547,7 +549,7 @@ describe('state failure', () => {
     });
 
     it('never lets an error escape into ST\'s event path', async () => {
-        const stateStrategy = { ...statePatch, build: () => { throw new Error('a bug in the strategy'); } };
+        const stateStrategy = { ...stateRecord, build: () => { throw new Error('a bug in the strategy'); } };
         const { context, summarizer } = harness({ chat: playedChat(), stateStrategy });
         summarizer.start();
 
@@ -575,7 +577,7 @@ describe('what it reports about the state', () => {
             calls: 2, written: 1, failures: 1, lastReason: 'refusal', dropped: 1, gate: 'ready', tracker: null, inFlight: null,
         });
         expect(state.lastMs).toBeGreaterThan(0);
-        expect(state.tokensIn).toBeGreaterThan(Math.ceil(statePatch.build({ messages: [{ name: 'Wren', mes: '' }] }).messages[0].content.length / 4) * 2);
+        expect(state.tokensIn).toBeGreaterThan(Math.ceil(stateRecord.build({ messages: [{ name: 'Wren', mes: '' }] }).messages[0].content.length / 4) * 2);
         expect(state.tokensOut).toBe(replies.reduce((total, text) => total + Math.ceil(text.length / 4), 0));
         const reported = JSON.stringify(summarizer.status);
         expect(reported).not.toContain('ferry');

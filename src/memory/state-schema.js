@@ -1,15 +1,20 @@
 /**
- * Tier 1's shape: the fields and their caps, merging a patch into a state, and
- * rendering a state into the prompt (docs/decisions.md D-0043, D-0044).
+ * Tier 1's shape: the fields and their caps, merging the model's record into ours,
+ * and rendering it into the prompt (docs/decisions.md D-0043, D-0053).
  *
  * The fields are the hard facts a card's description fixes and the story later
  * changes: where the scene is, who is in it, their hair and outfit. Mood, time and
  * plot stay with the roleplay model, so the memory model never steers the story.
  *
- * The caps bound the rendered state by construction. `applyPatch` only produces
+ * The model sends the whole record every turn, so **a field is never cleared** — a
+ * filled field is the nudge, and an empty one hands the card's stale value the
+ * argument (D-0053). Fields merge, so anything the reply leaves out keeps its
+ * bytes; the cast replaces, so who is present is whoever the reply lists.
+ *
+ * The caps bound the rendered state by construction. `mergeReply` only produces
  * values `validState` accepts, `renderState` renders nothing else, and the widest
  * valid state renders to MAX_STATE_CHARS. Nothing is clamped: a value over its cap
- * is dropped, so what is stored is what the model wrote or nothing.
+ * is dropped and the stored one kept.
  *
  * Pure: plain data in, new plain data out. Inputs are never mutated.
  */
@@ -37,25 +42,27 @@ const LABELS = Object.freeze({ location: 'Location', weather: 'Weather' });
 const STATE_KEYS = [...Object.keys(TEXT_FIELDS), 'characters'];
 
 /**
- * Merge a JSON Merge Patch (RFC 7386) into a state. A changed field takes the new
- * value, `null` or a blank string clears it, and `null` for a character removes
- * them. Key names match case-insensitively, and so do
- * character names, keeping the stored spelling.
+ * Merge the model's record into the stored one. A field the reply names takes the
+ * new value; one it leaves out keeps the stored bytes, so a reply that forgets a
+ * field costs nothing. Nothing clears a field: a blank, a `null` or a value past
+ * its cap is dropped and the stored one kept (D-0053). The cast is whoever the
+ * reply lists, so leaving a character out is how they leave. Key names match
+ * case-insensitively, and so do character names, keeping the stored spelling.
  *
  * A field that breaks the schema is dropped and the rest applies. `changed` is
- * worked out from the state before and after, so a patch repeating current values
+ * worked out from the state before and after, so a reply repeating current values
  * records nothing (CLAUDE.md §4.18).
  *
  * @param {object} current A state `validState` accepts; `{}` on a cold start.
- * @param {object} patch The parsed reply.
+ * @param {object} reply The parsed reply: the whole record, as the prompt asks.
  * @returns {{value: object, changed: string[], dropped: Array<{field: string, reason: string}>}}
  */
-export function applyPatch(current, patch) {
-    if (!validState(current)) throw new TypeError('applyPatch needs a valid current state');
-    if (!isObject(patch)) throw new TypeError('A state patch must be an object');
+export function mergeReply(current, reply) {
+    if (!validState(current)) throw new TypeError('mergeReply needs a valid current state');
+    if (!isObject(reply)) throw new TypeError('A state reply must be an object');
 
     const dropped = [];
-    const keys = foldKeys(patch, STATE_KEYS, '', dropped);
+    const keys = foldKeys(reply, STATE_KEYS, '', dropped);
     const value = mergeTexts(current, keys, TEXT_FIELDS, '', dropped);
 
     const characters = keys.has('characters')
@@ -67,7 +74,7 @@ export function applyPatch(current, patch) {
 }
 
 /**
- * Exactly the values `applyPatch` produces: known keys only, every text non-blank
+ * Exactly the values `mergeReply` produces: known keys only, every text non-blank
  * and within its cap, no empty `characters`.
  *
  * @param {unknown} value
@@ -151,42 +158,61 @@ function mergeTexts(before, keys, caps, prefix, dropped) {
     return merged;
 }
 
-/** Departures first, so one character can leave and another arrive in the same patch at the cap. */
-function mergeCharacters(before, patch, dropped) {
-    if (patch === null) return undefined;
-    if (!isObject(patch)) {
+/**
+ * The cast the reply lists, with each character's fields merged onto the stored
+ * ones. Leaving a character out is how they leave, which is what keeps the five
+ * slots from filling with people who have gone.
+ *
+ * A reply that empties the cast is a lazy reply, not a scene with nobody in it, so
+ * the stored cast stands. That is the one guard replacement needs: an empty
+ * `Present:` line nudges nothing, and the next reply puts the cast back.
+ */
+function mergeCharacters(before, reply, dropped) {
+    const stored = new Map(Object.entries(copyCharacters(before) ?? {}));
+    if (!isObject(reply)) {
         dropped.push({ field: 'characters', reason: 'wrong-type' });
         return copyCharacters(before);
     }
 
-    const next = new Map(Object.entries(copyCharacters(before) ?? {}));
+    const cast = new Map();
     const seen = new Set();
-    const updates = [];
-    for (const [written, entry] of Object.entries(patch)) {
-        const name = [...next.keys()].find((stored) => fold(stored) === fold(written)) ?? written;
+    for (const [written, entry] of Object.entries(reply)) {
+        const name = [...stored.keys()].find((known) => fold(known) === fold(written)) ?? written;
         if (seen.has(fold(name))) {
             dropped.push({ field: 'characters', reason: 'duplicate-key' });
-        } else if (!next.has(name) && !validName(name)) {
-            dropped.push({ field: 'characters', reason: 'bad-name' });
-        } else if (entry === null) {
-            next.delete(name);
-        } else if (!isObject(entry)) {
-            dropped.push({ field: 'characters', reason: 'wrong-type' });
-        } else {
-            updates.push([name, entry]);
+            continue;
         }
         seen.add(fold(name));
-    }
 
-    for (const [name, entry] of updates) {
-        if (!next.has(name) && next.size >= MAX_CHARACTERS) {
+        // `null` used to mean "remove"; leaving them out now says the same thing.
+        if (entry === null) continue;
+        if (!stored.has(name) && !validName(name)) {
+            dropped.push({ field: 'characters', reason: 'bad-name' });
+            continue;
+        }
+        // Every path below adds to the cast, so the cap is checked once, before them all.
+        if (cast.size >= MAX_CHARACTERS) {
             dropped.push({ field: 'characters', reason: 'too-many' });
             continue;
         }
+        if (!isObject(entry)) {
+            dropped.push({ field: 'characters', reason: 'wrong-type' });
+            if (stored.has(name)) cast.set(name, { ...stored.get(name) });
+            continue;
+        }
         const keys = foldKeys(entry, Object.keys(CHARACTER_FIELDS), 'characters.', dropped);
-        next.set(name, mergeTexts(next.get(name) ?? {}, keys, CHARACTER_FIELDS, 'characters.', dropped));
+        cast.set(name, mergeTexts(stored.get(name) ?? {}, keys, CHARACTER_FIELDS, 'characters.', dropped));
     }
-    return next.size ? Object.fromEntries(next) : undefined;
+
+    if (!cast.size) {
+        if (stored.size) dropped.push({ field: 'characters', reason: 'empty' });
+        return copyCharacters(before);
+    }
+
+    // Everyone still here keeps their place, so an unchanged cast renders the same bytes.
+    const order = [...stored.keys()].filter((name) => cast.has(name))
+        .concat([...cast.keys()].filter((name) => !stored.has(name)));
+    return Object.fromEntries(order.map((name) => [name, cast.get(name)]));
 }
 
 function copyCharacters(characters) {
@@ -194,8 +220,9 @@ function copyCharacters(characters) {
     return entries.length ? Object.fromEntries(entries.map(([name, fields]) => [name, { ...fields }])) : undefined;
 }
 
+/** Nothing here can stop applying, so a blank is a reply that lost a field, not a field that ended. */
 function readText(entry, cap) {
-    if (entry === null || (typeof entry === 'string' && entry.trim() === '')) return { ok: true, text: undefined };
+    if (entry === null || (typeof entry === 'string' && entry.trim() === '')) return { ok: false, reason: 'blank' };
     if (typeof entry !== 'string') return { ok: false, reason: 'wrong-type' };
     if (entry.length > cap) return { ok: false, reason: 'too-long' };
     return { ok: true, text: entry };

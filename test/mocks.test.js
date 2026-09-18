@@ -237,22 +237,22 @@ describe('memory-model mock', () => {
         expect(badOutputs.empty()).toBe('');
     });
 
-    it('offers the malformed state replies the patch parser must survive', () => {
+    it('offers the malformed state replies the record parser must survive', () => {
         const state = { location: 'The waiting room', characters: { Aster: { outfit: 'Oilskin coat' }, Wren: { outfit: 'Wool coat, jeans' } } };
-        const patch = { location: 'The outer pier', characters: { Wren: { outfit: 'Grey jumper, jeans' } } };
+        const record = { location: 'The outer pier', characters: { Aster: { outfit: 'Oilskin coat' }, Wren: { outfit: 'Grey jumper, jeans' } } };
 
         for (const [name, output] of Object.entries(badStateOutputs)) {
-            expect(typeof output(patch, state), name).toBe('string');
+            expect(typeof output(record, state), name).toBe('string');
         }
-        expect(badStateOutputs.fenced(patch)).toMatch(/^```json\n\{/);
-        expect(() => JSON.parse(badStateOutputs.truncated(patch))).toThrow();
-        expect(JSON.parse(badStateOutputs.fullState(patch, state))).toEqual({
-            location: 'The outer pier',
-            characters: { Aster: { outfit: 'Oilskin coat' }, Wren: { outfit: 'Grey jumper, jeans' } },
-        });
-        expect(Object.keys(JSON.parse(badStateOutputs.capitalisedKeys(patch)))).toEqual(['Location', 'Characters']);
-        expect(Object.keys(JSON.parse(badStateOutputs.sixCharacters(patch)).characters)).toHaveLength(5);
-        expect(badStateOutputs.overlong(patch).length).toBeGreaterThan(160);
+        expect(badStateOutputs.fenced(record)).toMatch(/^```json\n\{/);
+        expect(() => JSON.parse(badStateOutputs.truncated(record))).toThrow();
+        expect(JSON.parse(badStateOutputs.sparse(record))).toEqual({ location: 'The outer pier' });
+        expect(JSON.parse(badStateOutputs.missingFields(record)).characters.Wren).toEqual({ outfit: 'Grey jumper, jeans' });
+        expect(Object.keys(JSON.parse(badStateOutputs.castDropped(record)).characters)).toEqual(['Wren']);
+        expect(JSON.parse(badStateOutputs.emptyCast(record)).characters).toEqual({});
+        expect(Object.keys(JSON.parse(badStateOutputs.capitalisedKeys(record)))).toEqual(['Location', 'Characters']);
+        expect(Object.keys(JSON.parse(badStateOutputs.sixCharacters(record)).characters)).toHaveLength(6);
+        expect(badStateOutputs.overlong(record).length).toBeGreaterThan(160);
     });
 });
 

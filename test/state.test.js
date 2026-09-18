@@ -7,7 +7,7 @@ import {
     stateForPrompt,
     wtrackerLoaded,
 } from '../src/memory/state.js';
-import { STATE_MAX_EARLIER, STATE_MAX_MESSAGES, statePatch } from '../src/memory/state-strategy.js';
+import { STATE_MAX_EARLIER, STATE_MAX_MESSAGES, stateRecord } from '../src/memory/state-strategy.js';
 import { sceneHistory } from '../src/memory/scenes.js';
 import { readState, writeState } from '../src/store/chat-store.js';
 import { cairnSummary, makeMixedChat } from './mocks/cairn.js';
@@ -308,7 +308,7 @@ describe('the pending state job', () => {
         ];
         for (const chat of shapes) {
             const job = pendingStateJob(chat);
-            expect(() => statePatch.build(job)).not.toThrow();
+            expect(() => stateRecord.build(job)).not.toThrow();
         }
     });
 

@@ -14,8 +14,8 @@
 import { pendingScenes, sceneHistory } from '../memory/scenes.js';
 import { perMessage, resolveSummaryPrompt } from '../memory/scene-strategy.js';
 import { jobStillCurrent, pendingStateJob } from '../memory/state.js';
-import { applyPatch } from '../memory/state-schema.js';
-import { statePatch } from '../memory/state-strategy.js';
+import { mergeReply } from '../memory/state-schema.js';
+import { stateRecord } from '../memory/state-strategy.js';
 import { readScene, summarisable, writeScene, writeState } from '../store/chat-store.js';
 import { hashString } from '../util/hash.js';
 import { countTokens } from '../util/tokens.js';
@@ -38,7 +38,7 @@ const PROMPT_FALLBACK = 'Cairn\'s summary prompt has no {{message}}, so the defa
  *        or settles, so the panel can follow work that happens between generations.
  */
 export function createSummarizer(getContext, {
-    settings, strategy = perMessage, stateStrategy = statePatch, clock = Date.now, onUpdate,
+    settings, strategy = perMessage, stateStrategy = stateRecord, clock = Date.now, onUpdate,
 } = {}) {
     const summaries = createTally();
     const states = createTally({ dropped: 0 });
@@ -186,10 +186,10 @@ export function createSummarizer(getContext, {
 
         const parsed = stateStrategy.parse(sent.reply?.content);
         if (!parsed.ok) return failState(key, index, parsed.reason);
-        const { value, changed, dropped } = applyPatch(job.state, parsed.patch);
+        const { value, changed, dropped } = mergeReply(job.state, parsed.record);
         if (dropped.length) {
             states.stats.dropped += dropped.length;
-            debug(`Dropped from the state patch: ${dropped.map((drop) => `${drop.field} (${drop.reason})`).join(', ')}.`);
+            debug(`Dropped from the state reply: ${dropped.map((drop) => `${drop.field} (${drop.reason})`).join(', ')}.`);
         }
         if (!writeState(now.chat, index, { value, read: job.read, changed, prompt: request.prompt, at: new Date(clock()).toISOString() })) {
             return failState(key, index, 'write');

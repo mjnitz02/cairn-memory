@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { CHARACTER_FIELDS, TEXT_FIELDS, applyPatch, validState } from '../src/memory/state-schema.js';
+import { CHARACTER_FIELDS, TEXT_FIELDS, mergeReply, validState } from '../src/memory/state-schema.js';
 import {
     STATE_MAX_EARLIER,
     STATE_MAX_MESSAGES,
     STATE_MAX_TOKENS,
     STATE_PROMPT,
-    parseStatePatch,
-    statePatch,
+    parseStateReply,
+    stateRecord,
 } from '../src/memory/state-strategy.js';
 import { hashString } from '../src/util/hash.js';
 import { badStateOutputs } from './mocks/llm.js';
@@ -22,16 +22,20 @@ const STATE = Object.freeze({
     }),
 });
 
-/** What the model meant: Wren takes off her coat and walks out to the pier. */
-const PATCH = Object.freeze({
+/** What the model meant: the whole record after Wren takes off her coat and walks out to the pier. */
+const REPLY = Object.freeze({
     location: 'The ferry terminal, outer pier',
-    characters: Object.freeze({ Wren: Object.freeze({ outfit: 'Grey jumper, jeans, boots' }) }),
+    weather: STATE.weather,
+    characters: Object.freeze({
+        Aster: Object.freeze({ ...STATE.characters.Aster }),
+        Wren: Object.freeze({ hair: STATE.characters.Wren.hair, outfit: 'Grey jumper, jeans, boots' }),
+    }),
 });
 
 const AFTER = {
     ...STATE,
-    location: PATCH.location,
-    characters: { Aster: STATE.characters.Aster, Wren: { ...STATE.characters.Wren, outfit: PATCH.characters.Wren.outfit } },
+    location: REPLY.location,
+    characters: { Aster: STATE.characters.Aster, Wren: { ...STATE.characters.Wren, outfit: REPLY.characters.Wren.outfit } },
 };
 
 /** Synthetic, the shape of a corpus exchange: the user's turn, then the reply. */
@@ -40,9 +44,8 @@ const MESSAGES = [
     { name: 'Aster', is_user: false, mes: 'Aster followed and leaned on the rail beside her. The wind had dropped, and Wren\'s shoulders came down with it.' },
 ];
 
-/** The instructions as the model reads them: a first build's lines, or an update's. */
-const instructions = (mode) => STATE_PROMPT.slice(0, STATE_PROMPT.indexOf('Current state:'))
-    .replace(/\{\{#if (first|update)\}\}\n([\s\S]*?)\{\{\/if\}\}\n/g, (_, name, body) => (name === mode ? body : ''));
+/** Everything above the record: one set of instructions now, with no branches (D-0053). */
+const INSTRUCTIONS = STATE_PROMPT.slice(0, STATE_PROMPT.indexOf('Current record:'));
 
 describe('the state prompt', () => {
     it('lists exactly the schema\'s fields, in render order', () => {
@@ -60,15 +63,19 @@ describe('the state prompt', () => {
         expect(STATE_PROMPT).toMatch(/^- characters: .*at most 5, keyed by name \(40\)/m);
     });
 
-    it('gives an example the parser and schema accept whole', () => {
-        const state = JSON.parse(STATE_PROMPT.match(/^State: (.*)$/m)[1]);
-        const parsed = parseStatePatch(STATE_PROMPT.match(/^Patch: (.*)$/m)[1]);
+    it('shows a whole record in and a whole record out, which the parser and schema accept', () => {
+        const record = JSON.parse(STATE_PROMPT.match(/^Record: (.*)$/m)[1]);
+        const parsed = parseStateReply(STATE_PROMPT.match(/^Reply: (.*)$/m)[1]);
 
-        expect(validState(state)).toBe(true);
+        expect(validState(record)).toBe(true);
         expect(parsed.ok).toBe(true);
-        expect(applyPatch(state, parsed.patch)).toEqual({
+        // Every field the record carries comes back, weather copied across unchanged.
+        expect(Object.keys(parsed.record)).toEqual(Object.keys(record));
+        expect(parsed.record.weather).toBe(record.weather);
+        expect(mergeReply(record, parsed.record)).toEqual({
             value: {
                 location: 'The ferry terminal, outer pier',
+                weather: record.weather,
                 characters: { Wren: { hair: 'Tied back', outfit: 'Grey jumper, jeans, boots' } },
             },
             changed: ['location', 'characters.hair', 'characters.outfit'],
@@ -76,8 +83,15 @@ describe('the state prompt', () => {
         });
     });
 
+    it('asks for the whole record, with no changes-only branch left (D-0053)', () => {
+        expect(STATE_PROMPT).not.toMatch(/\{\{#if (first|update)\}\}/);
+        expect(STATE_PROMPT).not.toContain('Include only what the messages change');
+        expect(STATE_PROMPT).not.toContain('null');
+        expect(STATE_PROMPT).toContain('Write every field every time');
+    });
+
     it('has no macros ST would expand', () => {
-        expect(STATE_PROMPT.replace(/\{\{(?:state|earlier|messages|#if (?:earlier|first|update)|\/if)\}\}/g, '')).not.toContain('{{');
+        expect(STATE_PROMPT.replace(/\{\{(?:state|earlier|messages|#if earlier|\/if)\}\}/g, '')).not.toContain('{{');
     });
 });
 
@@ -85,72 +99,60 @@ describe('building one state request', () => {
     const context = createContext();
     const expand = (text) => context.substituteParams(text);
 
-    it('sends the state, then the messages, as one user message with room for a reasoning model', () => {
-        const request = statePatch.build({ state: STATE, messages: MESSAGES, expand });
+    it('sends the record, then the messages, as one user message with room for a reasoning model', () => {
+        const request = stateRecord.build({ state: STATE, messages: MESSAGES, expand });
 
-        expect(statePatch.id).toBe('state-patch-v1');
+        expect(stateRecord.id).toBe('state-record-v1');
         expect(request.maxTokens).toBe(STATE_MAX_TOKENS);
         expect(STATE_MAX_TOKENS).toBe(2048);
         expect(request.messages).toEqual([{
             role: 'user',
-            content: `${instructions('update')}Current state:\n${JSON.stringify(STATE)}\n\n`
+            content: `${INSTRUCTIONS}Current record:\n${JSON.stringify(STATE)}\n\n`
                 + `New messages:\nWren: ${MESSAGES[0].mes}\n\nAster: ${MESSAGES[1].mes}\n\n`
-                + 'Reply with the JSON patch only.',
+                + 'Reply with the complete record as JSON, and nothing else.',
         }]);
     });
 
-    it('asks for only what changed once the record holds anything', () => {
-        for (const state of [STATE, { characters: { Wren: {} } }]) {
-            const content = statePatch.build({ state, messages: MESSAGES, expand }).messages[0].content;
+    it('sends the same instructions whatever the record holds, so one prompt hash covers every state (D-0053)', () => {
+        const contents = [STATE, { characters: { Wren: {} } }, {}, undefined]
+            .map((state) => stateRecord.build({ state, messages: MESSAGES, expand }).messages[0].content);
 
-            expect(content.startsWith(instructions('update'))).toBe(true);
-            expect(content).not.toContain('first entry');
-        }
-    });
-
-    it('asks a first build for everything the messages establish, not only what changed (D-0048)', () => {
-        for (const state of [undefined, {}]) {
-            const content = statePatch.build({ state, messages: MESSAGES, expand }).messages[0].content;
-
-            expect(content.startsWith(instructions('first'))).toBe(true);
-            expect(content).toMatch(/^IMPORTANT: The record is empty.*including hair and outfit/m);
-            expect(content).not.toContain('Include only what the messages change');
-            expect(content).not.toContain('When unsure whether something changed');
+        for (const content of contents) {
+            expect(content.startsWith(INSTRUCTIONS)).toBe(true);
             expect(content).not.toContain('{{');
         }
-        expect(instructions('first')).not.toMatch(/\n{3,}/);
-        expect(instructions('update')).not.toMatch(/\n{3,}/);
+        expect(INSTRUCTIONS).not.toMatch(/\n{3,}/);
     });
 
     it('sends {} on a cold start', () => {
         for (const request of [
-            statePatch.build({ messages: MESSAGES, expand }),
-            statePatch.build({ state: {}, messages: MESSAGES, expand }),
+            stateRecord.build({ messages: MESSAGES, expand }),
+            stateRecord.build({ state: {}, messages: MESSAGES, expand }),
         ]) {
-            expect(request.messages[0].content).toContain('Current state:\n{}\n\nNew messages:\n');
+            expect(request.messages[0].content).toContain('Current record:\n{}\n\nNew messages:\n');
         }
     });
 
-    it('puts earlier scenes between the state and the messages', () => {
-        const request = statePatch.build({
+    it('puts earlier scenes between the record and the messages', () => {
+        const request = stateRecord.build({
             messages: MESSAGES,
             earlier: ['Wren and Aster reached the terminal.', { text: 'The board read DELAYED.' }],
             expand,
         });
 
         expect(request.messages[0].content).toContain(
-            'Current state:\n{}\n\nEarlier events:\nWren and Aster reached the terminal.\nThe board read DELAYED.\n\nNew messages:\nWren: ',
+            'Current record:\n{}\n\nEarlier events:\nWren and Aster reached the terminal.\nThe board read DELAYED.\n\nNew messages:\nWren: ',
         );
     });
 
     it('records which prompt wrote the state', () => {
-        expect(statePatch.build({ messages: MESSAGES, expand }).prompt).toBe(hashString(STATE_PROMPT));
+        expect(stateRecord.build({ messages: MESSAGES, expand }).prompt).toBe(hashString(STATE_PROMPT));
     });
 
     it('sends chat text and state values containing {{user}} literally', () => {
         const state = { location: 'The {{char}} Arms' };
         const messages = [{ name: 'Wren', mes: 'I wrote {{user}} and {{char}} in my diary.' }];
-        const content = statePatch.build({ state, messages, earlier: ['{{char}} was quiet.'], expand }).messages[0].content;
+        const content = stateRecord.build({ state, messages, earlier: ['{{char}} was quiet.'], expand }).messages[0].content;
 
         expect(content).toContain('{"location":"The {{char}} Arms"}');
         expect(content).toContain('Wren: I wrote {{user}} and {{char}} in my diary.');
@@ -161,12 +163,12 @@ describe('building one state request', () => {
         const six = Array(STATE_MAX_MESSAGES).fill(MESSAGES[0]);
         const five = Array(STATE_MAX_EARLIER).fill('An earlier scene.');
 
-        expect(() => statePatch.build({ messages: six, earlier: five, expand })).not.toThrow();
-        expect(() => statePatch.build({ messages: [...six, MESSAGES[1]], expand })).toThrow(RangeError);
-        expect(() => statePatch.build({ messages: MESSAGES, earlier: [...five, 'one more'], expand })).toThrow(RangeError);
-        expect(() => statePatch.build({ messages: [], expand })).toThrow(RangeError);
-        expect(() => statePatch.build({ expand })).toThrow(RangeError);
-        expect(() => statePatch.build({ state: { mood: 'calm' }, messages: MESSAGES, expand })).toThrow(TypeError);
+        expect(() => stateRecord.build({ messages: six, earlier: five, expand })).not.toThrow();
+        expect(() => stateRecord.build({ messages: [...six, MESSAGES[1]], expand })).toThrow(RangeError);
+        expect(() => stateRecord.build({ messages: MESSAGES, earlier: [...five, 'one more'], expand })).toThrow(RangeError);
+        expect(() => stateRecord.build({ messages: [], expand })).toThrow(RangeError);
+        expect(() => stateRecord.build({ expand })).toThrow(RangeError);
+        expect(() => stateRecord.build({ state: { mood: 'calm' }, messages: MESSAGES, expand })).toThrow(TypeError);
     });
 });
 
@@ -185,8 +187,20 @@ describe('parsing and applying a state reply', () => {
         preambleAndSignOff: applied(AFTER, moved),
         leakedReasoning: applied(AFTER, moved),
         orphanThinkClose: applied(AFTER, moved),
-        fullState: applied(AFTER, moved),
         capitalisedKeys: applied(AFTER, moved),
+
+        // The point of D-0053: what a reply leaves out keeps its stored bytes, so a
+        // record that loses hair, or the cast, or everything but one field, loses nothing.
+        missingFields: applied(AFTER, moved),
+        sparse: applied({ ...STATE, location: REPLY.location }, ['location']),
+        emptyCast: applied({ ...STATE, location: REPLY.location }, ['location'], [{ field: 'characters', reason: 'empty' }]),
+
+        // Leaving a character out is the one thing that does remove something.
+        castDropped: applied(
+            { ...STATE, location: REPLY.location, characters: { Wren: AFTER.characters.Wren } },
+            ['location', 'characters.left', 'characters.outfit'],
+        ),
+
         unknownField: applied(AFTER, moved, [{ field: 'unknown', reason: 'unknown-key' }]),
         wrongType: applied(AFTER, moved, [{ field: 'weather', reason: 'wrong-type' }]),
         overlong: applied({ ...AFTER, location: STATE.location }, ['characters.outfit'], [{ field: 'location', reason: 'too-long' }]),
@@ -197,10 +211,12 @@ describe('parsing and applying a state reply', () => {
         ),
         unknownSubKey: applied(AFTER, moved, [{ field: 'characters.unknown', reason: 'unknown-key' }]),
         noChange: applied(STATE, []),
-        nullRemovals: (() => {
-            const { weather: _weather, ...rest } = AFTER;
-            return applied({ ...rest, characters: { Wren: AFTER.characters.Wren } }, ['location', 'weather', 'characters.left', 'characters.outfit']);
-        })(),
+        // A model still writing nulls: the weather null is refused, Aster's removes her.
+        nullRemovals: applied(
+            { ...STATE, location: REPLY.location, characters: { Wren: AFTER.characters.Wren } },
+            ['location', 'characters.left', 'characters.outfit'],
+            [{ field: 'weather', reason: 'blank' }],
+        ),
         truncated: rejected('truncated'),
         unterminatedReasoning: rejected('truncated'),
         refusal: rejected('refusal'),
@@ -215,72 +231,72 @@ describe('parsing and applying a state reply', () => {
 
     for (const [name, verdict] of Object.entries(expected)) {
         it(`${verdict.ok ? 'applies' : 'rejects'} ${name}`, () => {
-            const parsed = statePatch.parse(badStateOutputs[name](PATCH, STATE));
+            const parsed = stateRecord.parse(badStateOutputs[name](REPLY, STATE));
 
             if (!verdict.ok) {
                 expect(parsed).toEqual(verdict);
                 return;
             }
             expect(parsed.ok).toBe(true);
-            const { value, changed, dropped } = applyPatch(STATE, parsed.patch);
+            const { value, changed, dropped } = mergeReply(STATE, parsed.record);
             expect({ ok: true, value, changed, dropped }).toEqual(verdict);
         });
     }
 });
 
-describe('finding the patch in a reply', () => {
-    const json = JSON.stringify(PATCH);
+describe('finding the record in a reply', () => {
+    const json = JSON.stringify(REPLY);
 
     it('takes a clean reply as it is', () => {
-        expect(parseStatePatch(json)).toEqual({ ok: true, patch: PATCH });
+        expect(parseStateReply(json)).toEqual({ ok: true, record: REPLY });
     });
 
     it('takes the first object that parses, not whatever sits between the outermost braces', () => {
-        expect(parseStatePatch(`${json}\n\nIf you want {more} detail, just ask.`)).toEqual({ ok: true, patch: PATCH });
-        expect(parseStatePatch(`${json}\n{"location": "somewhere else"}`)).toEqual({ ok: true, patch: PATCH });
+        expect(parseStateReply(`${json}\n\nIf you want {more} detail, just ask.`)).toEqual({ ok: true, record: REPLY });
+        expect(parseStateReply(`${json}\n{"location": "somewhere else"}`)).toEqual({ ok: true, record: REPLY });
     });
 
-    it('skips bracketed prose before the patch', () => {
-        expect(parseStatePatch(`[Current scene] changes {as asked}:\n${json}`)).toEqual({ ok: true, patch: PATCH });
+    it('skips bracketed prose before the record', () => {
+        expect(parseStateReply(`[Current scene] changes {as asked}:\n${json}`)).toEqual({ ok: true, record: REPLY });
     });
 
     it('never takes an object nested inside one that does not parse', () => {
-        expect(parseStatePatch('{"characters": {"Wren": {"outfit": "Grey jumper"}},}')).toEqual({ ok: false, reason: 'format' });
+        expect(parseStateReply('{"characters": {"Wren": {"outfit": "Grey jumper"}},}')).toEqual({ ok: false, reason: 'format' });
     });
 
     it('reads brackets and quotes inside strings as text', () => {
-        const patch = { location: 'Under a sign reading "} ]" on the {board}', weather: 'A back\\slash of rain' };
+        const record = { location: 'Under a sign reading "} ]" on the {board}', weather: 'A back\\slash of rain' };
 
-        expect(parseStatePatch(`Patch:\n${JSON.stringify(patch)}`)).toEqual({ ok: true, patch });
+        expect(parseStateReply(`Record:\n${JSON.stringify(record)}`)).toEqual({ ok: true, record });
     });
 
     it('calls a reply cut off inside a nested object truncated, though it has closing braces', () => {
-        expect(parseStatePatch('{"characters": {"Wren": {"outfit": "Grey jumper"}, "Aster": {"ou'))
+        expect(parseStateReply('{"characters": {"Wren": {"outfit": "Grey jumper"}, "Aster": {"ou'))
             .toEqual({ ok: false, reason: 'truncated' });
-        expect(parseStatePatch('```json\n{"location": "The ferry')).toEqual({ ok: false, reason: 'truncated' });
+        expect(parseStateReply('```json\n{"location": "The ferry')).toEqual({ ok: false, reason: 'truncated' });
     });
 
     it('rejects JSON that is not an object', () => {
         for (const reply of ['null', '"calmer"', '42', '[]', '```json\n["location"]\n```']) {
-            expect(parseStatePatch(reply), reply).toEqual({ ok: false, reason: 'format' });
+            expect(parseStateReply(reply), reply).toEqual({ ok: false, reason: 'format' });
         }
     });
 
     it('rejects JSON a strict parser would', () => {
         for (const reply of ['{location: "The pier"}', '{"location": \'The pier\'}', '{"location": "The pier",}']) {
-            expect(parseStatePatch(reply), reply).toEqual({ ok: false, reason: 'format' });
+            expect(parseStateReply(reply), reply).toEqual({ ok: false, reason: 'format' });
         }
     });
 
     it('recognises refusals however the apostrophe is typed', () => {
         for (const refusal of ['I cannot continue this roleplay.', 'Sorry, I can\'t help with that [scene].', 'As an AI, I won’t write this.']) {
-            expect(parseStatePatch(refusal), refusal).toEqual({ ok: false, reason: 'refusal' });
+            expect(parseStateReply(refusal), refusal).toEqual({ ok: false, reason: 'refusal' });
         }
     });
 
     it('treats a missing, non-string or thought-only reply as empty', () => {
-        expect(parseStatePatch(undefined)).toEqual({ ok: false, reason: 'empty' });
-        expect(parseStatePatch({ location: 'x' })).toEqual({ ok: false, reason: 'empty' });
-        expect(parseStatePatch('<think>nothing changed</think>\n  ')).toEqual({ ok: false, reason: 'empty' });
+        expect(parseStateReply(undefined)).toEqual({ ok: false, reason: 'empty' });
+        expect(parseStateReply({ location: 'x' })).toEqual({ ok: false, reason: 'empty' });
+        expect(parseStateReply('<think>nothing changed</think>\n  ')).toEqual({ ok: false, reason: 'empty' });
     });
 });
