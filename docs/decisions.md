@@ -8,6 +8,971 @@ what we believed and why it changed.
 
 ---
 
+## D-0072 — Scene segmentation is explored and set aside; P5's shape is unchanged
+**2026-09-19.** A day-after re-examination of D-0070 and D-0071. It changed nothing in
+`docs/p5-plan.md`, and this entry exists so the next session does not re-derive it
+(CLAUDE.md §6.27).
+
+**What prompted it.** A single message can be unjudgeable at write time and pivotal later: a
+passing remark that someone has always wanted to run a studio is filler until her parents
+disapprove and her partner backs her, three messages on. That is the general case, not an edge
+case, and it says the write-time kind field (D-0070) is a *judgment* wearing an extraction's
+clothes.
+
+**The frame that survives, and it is the useful part.** Split the work by what each scope can
+actually know:
+
+| | scope | knows | cannot know |
+|---|---|---|---|
+| **extract** | one summary, at write time | what was said and done; facts stated outright | whether any of it matters |
+| **judge** | the whole index, at a lag | what a record amounts to once its consequences landed | — |
+
+Only judgment needs context, so only judgment pays for context. Extraction stays one-shot,
+local and written once, or re-extraction on every new neighbour puts us in N² calls with nothing
+ever final. **Extraction must therefore be generous, not selective** — an extract prompt that
+decides what is worth recording throws away the raw material the later pass needs, and no
+amount of downstream context recovers it. That is the same pressure that lengthened the summary
+prompt (D-0039), one layer down.
+
+**Why the plan did not change.** D-0070 already places the kind as "a sort key, not a gate", has
+the ranker read all 159 records, and lets it overrule the label. The slots are extraction and
+are safe to write once. The gap is narrower than a rewrite: the doc does not say in as many
+words that the write-time kind is a *noisy prior*, and this entry says it.
+
+**Two mechanisms were proposed and neither is built.**
+
+- **Accumulated strength from forced-choice re-evaluation.** Re-assessing on a clock is not a
+  second sample — asking the same question over the same context is one verdict counted three
+  times, and the score would measure our own repetition. A trigger of *materially changed
+  context* fixes that, and strength would have to be wins-minus-losses so it can fall, or it is
+  a ratchet that rebuilds qvink's long-term pile. Real, but unbuilt: nothing has shown the
+  verdict actually flips.
+- **Scene segmentation as the selection unit** — "which scene does this belong to" instead of
+  "is this important", canon as a pick over scenes. Appealing because a boundary is locally
+  decidable *and* stops changing once a scene closes, which is precisely the property importance
+  lacks; it would also have replaced retirement-after-K-passes with a fact about the story's
+  structure, and Tier 1's location and present-cast changes (D-0043) are a free grounding signal.
+  **Set aside** because summaries → scene summaries → canon is structurally the recursive rollup
+  `DESIGN.md` §1–2 was founded not to steal; the survival argument (non-destructive, one level,
+  selection before compression) has to be actively held and guarded with an invariant, which is
+  machinery in itself. Scenes are also episodes under another name, and P5 cut episodes as
+  answering *capacity* (D-0064). Granularity in roleplay is genuinely ambiguous — twenty
+  messages of two people talking is one scene or four — and a segmenter forced to emit
+  boundaries emits arbitrary ones.
+
+**The prior art is a recollection, not a citation.** A manual SillyTavern extension where the
+user tags a scene's start and end and it writes a keyword-triggered lorebook entry. The local
+extensions directory holds only qvink's `SillyTavern-MessageSummarize` and Cairn, so it is
+uninstalled or misremembered by name. Its four failure modes are first-hand and worth keeping:
+manual tagging, fed raw messages rather than summaries, no sense of where the scene sat in the
+story, and an isolated keyword-scanned entry.
+
+**Reopens if** either measurement comes back positive, and both are zero-generation checks
+against the step-0 labelling fixture: (a) segment the 85 real summaries at two different lags —
+are derived boundaries measurably more stable than importance verdicts, and do they line up with
+Tier 1 state changes more often than chance; (b) run the judgment at two different lags — does
+the verdict flip at all. If it never flips, the dynamic half is machinery for a phenomenon that
+does not occur. A third, cheaper one sits beside them: **does the kind field help the ranker at
+all, versus ranking on slots alone?**
+
+**The pattern worth naming.** Three structures that felt like progress — episodes, retrieval,
+scenes — each lost to "the fix is a better question over a better-filtered input", which looks
+much smaller than a phase. That pull was flagged at the planning session's start and resisting
+it kept being right.
+
+---
+
+## D-0071 — Canon is a fixed number of derived slots, not an append-only bag
+**2026-09-18.** P5's shape (`docs/p5-plan.md` decisions 7 to 9). Supersedes D-0055's
+append-only bag and the per-pass `room` arithmetic in `src/memory/canon.js`.
+
+**The decision.** The durable artefacts are the per-message index records (D-0070). Canon is a
+**pick** over them — a forced budget, "fill exactly N slots" — re-derived on a rebuild turn
+(D-0067) and folded fresh every turn the way the state and the canon batches already are
+(D-0045). The bag of independent one-liners, deduped on normalised text, goes.
+
+**Why a forced budget rather than a score.** "Pick exactly N of these" is calibration by
+construction. Absolute importance scoring makes a small model say yes to everything, which is
+what P4's open-ended "what here became permanently true" did. This is the mechanism, not the
+model: the lever is the question and its input (D-0064).
+
+**Three things fall out, all of them simplifications.**
+
+- **A wrong fact stops being permanent.** It is removed by fixing the record it came from.
+  That is the lever D-0055 could not offer and the risk D-0063 was written about.
+- **The size is a slot count, not a token cap.** Kinds 1 and 2 are necessarily rare, so the
+  spine does not grow linearly with chat length — a 300-message chat wants 8 to 12 lines, not
+  30. One knob, explainable in one sentence (CLAUDE.md §4.15). Leftover tokens fall back to
+  summaries rather than being held.
+- **The eviction trigger is deleted.** `pendingCompaction`'s pressure test, evict-set
+  simulation and `covers` once-per-cycle test all go — they are the cleverest code in P4 and
+  they are the mechanism that caused its failure (D-0062). Work is due when a summary has no
+  record, which is the pattern `pendingScenes` already uses.
+
+**A small fixed allocation is not the budget reorder D-0065 forbade.** The forbidden move was
+letting the guard sacrifice *summaries* to protect canon under pressure, risking hundreds of
+tokens of real memory to defend facts that may be bad. A floor of ~150 tokens risks 0.6% of the
+prompt. Different magnitude, different decision. `budgeter.js`'s priority is still not
+re-derived here.
+
+**No tone or register field.** A factually-accurate canon line can read far lighter than the
+truth, and the laundering risk is real. But `DESIGN.md` §5 excludes mood from Tier 1 on purpose
+— tracking it gridlocks the roleplay model into a dictated lane (D-0043) — and a *permanent*
+register field one tier up is the same hazard, worse. The position taken is that the laundering
+is a missing `because`, not a missing adjective: a line reads light in isolation and does not
+read light inside its causal chain. **Genre is the verifier, not a field** — one cheap call
+asking what kind of story this is, reading only the canon, against the same question over real
+text. It needs no per-fact ground truth and it is the signal that actually caught P4's failure.
+
+**D-0039 stands.** The shipped summary prompt is a deliberate divergence from qvink's "a single
+concise statement of fact", made because over-condensation at several hundred tokens a message
+left individual summaries too terse to read an *arc* across — a problem qvink's author
+acknowledged without a fix. The index relieves that pressure rather than reversing it, so the
+prompt does not change.
+
+**Reopens if:** the genre verifier still reads light over a correctly-selected, chained canon —
+in which case the register field earns its place after all.
+
+---
+
+## D-0070 — Every summary carries an index record, and the kind is a sort key
+**2026-09-18.** P5's selection mechanism (`docs/p5-plan.md` decisions 5 and 6).
+Answers D-0065's "where does selection run".
+
+**The decision.** One compact record per summary, written per-message beside the scene so it
+branches for free. It holds the four-way kind (D-0064) and the slots: who, what, what lastingly
+changed, and **because**. Bounded by construction at ~20 tokens. It rides the summarisation
+queue for new messages; a chat Cairn has not indexed gets a batched backfill at 10–15 with a
+little overlap, which is the selection primitive that already worked in the qvink era.
+
+**Why slots rather than shorter prose.** Prose-to-prose compression is unconstrained: asked for
+something shorter under a token budget, a model drops *specifics* and keeps *connective tissue*
+— "they endured hardship and grew closer", true, shorter, worthless. Slots bound length by
+construction, demand specifics, and the `because` slot makes causal chains representable, which
+is the fix for canon's bag-shaped problem (D-0064).
+
+**The kind is a sort key, not a gate.** A local four-way label is not stable under hindsight: a
+purchase is filler until it turns out to be where they settled. If the label *filters* what the
+derive pass can see, D-0062's third gap returns at a smaller scale. So the pass reads the whole
+index — 159 records at ~20 tokens is ~3,200, one call — and ranks it, with the kind as a strong
+prior it may overrule.
+
+**This is what answers P5's framing question.** The model does not need to ingest the whole
+story; it needs to ingest the whole *index*, which is the story at a fifth of the tokens with
+the structure made explicit. "A model that cannot ingest the whole story" was a constraint on
+the input, not on the model.
+
+**A summary has two consumers and has only ever had one prompt.** The roleplay model wants a
+readable narrative bridge for recent history. A canon deriver wants comparable structure across
+159 items. Prose carries structure only implicitly and short prose has nowhere to put it, which
+is exactly why condensing broke arcs (D-0071). The index lets the two diverge without writing
+two summaries.
+
+**Costs `STORE_VERSION` 4**, a migration from 3, and a v3 fixture kept (CLAUDE.md §8.32).
+
+**Reopens if:** a record cannot be written reliably at ~20 tokens, or ranking over 159 records
+in one call degrades against ranking within thirds and then ranking the winners. Both are
+checkable offline against the corpus at zero generations (D-0061).
+
+---
+
+## D-0069 — World Info is capped, add-only between rebuilds, reprioritised at them
+**2026-09-18.** P5 (`docs/p5-plan.md` decision 3). Scopes D-0023's add-only holder rather
+than superseding it.
+
+**The decision.** Cap the lorebook with ST's own `world_info_budget_cap`, and reconcile the cap
+with the add-only holder by *when*: the holder stays add-only between rebuilds, and at a
+rebuild the held set is re-evaluated as **union of currently-activated and currently-held, then
+trimmed to budget by `order`**.
+
+**Why a union and not a recompute.** D-0023 made the block add-only so a keyword-scan miss
+cannot evict an entry. A recompute from scratch at the rebuild would let a miss that happens to
+land on a rebuild turn drop one — the same failure, rarer and therefore harder to catch. The
+union keeps a held entry that did not activate that turn; only budget pressure removes one, and
+it removes the lowest `order` first.
+
+**Cairn sets rather than implements.** The cap, the ordering and the trim are all ST's
+(`public/scripts/world-info.js:73,81` for the settings, `:4736-4741` for the budget, `:5061-5070`
+for the stop, `:5587` for `order`, `:5002` for the index tiebreak, `:5669` for `ignoreBudget`).
+`loreBudget` in `src/prompt/reserves.js` already reads both settings as live exports (D-0016),
+so the reserve tracks a cap change with no code at all.
+
+**The measurement that prompted it.** On the P4 run the lorebook was 4,982 tokens — 21.6% of a
+23,040-token prompt, against a 25% default — so ST's budget has never bound. It is the second
+largest reserve after the raw window and larger than the card.
+
+**Reopens if:** trimming at a rebuild visibly drops an entry the story needed, which would mean
+`order` is not a good enough proxy for importance on real cards and the trim needs Cairn's own
+ranking rather than the author's.
+
+---
+
+## D-0068 — The prompt's tokens are reclaimable, and the raw window is where they are
+**2026-09-18.** P5 (`docs/p5-plan.md` decisions 2 and 4). Supersedes D-0060's framing of the
+run's chat as inherently `starved`.
+
+**The measurement.** Thirty generations, `~/workspaces/cairn-corpus/p4-run-part1.jsonl`,
+`max_prompt` 23,040: card 4,414 (19.2%), lorebook 4,982 (21.6%), **raw window 9,613 (41.7%)**,
+state 439, margin 1,152 — leaving **2,440 (10.6%) for the whole memory block, of which canon got
+72 (0.3%)**. The raw window costs 3.9× the entire memory block. The 35% share has never bound.
+
+**Example dialogue is half the card.** Measured on the run's card: description ~2,520 tokens,
+**example dialogue ~2,176**, first message ~1,528, everything else zero. `CARD_FIELDS`
+(`src/prompt/reserves.js:52-54`) includes `mesExamples`, so examples are 49% of the card reserve
+and 9.4% of the whole prompt.
+
+**Why examples can go.** Raw messages carry tone, style, pacing and dialogue — how characters
+actually speak. Example dialogue carries the same thing, worse: how a character *would* speak in
+a situation that never happened, frozen at turn zero. Thirty turns of a character growing into
+confidence are contradicted by examples that still show them meek. Before real messages exist
+they anchor a character profoundly; after, they are strictly dominated. The crossover is not a
+tuning problem.
+
+**The decision on examples.** Cairn sets `power_user.strip_examples`
+(`public/scripts/power-user.js:122`, default false; applied at `public/script.js:4738-4740`) once
+the chat is past the point where summaries stand in for messages. The trigger is **derived,
+never stored**: *does any message behind the raw window carry a summary*. Monotonic within a
+branch, rolls back on a branch or swipe, survives a reload, needs no bookkeeping — the shape
+D-0045 established.
+
+An instantaneous test ("are we injecting summaries right now") is wrong: a summarisation failure
+could empty the block for a turn and un-flip it, and flipping examples back and forth destroys
+the prefix every time. Latched, it costs one cache miss, once per chat.
+
+**The trap, stated because it would be invisible.** `cardReserve` must read the same latch. A
+flip `reserves.js` does not know about reserves 2,176 tokens for text that is no longer in the
+prompt, the cap does not move, and **the whole reclaim disappears into the margin with nothing
+to see.** This is the most likely way for P5 to look like it did nothing.
+
+**The decision on the window.** `RAW_WINDOW` and `STEP` to 8, so the window swings between 8 and
+15 messages. The reserve is sized by the maximum (`RUN_LENGTH = RAW_WINDOW + STEP − 1`), so both
+terms must fall for it to move. Measured heaviest runs on the run's chat: 19 messages 11,008
+tokens, 15 messages 8,881 (0.807×), 11 messages 6,663 (0.605×). The opening message, at 1,551
+tokens, does **not** pin `heaviestRun` — heaviest-19 is identical with and without it, so
+excluding the greeting reclaims nothing. Checked and dropped.
+
+**The evidence for eight is play, not measurement**, and this repo has already decided how to
+weigh that: D-0039 kept a summary prompt measured in play over one written to `DESIGN.md` §12's
+rules. Hundreds of characters played at a fixed six-to-ten message lag, with summaries behind,
+read and play correctly.
+
+**What the three together buy** (`strip_examples`, `world_info_budget_cap` 3,500, 8/8): the
+block cap goes 2,440 → ~7,953 and `budget_limited_by` reads `share` for the first time.
+**`canonCap` goes 72 → ~1,591, up 22×**, against a yardstick needing ~100. The recoupling guard
+stops binding, so `CANON_FRACTION` becomes a real number — D-0060's stated reopen condition,
+met by configuration. `sceneCap − floor` against `stepTokens` goes from 1.007× to ~3.4×, and
+rebuilds get *less* frequent per message, ~10 → ~27, because the cap rises faster than `STEP`
+falls.
+
+**8/8 rather than 6/6 deliberately.** It lands the cap ~110 tokens under the 35% share without
+exceeding it. 6/6 would overshoot and drag D-0038's share into a re-derivation P5 is committed
+to not doing.
+
+**Reopens if:** prose visibly degrades at an eight-message floor. That reverts on its own —
+`RAW_WINDOW` and `STEP` are two numbers — and it is the one part of P5 that the deferred
+summary-quality read (D-0041) genuinely bears on.
+
+---
+
+## D-0067 — Discontinuous work batches to the rebuild turn
+**2026-09-18.** A structural rule, discovered while planning P5 and logged separately because
+it outlives the phase. `docs/p5-plan.md` decision 1.
+
+**The rule.** A rebuild already breaks the prefix at the block's head and is already the
+expensive turn. **Everything that changes the stable part of the prompt happens there and
+nowhere else.**
+
+It was already governing five things independently, each justified locally:
+
+1. Block eviction — the see-saw's whole design (D-0026).
+2. Canon admission frozen to the cap in force at the last rebuild (D-0059).
+3. Canon re-derivation (D-0071).
+4. World Info reprioritisation and trimming (D-0069).
+5. The examples latch, which fires on the first step — itself a head-change (D-0068).
+
+Named once, those stop being five arguments and become one, and the rule answers "when does
+this happen" for anything added later without re-deriving the reasoning each time.
+
+**Why it is safe to concentrate cost.** The marginal cost of a second change on a turn that is
+already rebuilding is that change's own tokens, not a fresh cache miss. The memory block sits
+at `offset_percent` 44 on the run's prompt — the card, persona and lorebook above it are
+untouched by anything Cairn does — so a canon re-derivation moves a boundary that is already
+moving.
+
+**The failure it prevents.** Any of these fired on an arbitrary turn is a second prefix break
+per cycle, and the block would look entirely correct the whole time. That is the same shape as
+the WTrackerLite regression Cairn was built after (`DESIGN.md` §2), and it is invisible without
+the stability meter (§10).
+
+**Reopens if:** a piece of work genuinely cannot wait for a rebuild — in which case it needs its
+own argument for why a second break per cycle is worth it, measured and not assumed.
+
+---
+
+## D-0066 — SillyTavern ships the levers switched off, and Cairn's contribution is the timing
+**2026-09-18.** Sharpens `DESIGN.md` §2 and upgrades CLAUDE.md §2.5. Prompted by three
+independent findings in one planning session.
+
+**The finding.** Every token-reclaim idea P5 needed turned out to be a SillyTavern feature that
+already exists and ships disabled:
+
+| want | ST already has | default |
+|---|---|---|
+| stable lore placement | `world_info_position.outlet` (`public/script.js:4676`) | unused by card authors |
+| drop example dialogue | `power_user.strip_examples` (`power-user.js:122`) | `false` |
+| cap the lorebook | `world_info_budget_cap` (`world-info.js:81`) | `0`, i.e. off |
+| trim lore by importance | `order` + sorted stop at budget (`world-info.js:5587`, `:5061`) | works, but needs `order` set |
+
+**What this says about the project.** `DESIGN.md` §2 is framed as "why build rather than
+extend", which implies Cairn adds capability. On this evidence it mostly does not. ST provides
+the tools to recapture tokens and keep the prompt stable; they are off, or static, or require
+per-card configuration that authors never do. **Cairn's contribution is the *when*: pulling
+levers ST already has, at the moments that matter, in a chat where nobody configured anything.**
+
+That is also the honest account of what it does elsewhere — deciding how many messages to keep,
+when a summary stands in for a message, and what happens to a summary when the room runs out.
+
+**The rule this changes.** CLAUDE.md §2.5 said: check whether ST already has the mechanism. It
+now says: check whether ST has the **lever** — and if it does, the work is the timing, not the
+mechanism. `world_info_position.outlet` was the cautionary tale; it is now one of four.
+
+**Reopens if:** a lever turns out to be unsafe to drive from an extension — a setting ST expects
+only a human to change, where writing it from code fights the UI or the settings save. Each one
+is checked against the pinned checkout before it is driven (CLAUDE.md §2.6, §2.7).
+
+---
+
+## D-0065 — Canon is the highest-value content in the prompt, and P5 is how to earn it
+**2026-09-18.** Redefines P5. Supersedes `DESIGN.md` §13's "P5 — Episodes + entity
+retrieval" as the phase's stated goal.
+
+**P5 is:** *how to derive strong, reliable canon with a model that cannot ingest the whole
+story.* Episodes and entity retrieval are candidate mechanisms, not the goal, and both are
+answers to capacity — which D-0064 shows is not the binding constraint.
+
+**The value asymmetry, measured.** One canon line covering a fourteen-summary sequence is
+~20 tokens against ~1,500 of summary — about **75:1**. A scene summary is ~106 tokens for
+one message, about **3.7:1**. Canon carries roughly **20× the story per token**. Against the
+whole prompt it is starker: on the P6 reserves the raw window takes 37% to carry 19 messages
+while on the P4 run canon got **0.3% to carry the entire story**.
+
+**72 was never the 20% share.** `canonCap = min(0.20 × cap, cap − 2 × stepTokens)`. On the
+P4 run that is `min(460, 72)`. The share would have given 460 — ample. **The guard gave 72.**
+So raising `CANON_FRACTION` changes nothing; the guard is the lever, and the guard is a
+see-saw stability device that was never a judgement about canon's worth.
+
+**The priority order in `budgeter.js` is written backwards.** Its own comment reads: *"the
+summaries are the memory, and canon is what is left of the ones already dropped."* That is
+why the guard sacrifices canon first, and it was reasoned before anyone had seen what canon
+could carry. On this evidence it inverts.
+
+**And the two moves reinforce.** Today summaries carry both the recent scene *and* all
+long-term memory, which is why the block strains to hold as many as possible. If the spine
+is in canon, summaries only need to cover the current arc — a smaller job, so a smaller
+`sceneCap` is not a loss. The guard may be protecting a quantity that no longer needs
+protecting, which makes it a candidate for deletion rather than tuning.
+
+**The sequencing constraint, which is the operative part of this entry.** All of the above is
+contingent on canon being good, and today it is not (D-0062). **Reordering the sacrifice
+before selection is fixed would protect bad canon and evict real summaries**, and it would do
+it invisibly, because the block would look correct throughout — the failure mode D-0038's
+simulation was built to catch. So:
+
+1. Fix selection (D-0062, D-0064). Demonstrate canon that reads as the story's spine.
+2. *Then* re-derive the budget priority with canon's measured value as the input.
+
+Doing it in that order also gives the re-derivation real evidence, instead of another number
+reasoned in advance — which is exactly how `CANON_FRACTION` 0.20 was set, and the plan
+flagged it as provisional pending the run.
+
+**Corrected arithmetic.** An earlier estimate in this session put the right canon for the run's
+chat at ~63 tokens, inside the 72 available. Doing the extraction properly gives **~100 tokens
+for five lines**. Selection fixes the genre problem completely but **does not on its own fit
+the starved room** — it is short by about 1.4×. D-0060's starvation question survives.
+
+**An alignment worth recording.** This is close to how people remember stories: a few
+load-bearing events, the texture around them discarded, the causal chain preserved. That the
+same decomposition works for a language model is suggestive, and a good harness here would
+likely generalise past this project. Noted, not pursued — and it cuts both ways: **at
+sufficient length any model degrades at this, however capable**, which is the argument for a
+harness rather than a bigger model.
+
+**Reopens if:** selection is fixed and canon's measured value per token turns out lower than
+75:1 on a chat that is not this one — in which case the asymmetry is a property of this
+story's shape rather than of canon.
+
+---
+
+## D-0064 — What a story is made of, and why recency cannot select it
+**2026-09-18.** P5's framing. Sharpens D-0062 from an observation into a mechanism.
+Prior art from the qvink era, recorded here because we paid for it once (CLAUDE.md §6.27).
+
+**The taxonomy.** Roleplay prose is four kinds of thing, and they are not equally worth
+keeping:
+
+1. **Introductions and departures.** Someone entered the story, or permanently left it.
+   Establishes who exists.
+2. **Major occurrences.** An escape, a rescue, something large accomplished or lost.
+   **Necessarily rare** — a story cannot be all of these or every line would matter, and
+   we know that is not true of any real chat.
+3. **Description.** Surroundings, journey, what was seen. Carries the tone, the ambience
+   and the writing style. **Rarely carries a durable fact.**
+4. **Filler.** Small conversations, trivial errands, the glue between arcs. Occasionally
+   worth remembering; mostly it is connective tissue.
+
+**Kinds 1 and 2 keep the story on the rails. Kinds 3 and 4 are most of the volume.**
+
+**Why this makes D-0062 structural rather than unlucky.** Description and filler flow
+continuously, around and between the major arcs, and they dominate by volume. So *any*
+window selected by recency is almost entirely kinds 3 and 4. A mechanism keyed to
+eviction pressure cannot select kinds 1 and 2 except by accident. This is not a tuning
+problem and no run length fixes it.
+
+**The evidence, stated without chat content.** Read back, P4's promoted set implies a
+markedly lighter genre than the chat actually has. It is not that details were lost — the
+*nature of the story* was lost, and a memory block that misrepresents the genre steers the
+next generation wrong. That is the objective Cairn exists for: only the next message counts.
+
+**What was tried before, and what actually worked.** In the qvink era: pass batches of
+10–15 summaries with a little overlap at each end, indexed, and ask the model which indexes
+are critical; then ask whether the story still reads as cohesive with everything around them
+dropped. **The selection half worked** — batched and indexed, the model identified the
+critical points reliably. **The compression half never did.** So the open problem is not
+finding what matters.
+
+**The arithmetic that reframes the compression problem.** On the P4 run's chat: 159 summaries
+at ~106 tokens is ~17,000. Kinds 1 and 2 are perhaps 8–15 of them, ~1,000–1,600 tokens.
+Written as one-liners that is **~60–120 tokens, against canon's measured room of 72**
+(D-0060). So the ratio that matters is **about 7:1 over an already-selected set**, not 159:1
+over everything. **Capacity is not the binding constraint.** It only looked like one because
+the selection was wrong.
+
+**A consequence for canon's shape.** P4 stores canon as a bag: independent one-liners,
+append-only, deduped on normalised text (D-0055). A bag holds a purchase perfectly and
+cannot hold a causal chain — *this was done because of that*. The facts P4 got right are
+exactly the ones that survive without context; the ones that matter are chains, and stored
+as isolated lines they read as trivia. **Whether canon stays a bag is a P5 decision, not a
+settled one.**
+
+**This does not need a frontier model.** Classifying a summary into four kinds, given
+examples, is a far cheaper question than the open-ended "what here became permanently true"
+that P4 asks. The lever is the question and its input, not the model.
+
+**Reopens if:** a classification pass over a real chat cannot separate kinds 1 and 2 from
+3 and 4 reliably enough to act on — in which case the taxonomy is ours and not the model's,
+and the selection has to come from somewhere else.
+
+---
+
+## D-0063 — Cairn adopts qvink's summaries rather than reading them in place
+**2026-09-18.** Proposed for P5, on the P4 run's evidence. Supersedes the two-source
+arrangement in `src/memory/scenes.js` (D-0037's "read and never rewritten").
+
+**The decision.** When a chat opens and Cairn does not own a summary that qvink wrote,
+convert it: `extra.qvink_memory.memory` becomes an `extra.cairn.scene`, hashed against the
+message as it stands, and Cairn owns the whole tier from then on. qvink's copy is left
+untouched.
+
+**Why it is not just tidiness.** Cairn already reads both sources into one shape, and the
+assembler "does not care which wrote it" (`src/memory/scenes.js`), so adoption changes
+nothing about what reaches the prompt. The real reason is narrower and stronger:
+
+- **A qvink scene is checked against nothing.** A Cairn scene is valid only while
+  `hashString(message.mes)` matches what it was written from (D-0037). Edit a message qvink
+  summarised and its summary silently keeps describing text that no longer exists.
+- **P5 will mint permanent facts from these summaries.** A canon fact is never hashed and no
+  edit unmakes it (D-0055), and P4 ships no lever to remove a wrong one. Promoting permanent,
+  unremovable facts out of unverified summaries compounds exactly the risk §5's quality read
+  exists for.
+- On the P4 run's chat the split is clean and the stakes are concrete: **qvink owns messages
+  1–85, Cairn owns 86–162, with no overlap** — and the earlier span is where the chat's
+  defining events are (D-0062).
+
+**The cost, stated plainly.** Adoption hashes each summary against the text *as it is now*,
+which **blesses whatever drift already happened**. A summary that went stale before adoption
+becomes permanently valid. This is a deliberate choice — the alternative is to adopt nothing
+and keep an unverifiable tier — and it is why adoption happens once, on a chat Cairn has not
+adopted before, rather than continuously.
+
+**What is given up.** qvink's `exclude` and `remember` flags currently gate eligibility
+(`scenes.js`). Adoption freezes those decisions at their current values rather than carrying
+the flags forward; Cairn has one notion of eligibility and does not want two.
+
+**What is kept.** The gate (D-0020, D-0027): nothing is adopted while qvink is still writing.
+Adoption is a store write, so it bumps nothing — a v3 store already holds `scene` — but it is
+the first write Cairn makes to messages it did not summarise, and it must be reversible by
+leaving qvink's own copy in place.
+
+**Reopens if:** the blessing of drift turns out to matter in practice — a chat where adopted
+summaries are visibly wrong against their messages — in which case adoption needs a staleness
+check it cannot currently make.
+
+---
+
+## D-0062 — Compaction promotes from the wrong end of the chat
+**2026-09-18.** P4's §5 quality read, done after D-0060 closed the mechanics.
+Supersedes nothing; it names a limit the plan did not anticipate.
+
+**The read.** Seven facts, two batches, on the P4 run's branch. **None is wrong**, which
+was the risk the gate existed for — a promoted fact is permanent and P4 ships no lever to
+remove one. But only three are what canon is for: a transaction naming a third party, a
+kinship, and one piece of backstory. Of the other four:
+
+- **One is an intention, not a fact** — a plan to do something, which the prompt explicitly
+  excludes as plot the roleplay model should steer (D-0043's reasoning). It was false within
+  a few messages and is permanent anyway.
+- **One is a near-duplicate of another**, the same fact in different words. Dedup is on
+  normalised *text*, so it catches restatements and not rephrasings.
+- **One duplicates a Tier 1 field** the world state already carries, which the prompt also
+  tells the model to leave.
+- **One is low-value** — a possession that stops being true as it is used.
+
+**The finding that matters more than the ratio.** Asked for the chat's real canon, the user
+named about eight events that define it. **The promoted set captures one, partially.** Every
+one of those events is in the chat's first third. What canon holds instead is domestic detail
+from the last thirteen summaries before the run started.
+
+**Why, mechanically.** Three compounding gaps:
+
+1. **A rebuild with no pressure step promotes nothing.** A pass fires one see-saw step *before*
+   the rebuild that drops its summaries (D-0057). The first turn of a session is a rebuild with
+   no such step, so it evicts with no pass at all. On this run generation 1 dropped **108
+   summaries** unpromoted — the chat's whole first two-thirds, and where its defining events
+   live. Every reload does this (D-0033: the first turn of a session rebuilds to the floor).
+2. **Passes overlap at the oldest end.** Both batches begin at the same summary. The
+   once-per-cycle test only checks that the evict-set's *newest* index advanced past the newest
+   `covers[1]`; nothing requires the oldest to move. On a starved chat rebuilding to the same
+   floor every step, each pass re-reads nearly all of the previous pass's input — which is how
+   the near-duplicate arose, from the same input worded differently.
+3. **A local window cannot rank global importance.** A pass sees the summaries about to be
+   dropped and is asked what in them became permanently true. Within a window of quiet domestic
+   scenes, buying a cart *is* the most permanent thing that happened. Nothing in the input tells
+   the model that this window is the least consequential stretch of the chat. **Promotion keyed
+   to eviction pressure systematically selects the most recent material, and on a long chat the
+   most recent material is the least consequential.**
+
+**What this costs P4's thesis.** §1 says P4 fixes symptom B — memory that grows without bound
+and still develops holes. It fills the holes it can see. It cannot see the ones that opened
+before it was watching, and it has no way to prefer an important dropped summary over a recent
+one.
+
+**What P5 inherits, restated.** Not "what to do when canon is full", and not only "what a
+starved chat should sacrifice" (D-0060). The live question is **how anything reaches canon from
+outside the eviction window** — a backfill pass over already-dropped summaries, importance that
+is ranked rather than assumed from recency, or an off-prompt tier that makes the question moot.
+
+**Reopens if:** a backfill changes the picture. Re-run this read against a chat whose oldest
+summaries were offered to a pass, and compare what is promoted against the same
+eight-event yardstick.
+
+**No chat content in this entry, or in the repo** (CLAUDE.md §3.13). The facts and the
+yardstick were read in session from the local chat file and stay there.
+
+---
+
+## D-0061 — A run is sized by making the cycle cheap, not by playing longer
+**2026-09-18.** A method decision, prompted by P4's close. CLAUDE.md §7.29, §9.35.
+
+**The decision.** Before proposing a measurement run, in this order:
+
+1. **Split the plan's §5 checklist.** Invariants over pure modules (`compactor.js`,
+   `budgeter.js`, `assembler.js` — no ST, no DOM, no network) are tests, not turns,
+   and they are what inflates a turn count. Only prefix stability against a real
+   cache and the quality of real model output need play at all.
+2. **Price a cycle, then shrink it.** Rebuild spacing is
+   `(sceneCap − floor) / stepTokens` and every term is ours: ST's context size,
+   `STEP` and `RAW_WINDOW` (`src/pipeline/scheduler.js`, and `createSeeSaw` already
+   takes both as options). Hold the ratio `stepTokens / cap` — about 0.48 on Esin —
+   and a two-cycle run fits in 8 to 10 generations instead of 70.
+3. **Name what cannot be scaled down.** Prefix-stability percentages are not
+   comparable across prompt sizes, so the headline number needs a production-scale
+   run — but that needs about three rebuilds, not thirty-five turns. Quality is
+   counted in facts or summaries read, never in turns.
+4. **Then** give the turn count from the branch's current position (D-0049's lesson).
+
+**The trap in step 2, stated because it is not obvious.** Lowering ST's context alone
+does *not* preserve the ratio. The card, lorebook and raw window do not shrink with
+the slider, so the chat falls into `starved`, `stepTokens` stays where it was, and the
+see-saw recouples — measuring a degenerate regime that is not Cairn. `STEP` and
+`RAW_WINDOW` have to come down with it, and `compactor.js`'s "at least 3 summaries in
+the evict-set" floor binds at small `STEP`.
+
+**What it cost to learn.** P4's §5 asked for 30–40 turns; a 70-generation follow-up was
+proposed before this entry and dropped. At the two runs' measured rates — P6 at 4.6
+minutes a generation hand-played, P4 at 1.8 under autoplay — that is 2 to 5.5 hours.
+Generations 21 to 30 of P4's run were byte-identical in every memory field, and the
+fill-rate question the longer run existed to answer was unreachable by construction
+(D-0060). **A plan whose answer is three and a half hours of play is a signal to
+redesign the test, not to schedule the evening.**
+
+**Simulation is precedent, not a new idea.** D-0038's cadence argument was settled by a
+170-turn simulation over plain data, with no ST and no model, and it caught a recoupling
+case a live run would have shown as "the block looks entirely correct".
+
+**Reopens if:** a scaled-down run and a production-scale one disagree about something
+other than stability percentages — which would mean the ratio does not capture the
+regime after all, and the shape has a term we have not named.
+
+---
+
+## D-0060 — P4 is closed, and the run found the chat starved
+**2026-09-18.** P4's gate (`docs/p4-plan.md` §5). Closes D-0055 to D-0058.
+
+**The decision.** P4 closes on mechanics, as P2 and P3 did. Evidence is
+`~/workspaces/cairn-corpus/p4-run-part1.jsonl` — 30 generations on the Esin P3 branch,
+54.6 minutes under autoplay, at 0.10.0 with `make check` green (900 tests, 159 ST
+citations).
+
+**What passed.** One compaction pass per cycle. The evict-set simulation matched the set
+the next rebuild really dropped. No failures, no refusals, no fields dropped over their
+cap. Store v3 migrated with no orphans. Held-turn stability 94.8% mean against D-0049's
+95.9% — the difference inside the run's own spread.
+
+**What failed, and was fixed inside the run.** Canon moved on four generations and only
+one of them was a rebuild. That is D-0059: a falling cap re-trimming the block's head
+mid-cycle. Admission is now frozen to the cap in force at the last rebuild.
+
+**What the run found that the plan did not model.** On a 24k context, Esin is **starved**:
+
+- `budget_limited_by` read `starved` on 11 of 30 generations and on every one of the last
+  ten. The cap, 2,304, is exactly `MIN_CAP_FRACTION` × 23,040. The card and lorebook cost
+  about 9,400 tokens before a single message.
+- `sceneCap − floor` was 1,122 against a `stepTokens` of 1,116. **`recoupled` reports false
+  by six tokens** — half a percent of the cap — and `canonCap`'s guard went negative at
+  generations 19 and 20, which is the same statement arrived at from the other side.
+  Rebuilds came every step, not every 1.4 as predicted.
+- Canon's room fell 613 → 72 → 0, **guard**-bound from the seventh generation on. The 20%
+  share never applied once. The plan's table gave 720 tokens and room for 45 facts; the run
+  gave 5. `canon_full` was true from generation 12 holding 7 facts — because the room
+  shrank, not because the facts piled up.
+- 159 summaries existed and 19 were in the block. Canon carries 5 one-liners forward against
+  about 140 dropped summaries. That ratio is the honest size of what P4 fixes.
+
+**Why more play would not have helped.** `canonCap`'s guard is `cap − 2 × stepTokens`, and
+`stepTokens` grows as summaries lengthen — so canon's room *shrinks* as a chat runs. The
+fill-rate measurement P4 deferred to a longer run is unreachable by construction. Generations
+21 to 30 were byte-identical in every memory field. See D-0061 for what to do instead.
+
+**What P5 inherits.** Not "what to do when canon is full" — merging canon lines does nothing
+when the room is 72 tokens. The live question is **what a starved chat should sacrifice**:
+summaries, canon, or the raw window. `CANON_FRACTION` 0.20 is untested, because the share
+never bound.
+
+**Still open from §5.** The narrow quality read. Seven promoted facts sit on the branch
+unread: are they durable facts, or plot and mood? It needs a reading, not more turns, and it
+is separate from the deferred summary-quality test (D-0041, D-0049).
+
+**One number that is not ours.** Generation 6 fell to 20.5%, with `divergence_in` null and
+the break at char 17,248 — above the block entirely. World Info went from 29 entries to 30.
+That is symptom A's territory (D-0022), not Cairn's.
+
+**Reopens if:** a chat that is *not* starved shows canon bound by its 20% share rather than
+the guard, which would make `CANON_FRACTION` a real number to tune rather than a ceiling
+that never applied.
+
+---
+
+## D-0059 — Canon's cap is frozen at each rebuild, not applied live
+**2026-09-18.** P4's first run. Supersedes the unconditional trim added in P4's build.
+
+**The decision.** `canonCap` is still computed every turn and still reported, but the
+admitted set is fitted to the cap that was in force at the **last rebuild**
+(`prompt/assembler.js`, `admittedCap`). Between rebuilds nothing about canon moves.
+The live cap is applied on rebuild turns only, where the block's head changes anyway.
+
+**What broke.** P4's build trimmed canon to the live cap on every turn, so a falling
+cap could re-trim the block's head mid-cycle. `canonCap`'s guard is
+`cap - 2 * stepTokens` and `stepTokens` moves every turn as summaries lengthen, so
+the cap moves every turn. The run at
+`~/workspaces/cairn-corpus/p4-run-part1.jsonl` broke decision 3 on three of the four
+turns where the admitted set changed — 7→4 and 4→0 on `held` turns, 0→5 on a step
+with no eviction — at 44.1%, 35.8% and 43.0% prefix stability against a 94.2% median.
+Canon sits at the block's head, so each move invalidated everything below it.
+
+**What it costs.** Canon may sit above its live share between rebuilds, bounded by
+the tokens it held at its rebuild. The block's own cap is still absolute. Decision
+5's guard is re-checked at every rebuild rather than every turn, which is the trade
+taken deliberately: a prefix that cannot move between rebuilds is the thesis
+(D-0019), and the overshoot is ~3.5% of the cap on the observed run.
+
+**Why it was not caught.** The invariant *had* a test — "admits a new batch only on a
+turn that was rebuilding anyway" — but its fixture used uniform summaries and a fixed
+cap, so `stepTokens` never moved and the cap never fell. A test whose fixture cannot
+reach the failing condition passes for the wrong reason (CLAUDE.md §3.10, §9.35). The
+new case lengthens summaries as the chat runs and fails against the old code.
+
+**Also from this run.** `memory_step_tokens` and `memory_canon_cap_applied` are now
+logged: `stepTokens` drives the cap and was invisible, recoverable only by inverting
+the guard, and only when `limitedBy` happened to be `guard`.
+
+**Reopens if:** the overshoot is ever observed large enough to recouple the see-saw on
+its own — which the run's own numbers would show as `recoupled` true with
+`canon_cap_applied` above `canon_cap`.
+
+---
+
+## D-0058 — The summarizer's three job kinds move into their own files
+**2026-09-18.** P4's build. CLAUDE.md §1.2.
+
+**The decision.** `pipeline/summarizer.js` keeps the queue, the transport and the
+failure policy; `pipeline/state-job.js` and `pipeline/canon-job.js` each own the
+shape of one job of their kind. The summary job stays inline because it *is* the
+queue's unit of work — the queue walks summaries, and the other two are one job at
+a time either side of that walk.
+
+**Why now.** The file was 473 lines before P4 and the compaction job added about 90
+more. §1.2's ceiling is a signal to split, not a rule to route around, and the
+responsibility line was already written in the file's own header: "the queue, the
+transport, and what a failure does" against what each kind of work *is*. Splitting
+along a line the file already claimed cost no new concept.
+
+**What did not move.** `send`, the tallies' shape, the toast-once-per-streak policy,
+the order of the three kinds, and every behaviour the 667 lines of summarizer tests
+cover. The split is a move, not a rewrite.
+
+**Reopens if:** a fourth kind arrives and the queue itself, rather than the jobs,
+becomes the thing that is too long.
+
+---
+
+## D-0057 — A compaction pass is due under budget pressure, once per cycle, and fails to nothing
+**2026-09-18.** P4's plan decisions 6 to 9. Not yet measured — the run is the gate.
+
+**The decision.** Nothing is stored about what has run. Both halves are derived:
+
+- **Pressure** is `sceneTokens + stepTokens > sceneCap` — one step *before* the
+  overflow, so the pass has a whole see-saw step of wall-clock and lands its batch
+  on the turn the rebuild is already changing the block's head (D-0056).
+- **Its input** is the budgeter's own drop-to-floor loop, run one step early against
+  `floor − stepTokens`, so the set a pass reads is the set the rebuild really drops
+  rather than a similar one. At least 3 summaries, or the call is not worth making.
+- **Once per cycle, without a flag:** a pass is due only when the evict-set's newest
+  summary is past the newest any batch in the chat has already read. Pressure holds
+  for ten turns and yields one pass.
+- **No room, no call.** At the cap the pass does not run, the log says `canon-full`,
+  and the block keeps what it has. Making room — merging canon lines, or moving the
+  oldest to episodes — is P5's, with this run's fill rate as its evidence.
+
+**The budget lives in one place.** The assembler works the pass out during `plan()`,
+because every number it needs is that turn's budget, and the summarizer reads it
+through a getter. It carries the chat's own words, so it goes to the job and never
+to the log — the same split `latest` already keeps.
+
+**Lowest priority of the three kinds.** The state first because the next prompt
+carries it (D-0044), then summaries because a missing one holds the step (D-0037),
+then the pass, which has a step of slack. **No pass while the handover gate is
+shut**: while qvink is injecting, Cairn is measuring and nothing more (D-0020,
+D-0027).
+
+**A failed pass changes nothing.** No batch, eviction exactly as today, one toast per
+streak, and the summaries are dropped unpromoted. A well-formed reply promoting
+*nothing* is a success, and writes an empty batch: that records the range as read, so
+the same question is not asked again every turn for the rest of the cycle.
+
+**Reopens if:** the run shows passes on turns with no pressure, more than one per
+cycle, or an evict-set that does not match what the next rebuild drops.
+
+---
+
+## D-0056 — Canon enters the block only on a rebuild, and its cap reserves two see-saw steps
+**2026-09-18.** P4's plan decisions 3, 4 and 5. Not yet measured — the run is the gate.
+
+**The decision.** Canon renders at the block's **head**, above the summaries, under
+its own `[Established facts]:` heading in qvink's template shape. A chat with no
+canon renders exactly today's bytes, section and all.
+
+**Admission is D-0019 applied a second time.** A fact at the head means appending one
+changes bytes above every summary — the expensive break. But a pass fires one step
+*before* the rebuild that drops its summaries, and a rebuild changes the head anyway.
+So the assembler holds a new batch back until the turn eviction fires, and the two
+head-changes cost one break instead of two. The admitted mark advances only on a
+rebuild turn and only forward, like `budget.oldest`; the first turn of a session is a
+rebuild, so a reload admits everything. Between rebuilds the canon text is
+byte-identical.
+
+**The cap is derived, not a setting.**
+
+```
+canonCap = min(0.20 × cap,  cap − 2 × stepTokens)
+sceneCap = cap − canonTokens
+floor    = sceneCap / 2
+```
+
+`CANON_FRACTION` is 0.20 — on P6's derived cap for Esin that is ~692 tokens, about 45
+one-liners against a block holding 34 summaries. Conservative on purpose: the run's
+numbers are the evidence for moving it, not an argument made in advance.
+
+**The second term is a guard, and it is the load-bearing half.** Canon takes its room
+from the scene budget, so it is the one thing in P4 that could collapse growth and
+eviction back into one cadence (`recoupled`, D-0026). Reserving two steps of scene
+budget makes that arithmetically impossible: canon is squeezed to nothing first. A
+starved chat (D-0052) gets no canon at all, which is the right order of sacrifice —
+the summaries are the memory, and canon is only what is left of the ones already gone.
+
+**A falling cap trims from the newest end.** P6's cap moves when a heavier run of
+messages is written, so admitted canon can exceed its share after the fact. The block
+then keeps the longest run of oldest facts that fits, and only on a rebuild turn:
+dropping from the newest end leaves the bytes above untouched, and the oldest facts
+are the ones whose summaries are longest gone.
+
+**Reopens if:** the run shows `canon_admitted` moving on a turn where `evicted` is 0
+and the step reason is not `first-turn`, or a rebuild turn breaking the prefix
+anywhere but the block's head.
+
+---
+
+## D-0055 — Canon is stored per message and never hashed; `chatMetadata` is not used
+**2026-09-18.** P4's plan decisions 1 and 2. **Supersedes `DESIGN.md` §9**, which put
+canon in `chatMetadata` behind explicit checkpoints keyed to message index — and
+called that "the single most likely source of quiet wrongness in the whole system".
+It is not built.
+
+**The decision.** A canon batch lives on the newest summary its pass read, in
+`message.extra.cairn.canon`, the shape D-0045 proved for the world state:
+
+```
+{ facts: [{ text, entities }], covers: [i, j], prompt: "<hash>", at: "<ISO>" }
+```
+
+The canon set is a **scan and a fold**, oldest first, read fresh every turn. Nothing
+records which batch is current, so branches, swipes and deletions roll back by taking
+the messages with them — no checkpoint, no rollback code, no event wiring, and
+`index.js` gains nothing (CLAUDE.md §1.1). The one thing §9's shape bought — surviving
+a swipe on the batch's own message — cannot arise: the batch lands behind the raw
+window by construction, where swipes never reach. A rollback past that message
+correctly unmakes facts about events that had not happened.
+
+**A fact is not hashed against anything.** A summary and a state are caches of text
+and go stale when it is edited. A fact is a statement that something *happened*, and
+editing the message afterwards does not unmake it. So a batch counts while it is
+present and well-formed, and no edit invalidates it.
+
+**The cost, stated plainly.** A wrong fact is permanent for that branch, and P4 ships
+no lever to remove one — the same lever the world state has, which is none. That is
+why the prompt errs towards keeping fewer, why the parser drops a fact over its cap
+rather than shortening it, and why every promotion is shown in the chat under the
+message it was written on. It is also why §5's quality read reads the promoted facts
+rather than only counting them.
+
+**`entities` is stored and never read.** `store/entity-index.js` is a named §11
+boundary, the model gives the tags free in the same reply, and adding the field in P5
+would cost a store version, a migration and a back-history of untagged facts. The
+cost accepted: a field no code reads, which the run cannot tell us is any good.
+
+**Store v3**, with a migration from v2 (`canon` absent, so a v2 store is already a v3
+one), a v2 fixture kept as the old shape and a v3 fixture added (CLAUDE.md §8.32). The
+canon batch's shape is invented in that fixture — no run has written one — so the
+first P4 log is what confirms it.
+
+**Reopens if:** a case turns up where a batch must survive its own message, or the run
+shows facts surviving a branch that unmade them.
+
+---
+
+## D-0054 — P6 is measured and closed: the cap holds still
+**2026-09-18.** Closes P6 (`DESIGN.md` §13). The plan's decision is D-0052 and the
+plan page is deleted. The run is two files, split by the mid-run reload:
+`~/workspaces/cairn-corpus/p6-run-part1.jsonl` (32 generations) and
+`p6-run-part2.jsonl` (4).
+
+**The run.** Esin branch #2, text completion, 36 generations from message 97 to
+131, user messages written with ST's Impersonate at about 2,000 characters each.
+The branch's reserves held all run: card 4,414, lore 4,982 (bound by the books,
+not the budget), raw window 8,590, state 439, margin 1,152. Against an 8,063
+share that gives a cap of 3,463, and `limitedBy` read `room` on every generation —
+the case P6 exists for.
+
+**The gate is met.** `memory_cap` moved seven times in 36 generations, and every
+move was the plan's §8 row 2 — a heavier 19-message run written, nothing else:
+
+| | cap | `budget_window` | cost |
+|---|---|---|---|
+| the first seven generations | 3,693 → 3,463 | 8,360 → 8,590 | `memory_evicted: 0` each |
+| then 28 generations | **3,463** | 8,590 | none |
+| one more | 3,418 | 8,635 | `memory_evicted: 0`, block byte-identical |
+
+Those 28 held generations span three steps, one eviction and the reload. The last
+change is the row at its cleanest: the cap fell while the block sat well under it,
+so nothing rebuilt. No move happened on any turn §8 does not name. The 200-message
+simulation in `test/assembler.test.js` guards the same property where a run
+cannot reach.
+
+**The reload costs nothing.** The cap read 3,463 on the generation before it and
+3,463 on the generation after — the point of working every reserve out from the
+chat (D-0033). The first turn back rebuilt to the floor and dropped 100 summaries,
+the same shape as the run's opening rebuild, which dropped 67.
+
+**Rebuilds came every two steps**, as D-0052 predicted. From the opening rebuild:
+a step at 2,776 tokens under a 3,463 cap, then a step that planned ~3,760, went
+over, and evicted 22 to land at 1,609 against a 1,731 floor. The step after that
+reached 2,555 and did not evict — `recoupled` stayed false on every generation,
+with about 1,730 of slack against a step worth about 990.
+
+**No overflow.** `prompt_near_limit` never fired. The turn before each step read
+81.2%, 82.7% and 79.4% of the max prompt; the run's peak was **82.7%**, against
+the 95% line D-0049 hit under the fixed cap.
+
+**The margin was never squeezed.** The §3 check — `prompt_tokens − memory_tokens
+− state_tokens` against `budget_card + budget_lore + budget_window_now` — came to
+−18, −17 and −13 at the three peaks, so the reserves were accurate to about a
+tenth of a percent and conservative on all 36 generations. **This is not yet a
+case for lowering the 5% margin.** No peak replayed the chat's heaviest run:
+`budget_window_now` reached 8,307 of the 8,590 reserved, so a true worst case
+lands nearer 86.5%, and the run never tested what the margin is for.
+
+**Stability**, in D-0049's shape:
+
+```
+                                       n   stability    break
+held, the state didn't move           17   96.3–97.9    just after cairn_state
+held, the state moved forward         14   90.4–95.7    where the state used to be
+step                                   2   54.7, 52.5   the old block's tail
+step that also evicted                 1   46.9         the block's head
+reload                                 2   —            rebuilt from the store
+```
+
+Held generations averaged 95.5% against D-0049's 95.9% — P6 does not touch the
+turns between events, which is what it promised.
+
+**Every expensive generation was an impersonate.** Classifying all 36 by whether
+the log entry coincides with an assistant `gen_started` in the chat file: the
+three steps, the eviction and both reloads were **impersonate** generations, and
+no story generation in the run paid one. Story generations ran 90.4–97.9%, mean
+95.3% (n=18). This is structural rather than luck: `STEP` is 10 and a turn adds
+two messages, so once a step lands on an odd chat length every later step does
+too, and with Impersonate writing the user's side that slot is always the
+impersonate. It holds only while the user impersonates every turn — type a
+message by hand and the step falls on the story generation instead. It is also
+the answer to "does P6 feel slower": for an Impersonate user, no, because the
+re-read happens on the generation before the one they are waiting on.
+
+**Found in the run.**
+- **Step turns cost more under P6 than under P3.** 54.7% and 52.5%, against
+  D-0049's 58.6% and 65.1%. Held turns are unchanged, so the cost is isolated to
+  steps, and the likely mechanism is P6's own: a smaller cap means a smaller
+  block, the break at the old block's tail therefore lands earlier in the prompt,
+  and less of the prompt is cached. **Stated as the hypothesis it is** — the two
+  runs had different prompt sizes and the character offsets have not been
+  reconciled. It is the first cost P6 has shown that D-0052 did not anticipate,
+  and P4's compaction is what would repay it. In play it went unfelt, for the
+  reason above.
+- **A reload destroys the inspector log.** `createDiskLog` holds its entries in a
+  closure array and rewrites the whole file on each flush (`src/util/disk-log.js`),
+  so the first write after a reload replaces the file with post-reload turns only.
+  The log has to be copied aside before any reload or half the run is unreadable.
+  This is why the evidence is two files.
+- **The state's first run under D-0053** came through clean: 16 calls, 16 written,
+  0 failures, 3 dropped fields, 45–82 tokens with a median of 71 against a 439
+  bound. 32 summary calls, 32 written, 0 failures. One writer on every generation,
+  world-info ordering stable with no ties throughout.
+
+**Reopens if:** a chat shows the cap moving on a turn §8 of the plan did not name,
+or `prompt_near_limit` fires — the latter now means a reserve missed something,
+not that the cap was optimistic. Lowering the margin or a reserve wants a run
+whose peak actually replays the chat's heaviest window.
+
+---
+
 ## D-0053 — The model sends the whole world state back, and nothing is ever cleared
 **2026-09-18.** Supersedes D-0044's "why a patch", and folds in D-0048, whose
 first-build branch this removes.
@@ -94,8 +1059,9 @@ outright.
 ---
 
 ## D-0052 — The memory cap is the smaller of 35% and what the chat leaves
-**2026-09-17.** P6, from `docs/p6-plan.md`. Supersedes the fixed share in D-0038,
-which stands as the ceiling and as the fallback.
+**2026-09-17.** P6's plan decision; the plan page is deleted and the run closed it
+(D-0054). Supersedes the fixed share in D-0038, which stands as the ceiling and as
+the fallback.
 
 **The decision.** `cap = min(35% of the max prompt, the room)`, never below 10%.
 
@@ -160,7 +1126,7 @@ with.
 ---
 
 ## D-0051 — P6 comes before P4: the fixed cap is bigger than the room
-**2026-09-17.** Reorders `DESIGN.md` §13. The plan is `docs/p6-plan.md`.
+**2026-09-17.** Reorders `DESIGN.md` §13. P6's plan became D-0052 and closed as D-0054.
 
 **The evidence.** The P3 branch's log, with real-length user messages at a 23,040
 max prompt. On the turn before the second step the prompt was 21,964 with a

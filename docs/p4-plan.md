@@ -1,9 +1,38 @@
 # P4 plan — canon, and somewhere for the dropped summaries to go
 
-**Status: proposed, 2026-09-17. Not started.** P6 is built and its run has not happened
-(`docs/p6-plan.md` §5). P4's trigger is defined against P6's derived cap, so **the build waits
-on P6's gate**: if the run shows the cap can't hold still, D-0038's fixed share stands and §2
-and §8 below are re-derived against it before anything is written.
+**Status: CLOSED, 2026-09-18** (`docs/decisions.md` D-0060). Built, run, and closed on mechanics.
+This page is kept as the record of what was planned; **where it disagrees with D-0059 and D-0060,
+they win.**
+
+**Read this before the rest of the page.** Three of its predictions did not survive the run:
+
+- **§1's table is wrong by an order of magnitude on canon.** It gives a cap of ~3,600, a canon
+  cap of 720 and room for ~45 facts. The run measured 2,304, **72, and 5**. Esin on a 24k context
+  is `starved` — the cap pinned to its 10% floor — and `canonCap` was **guard**-bound from the
+  seventh generation on, so decision 5's 20% share never applied once.
+- **Rebuilds came every step, not every ~1.4.** `sceneCap − floor` cleared `stepTokens` by six
+  tokens; `recoupled` is false and very nearly meaningless at that margin.
+- **"Canon fills on a long chat" was right for the wrong reason.** `canon_full` was true from
+  generation 12 holding 7 facts, because the room shrank, not because facts piled up. Canon's
+  room *falls* as a chat grows, so §5's deferred fill-rate measurement is unreachable by
+  construction — see D-0061 on sizing a run.
+
+**Still open:** §5's narrow quality read. Seven promoted facts are on the branch, unread.
+
+The decisions below are logged as D-0055 to D-0058, corrected by D-0059 and closed by D-0060.
+
+**Three things the build settled that this page left open.**
+
+1. **A falling cap trims canon from the newest end**, on a rebuild turn only (D-0056). The page
+   assumed a pass never promotes past the cap, which is true — but P6's cap *moves*, so admitted
+   canon can exceed its share after the fact. Dropping from the newest end leaves the bytes above
+   untouched, and it is what makes `sceneCap ≥ 2 × stepTokens` an invariant rather than a
+   near-certainty.
+2. **The assembler works out the pending pass and the summarizer reads it** through a getter, the
+   way the observer already reads `latest`. Every number `pendingCompaction` needs is that turn's
+   budget, so deriving it anywhere else would be a second copy of the cap arithmetic.
+3. **The summarizer split** into `summarizer.js` (queue, transport, failure policy),
+   `state-job.js` and `canon-job.js` (D-0058). It was 473 lines before the third kind.
 
 P4 is the phase that fixes symptom B (`DESIGN.md` §1): memory that grows without bound and
 still develops holes. Today a rebuild drops the oldest summaries out of the prompt and nothing
@@ -276,7 +305,7 @@ invented here, so the first run's log is what confirms it.
 
 ## 5. Cutover, and what we measure
 
-**Only after P6's run has closed** (`docs/p6-plan.md` §5).
+**P6's run has closed** (`docs/decisions.md` D-0054), and P4 is built and green on `make check`.
 
 **For the user:**
 1. Update. **Keep canon** is on by default.

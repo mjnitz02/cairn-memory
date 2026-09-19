@@ -1,11 +1,13 @@
 /**
  * `message.extra.cairn` — read, validate, write (DESIGN.md §9, docs/decisions.md D-0037).
  *
- * Two tiers share the store. A scene lives on the message it summarises and a
- * state on the newest message it read (docs/decisions.md D-0045), so deletions, branches
- * and swipes carry both with no bookkeeping. What neither survives is an edit, and
- * that is caught on read: each counts only while the text it was written from
- * still hashes the same.
+ * Three tiers share the store. A scene lives on the message it summarises, a
+ * state on the newest message it read (docs/decisions.md D-0045) and a canon batch on
+ * the newest summary its pass read (docs/p4-plan.md decision 1), so deletions, branches
+ * and swipes carry all three with no bookkeeping. What a scene and a state do not
+ * survive is an edit, and that is caught on read: each counts only while the text it
+ * was written from still hashes the same. A canon fact is not hashed — it says
+ * something *happened*, and editing the message afterwards does not unmake it.
  *
  * Pure: messages in, a status out. The writers mutate the message they are given
  * and nothing else — never a copy (DESIGN.md §9).
@@ -155,7 +157,71 @@ export function writeState(chat, index, { value, read, changed, prompt, at = new
     return writeKey(chat[index], 'state', { value, read, hash: hashRange(range), changed, prompt, at });
 }
 
-/** Set one tier's key, keeping the other's and upgrading the envelope to the current version. */
+/**
+ * The canon batch stored on `chat[index]`.
+ *
+ * No `stale`: a batch is checked for shape and nothing else (docs/p4-plan.md decision 2).
+ * An empty `facts` is well-formed and deliberate — a pass that found nothing durable
+ * still records the range it read, so it is not asked the same question every turn.
+ *
+ * @param {object} message
+ * @returns {{status: 'none'|'invalid'|'future'|'valid', canon: object|null}}
+ *          `canon` is set only when `valid`.
+ */
+export function readCanon(message) {
+    const { status, store } = migrateStore(message?.extra?.[SLUG]);
+    if (status !== 'ok') return { status, canon: null };
+
+    const canon = store.canon;
+    if (canon === undefined) return { status: 'none', canon: null };
+    const wellFormed = isObject(canon)
+        && Array.isArray(canon.facts) && canon.facts.every(wellFormedFact)
+        && Array.isArray(canon.covers) && canon.covers.length === 2
+        && canon.covers.every(Number.isInteger) && canon.covers[0] <= canon.covers[1]
+        && typeof canon.prompt === 'string'
+        && typeof canon.at === 'string';
+    return wellFormed ? { status: 'valid', canon } : { status: 'invalid', canon: null };
+}
+
+/**
+ * Store a canon batch on the newest summary its pass read. That message is behind
+ * the raw window by construction, so a batch lands where swipes never reach.
+ *
+ * The caller enforces the per-fact caps before calling (memory/canon-strategy.js);
+ * this only refuses what would corrupt the store.
+ *
+ * @param {Array<object>} chat The live chat.
+ * @param {number} index The newest message the pass read.
+ * @param {{facts: Array<{text: string, entities: string[]}>, covers: number[],
+ *          prompt: string, at?: string}} canon
+ * @returns {boolean} Whether anything was written.
+ */
+export function writeCanon(chat, index, { facts, covers, prompt, at = new Date().toISOString() }) {
+    if (!Array.isArray(facts) || !facts.every(wellFormedFact) || typeof prompt !== 'string') return false;
+    if (!Array.isArray(covers) || covers.length !== 2 || !covers.every(Number.isInteger) || covers[0] > covers[1]) return false;
+    if (typeof chat?.[index]?.mes !== 'string') return false;
+
+    return writeKey(chat[index], 'canon', {
+        facts: facts.map((fact) => ({ text: fact.text, entities: [...fact.entities] })),
+        covers: [...covers],
+        prompt,
+        at,
+    });
+}
+
+/**
+ * `entities` is stored and never read in P4: `store/entity-index.js` is a named
+ * interface boundary (DESIGN.md §11), the model gives the tags in the same reply,
+ * and adding the field later would cost a store version and a migration.
+ */
+function wellFormedFact(fact) {
+    return isObject(fact)
+        && typeof fact.text === 'string' && fact.text !== ''
+        && Array.isArray(fact.entities)
+        && fact.entities.every((entity) => typeof entity === 'string' && entity !== '');
+}
+
+/** Set one tier's key, keeping the others' and upgrading the envelope to the current version. */
 function writeKey(message, key, entry) {
     const { status, store } = migrateStore(message.extra?.[SLUG]);
     if (status === 'future') return false;

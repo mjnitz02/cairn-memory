@@ -1,26 +1,29 @@
 /**
  * The summarizer — the only file that calls a model (docs/decisions.md D-0037).
  *
- * It owns the queue, the transport, and what a failure does, for both kinds of
- * memory work: the state update and the summaries (docs/decisions.md D-0044). What a
- * prompt says and how a reply is read belong to the strategies (memory/*-strategy.js),
- * and what is waiting belongs to memory/scenes.js and memory/state.js.
+ * It owns the queue, the transport, and what a failure does. The three kinds of memory
+ * work take their turn in it: the state update first because the very next prompt
+ * carries it (D-0044), then summaries because a missing one holds the step (D-0037),
+ * then a compaction pass, which has a whole see-saw step of slack (docs/p4-plan.md
+ * decision 7). What a prompt says and how a reply is read belong to the strategies
+ * (memory/*-strategy.js); what one job of a kind *is* belongs to its own file
+ * (state-job.js, canon-job.js), and the summary job is inline because it is the
+ * queue's own unit of work.
  *
  * A failure writes nothing and toasts once per streak of its kind. A missing summary
- * holds the step before its message (pipeline/scheduler.js), and a missing state
- * leaves the previous one in the prompt. Nothing here may reach ST's event path
- * (CLAUDE.md §4.17).
+ * holds the step before its message (pipeline/scheduler.js), a missing state leaves the
+ * previous one in the prompt, and a failed pass lets eviction proceed exactly as it
+ * does today. Nothing here may reach ST's event path (CLAUDE.md §4.17).
  */
 import { pendingScenes, sceneHistory } from '../memory/scenes.js';
 import { perMessage, resolveSummaryPrompt } from '../memory/scene-strategy.js';
-import { jobStillCurrent, pendingStateJob } from '../memory/state.js';
-import { mergeReply } from '../memory/state-schema.js';
-import { stateRecord } from '../memory/state-strategy.js';
-import { readScene, summarisable, writeScene, writeState } from '../store/chat-store.js';
+import { readScene, summarisable, writeScene } from '../store/chat-store.js';
 import { hashString } from '../util/hash.js';
 import { countTokens } from '../util/tokens.js';
 import { debug, error, toast, toastOnce, warn } from '../util/log.js';
-import { assessStateUpdates, assessSummarizing } from './gates.js';
+import { assessCompaction, assessStateUpdates, assessSummarizing } from './gates.js';
+import { createCanonJob } from './canon-job.js';
+import { createStateJob } from './state-job.js';
 import { MAX_ATTEMPTS, createTally } from './tally.js';
 
 export { MAX_ATTEMPTS };
@@ -32,20 +35,24 @@ const PROMPT_FALLBACK = 'Cairn\'s summary prompt has no {{message}}, so the defa
 
 /**
  * @param {() => object} getContext Returns a fresh SillyTavern.getContext()
- * @param {{settings: () => {memoryProfileId?: string, summaryPrompt?: string, worldState?: boolean},
- *          strategy?: object, stateStrategy?: object, clock?: () => number, onUpdate?: () => void}} options
+ * @param {{settings: () => {memoryProfileId?: string, summaryPrompt?: string,
+ *              worldState?: boolean, keepCanon?: boolean},
+ *          strategy?: object, stateStrategy?: object, canonStrategy?: object,
+ *          clock?: () => number, onUpdate?: () => void, memory?: () => object|null}} options
  *        `strategy` is the summary strategy. `onUpdate` fires when a request goes out
  *        or settles, so the panel can follow work that happens between generations.
+ *        `memory` returns the assembler's pending compaction pass for the turn just
+ *        planned — the budget lives there, so this file never re-derives it.
  */
 export function createSummarizer(getContext, {
-    settings, strategy = perMessage, stateStrategy = stateRecord, clock = Date.now, onUpdate,
+    settings, strategy = perMessage, stateStrategy, canonStrategy, clock = Date.now, onUpdate, memory,
 } = {}) {
     const summaries = createTally();
-    const states = createTally({ dropped: 0 });
     /** The chat the tallies count for. A reload of the same chat keeps them. */
     let statsChat = null;
     let summaryGate = null;
     let stateGate = { reason: null, tracker: null };
+    let canonGate = { reason: null };
     let running = false;
     let controller = null;
     let active = null;
@@ -54,6 +61,14 @@ export function createSummarizer(getContext, {
     const asked = [];
     /** The message a summary request is out for. */
     let writing = null;
+
+    // The two kinds that are one job at a time. They take the queue's transport and
+    // failure policy and own nothing else (pipeline/state-job.js, canon-job.js).
+    const machinery = { getContext, send, save, discard, report, clock };
+    const state = createStateJob({ ...machinery, ...(stateStrategy ? { strategy: stateStrategy } : {}) });
+    const canon = createCanonJob({
+        ...machinery, pending: memory, ...(canonStrategy ? { strategy: canonStrategy } : {}),
+    });
 
     /** Start a run, or fold this trigger into the one under way. Never rejects. */
     function drain() {
@@ -78,21 +93,30 @@ export function createSummarizer(getContext, {
 
     /**
      * The state first, since the very next prompt carries it, then summaries oldest
-     * first, one request at a time. A summary is needed only when its message reaches
-     * a step, 10 or more messages later (docs/decisions.md D-0044).
+     * first, then a compaction pass. One request at a time, in that order of urgency
+     * (docs/decisions.md D-0037, D-0044; docs/p4-plan.md decision 7). A summary is needed
+     * only when its message reaches a step, 10 or more messages later; a pass has the
+     * whole step before its rebuild.
      */
     async function run() {
         let stateTried = false;
+        let canonTried = false;
         while (running) {
             const context = getContext();
             const config = settings?.() ?? {};
-            const gates = { summary: assessSummarizing(context, config), state: assessStateUpdates(context, config) };
-            if (gates.summary.reason !== summaryGate || gates.state.reason !== stateGate.reason || gates.state.tracker !== stateGate.tracker) {
+            const gates = {
+                summary: assessSummarizing(context, config),
+                state: assessStateUpdates(context, config),
+                canon: assessCompaction(context, config, { writing: memory?.()?.writing }),
+            };
+            if (gates.summary.reason !== summaryGate || gates.state.reason !== stateGate.reason
+                || gates.state.tracker !== stateGate.tracker || gates.canon.reason !== canonGate.reason) {
                 summaryGate = gates.summary.reason;
                 stateGate = { reason: gates.state.reason, tracker: gates.state.tracker };
+                canonGate = { reason: gates.canon.reason };
                 notify();
             }
-            // The summary gate checks what both kinds need first, so its reason covers both.
+            // The summary gate checks what every kind needs first, so its reason covers all three.
             if (gates.summary.reason === 'no-connection-manager') toastOnce(NO_CONNECTION_MANAGER);
             if (gates.summary.reason === 'profile-missing') toastOnce(PROFILE_MISSING);
             if (gates.summary.sameProfile || gates.state.sameProfile) toastOnce(SAME_PROFILE);
@@ -100,10 +124,10 @@ export function createSummarizer(getContext, {
             const { chat, chatId } = context;
             if (!stateTried) {
                 stateTried = true;
-                const job = gates.state.ready ? pendingStateJob(chat) : null;
+                const job = gates.state.ready ? state.pending(chat) : null;
                 // Whatever becomes of it, summaries still run: a state that keeps failing must not starve them.
-                if (job && !states.givenUp(stateKey(chatId, job))) {
-                    await updateState(context, config, job);
+                if (job && !state.givenUp(chatId, job)) {
+                    await state.run(context, config, job);
                     notify();
                     continue;
                 }
@@ -118,12 +142,22 @@ export function createSummarizer(getContext, {
                 continue;
             }
             const index = pendingScenes(chat).find((at) => !summaries.givenUp(sceneKey(chatId, chat[at])));
-            if (index === undefined) return;
-            const landed = await summarise(context, config, index);
-            // After the outcome is recorded, not when the request settles: a panel that
-            // redraws in between shows the message as neither in flight nor written.
+            if (index !== undefined) {
+                const landed = await summarise(context, config, index);
+                // After the outcome is recorded, not when the request settles: a panel that
+                // redraws in between shows the message as neither in flight nor written.
+                notify();
+                if (!landed) return;
+                continue;
+            }
+
+            // Last, and only once the summaries are all written: a pass reads them.
+            if (canonTried) return;
+            canonTried = true;
+            const pass = gates.canon.ready ? canon.pending() : null;
+            if (!pass || canon.givenUp(chatId, pass)) return;
+            await canon.run(context, config, pass);
             notify();
-            if (!landed) return;
         }
     }
 
@@ -157,47 +191,6 @@ export function createSummarizer(getContext, {
             counting.lastMs = clock() - started;
             counting.ms += counting.lastMs;
         }
-    }
-
-    /** Bring the state up to the newest visible message. Its outcome is only recorded. */
-    async function updateState(context, { memoryProfileId }, job) {
-        const key = stateKey(context.chatId, job);
-        let request;
-        try {
-            request = stateStrategy.build({
-                state: job.state,
-                messages: job.messages,
-                earlier: job.earlier,
-                expand: (text) => context.substituteParams(text),
-            });
-        } catch (err) {
-            return failState(key, job.index, 'error', err);
-        }
-
-        const sent = await send(context, memoryProfileId, request, states, job.index);
-        if (sent.signal.aborted) return discard('state', job.index, 'aborted');
-        if (sent.error) return failState(key, job.index, 'error', sent.error);
-
-        // Found by identity and checked against the hash of what was read, so an edit,
-        // hide, deletion, swipe, continue or chat change meanwhile discards the reply.
-        const now = getContext();
-        const index = jobStillCurrent(now.chat, job);
-        if (index < 0) return discard('state', job.index, 'the messages it read changed');
-
-        const parsed = stateStrategy.parse(sent.reply?.content);
-        if (!parsed.ok) return failState(key, index, parsed.reason);
-        const { value, changed, dropped } = mergeReply(job.state, parsed.record);
-        if (dropped.length) {
-            states.stats.dropped += dropped.length;
-            debug(`Dropped from the state reply: ${dropped.map((drop) => `${drop.field} (${drop.reason})`).join(', ')}.`);
-        }
-        if (!writeState(now.chat, index, { value, read: job.read, changed, prompt: request.prompt, at: new Date(clock()).toISOString() })) {
-            return failState(key, index, 'write');
-        }
-
-        states.succeed(key);
-        debug(`Brought the state up to message #${index}: ${changed.length ? changed.join(', ') : 'no change'}.`);
-        await save(now, 'the state');
     }
 
     /** The oldest asked-for message still in the chat, or undefined. */
@@ -283,14 +276,6 @@ export function createSummarizer(getContext, {
         return false;
     }
 
-    function failState(key, index, reason, err) {
-        const outcome = states.fail(key, reason);
-        report(outcome, `The world state update through message #${index} failed (${reason}).`, err);
-        if (outcome.givenUp) {
-            warn(`Gave up on the world state through message #${index} after ${outcome.count} failures. The previous state stays in the prompt until a new message arrives.`);
-        }
-    }
-
     function report({ first }, detail, err) {
         if (first) toast(`${detail} Cairn will try again after the next reply.`);
         else warn(detail);
@@ -308,27 +293,6 @@ export function createSummarizer(getContext, {
 
     function givenUp() {
         return failed().filter((entry) => entry.attempts >= MAX_ATTEMPTS).map((entry) => entry.index);
-    }
-
-    /** The state tier's counterpart of `status`: one job at a time, so no lists. */
-    function stateStatus() {
-        const status = {
-            ...states.stats, gate: stateGate.reason, tracker: stateGate.tracker, streak: states.streak,
-            inFlight: states.inFlight, pending: null, failed: null, givenUp: false,
-        };
-        try {
-            const { chat, chatId } = getContext();
-            const job = pendingStateJob(chat);
-            status.pending = Boolean(job);
-            const record = job ? states.record(stateKey(chatId, job)) : undefined;
-            if (record) {
-                status.failed = { index: job.index, attempts: record.count, reason: record.reason };
-                status.givenUp = record.count >= MAX_ATTEMPTS;
-            }
-        } catch (err) {
-            warn('Could not read the state queue.', err);
-        }
-        return status;
     }
 
     /** A panel that throws costs the panel, not the summary. */
@@ -392,7 +356,8 @@ export function createSummarizer(getContext, {
         const { chatId } = getContext();
         if (chatId !== statsChat) {
             summaries.resetStats();
-            states.resetStats();
+            state.tally.resetStats();
+            canon.tally.resetStats();
             statsChat = chatId;
         }
         notify();
@@ -438,14 +403,16 @@ export function createSummarizer(getContext, {
         givenUp,
 
         /**
-         * Counts, sizes and timings for the open chat — never a summary's or a state's
-         * text. `gate` is the last run's verdict (`assessSummarizing`), null before the
-         * first run, and `state` holds the same for the state update.
+         * Counts, sizes and timings for the open chat — never a summary's, a state's or
+         * a fact's text. `gate` is the last run's verdict (`assessSummarizing`), null
+         * before the first run, and `state` and `canon` hold the same for the other two
+         * kinds.
          */
         get status() {
             const status = {
                 ...summaries.stats, gate: summaryGate, streak: summaries.streak, inFlight: summaries.inFlight,
-                pending: null, failed: [], givenUp: [], promptDefault: null, state: stateStatus(),
+                pending: null, failed: [], givenUp: [], promptDefault: null,
+                state: state.status(stateGate), canon: canon.status(canonGate),
             };
             try {
                 // The default is what goes out when the prompt is unedited *or* unusable.
@@ -467,7 +434,3 @@ function sceneKey(chatId, message) {
     return `${chatId}\n${hashString(message.mes)}`;
 }
 
-/** A state update is tried again once what it reads changes: an edit, or a new message. */
-function stateKey(chatId, job) {
-    return `${chatId}\n${job.read}\n${job.hash}`;
-}

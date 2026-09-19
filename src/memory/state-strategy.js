@@ -8,7 +8,7 @@
  *
  * Pure: no ST, no network. ST's macro expansion comes in as `expand`.
  */
-import { looksLikeRefusal, stripThinking, unfence } from './model-reply.js';
+import { firstJson, looksLikeRefusal, stripThinking, unfence } from './model-reply.js';
 import {
     CHARACTER_FIELDS,
     MAX_CHARACTERS,
@@ -130,45 +130,6 @@ export function parseStateReply(content) {
     if (looksLikeRefusal(text)) return reject('refusal');
     if (found.unclosed) return reject('truncated');
     return reject('format');
-}
-
-/**
- * The first bracketed span that parses as JSON. Spans that do not parse, like a
- * `[Current scene]` echoed in a preamble, are skipped whole, so an object nested
- * inside a broken one is never taken for the record.
- */
-function firstJson(text) {
-    for (let start = text.search(/[{[]/); start >= 0;) {
-        const end = closingIndex(text, start);
-        if (end < 0) return { parsed: false, unclosed: true };
-        try {
-            return { parsed: true, value: JSON.parse(text.slice(start, end + 1)) };
-        } catch {
-            const next = text.slice(end + 1).search(/[{[]/);
-            start = next < 0 ? -1 : end + 1 + next;
-        }
-    }
-    return { parsed: false, unclosed: false };
-}
-
-/** Where the bracket at `start` closes, skipping brackets inside JSON strings; -1 if it never does. */
-function closingIndex(text, start) {
-    let depth = 0;
-    let inString = false;
-    for (let i = start; i < text.length; i++) {
-        const ch = text[i];
-        if (inString) {
-            if (ch === '\\') i++;
-            else if (ch === '"') inString = false;
-        } else if (ch === '"') {
-            inString = true;
-        } else if (ch === '{' || ch === '[') {
-            depth++;
-        } else if ((ch === '}' || ch === ']') && --depth === 0) {
-            return i;
-        }
-    }
-    return -1;
 }
 
 function reject(reason) {

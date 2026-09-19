@@ -108,6 +108,35 @@ jq -r '[.api, .stability_percent, .prompt_tokens, .writers] | @tsv' \
 The file is rewritten in full on each write (ST's endpoint replaces files rather
 than appending) and reset when the chat changes.
 
+## Driving a long run
+
+A phase gate wants tens of unattended turns.
+[`scripts/autoplay.user.js`](../scripts/autoplay.user.js) is a Tampermonkey
+userscript that plays them. It is a dev harness: `manifest.json` does not load it
+and it ships with nothing.
+
+Install it in Tampermonkey, adjust `@match` if SillyTavern is not on port 8181,
+and keep **`@grant none`** — the script needs page context to reach
+`globalThis.SillyTavern` (`public/scripts/st-context.js:115`). An overlay appears
+bottom-right with the turn count, a settle delay and a Run/Pause toggle.
+
+One turn in `impersonate` mode is `/impersonate await=true`, which leaves the
+generated user line in `#send_textarea` (`public/script.js:5524`), then a click on
+`#send_but`, which is the path a hand-played turn takes
+(`public/script.js:11160`). Completion is read from `chat.length` growing by two,
+then from ST clearing `document.body.dataset.generating`
+(`public/script.js:7088`). `continue` mode runs `/continue await=true` instead.
+
+Two things to hold in mind when reading the log afterwards:
+
+- **A turn is two generations.** Cairn's interceptor skips only quiet prompts
+  (`src/prompt/injector.js:106`), so the impersonation gets the memory block too
+  and is logged alongside the story generation. Size a run by its events, not by
+  the turn counter.
+- **The settle delay does not know about Cairn.** It is a fixed sleep, not a wait
+  on the summariser's queue draining, so a long backlog can still be in flight
+  when the next turn starts. Raise the delay if `pending` is climbing.
+
 ## House rules
 
 [`CLAUDE.md`](../CLAUDE.md) is the full set and takes precedence over habit.

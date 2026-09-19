@@ -8,7 +8,7 @@ import { createReserves, heaviestRun } from '../src/prompt/reserves.js';
 import { collectedKeys, createContext, extension_prompt_types } from './mocks/sillytavern.js';
 import { makeBook, makeWorldInfoModule } from './mocks/world-info.js';
 import { makeQvinkChat, makeQvinkSettings, makeSummary } from './mocks/qvink.js';
-import { cairnStore, cairnSummary, makeMixedChat } from './mocks/cairn.js';
+import { cairnCanonStore, cairnStore, cairnSummary, makeMixedChat } from './mocks/cairn.js';
 import { pendingScenes } from '../src/memory/scenes.js';
 import { hashString } from '../src/util/hash.js';
 import { mulberry32 } from './helpers/random.js';
@@ -880,5 +880,202 @@ describe('the cap the block is planned against', () => {
         // And once the window is full they are rare: most of them are the first
         // nineteen turns, where each message added is itself a heavier run.
         expect(moved.filter((turn) => turn.length > 19).length).toBeLessThan(15);
+    });
+});
+
+/**
+ * P4: canon at the block's head (docs/p4-plan.md decisions 3, 4 and 5). The
+ * invariants here are the ones that are invisible in play (CLAUDE.md §3.10):
+ * whether the block still reads byte-identically without canon, and whether canon
+ * only ever enters on a turn that was rebuilding anyway.
+ */
+describe('canon at the head of the block', () => {
+    /** A chat with summaries, plus canon batches at the given message indexes. */
+    function withCanon(run, length, batches) {
+        run.context.chat = makeQvinkChat({ length, summarisedThrough: length - 11 });
+        for (const [index, facts, covers] of batches) {
+            run.context.chat[index].extra.cairn = cairnCanonStore(facts, covers);
+        }
+        return run;
+    }
+
+    it('renders today\'s bytes exactly for a chat that has never had a pass', async () => {
+        const run = harness({ cap: 6_000 });
+        run.context.chat = makeQvinkChat({ length: 40, summarisedThrough: 29 });
+        const { report, text } = await run.write();
+
+        expect(text).toBe(asQvinkWouldRender(readScenes(run.context.chat).slice(0, 30)));
+        expect(text).not.toContain('[Established facts]');
+        expect(report.canonFacts).toBe(0);
+        expect(report.canonAdmitted).toBe(0);
+        expect(report.canonTokens).toBe(0);
+    });
+
+    it('puts the facts above the summaries, in their own section', async () => {
+        const run = harness({ cap: 6_000 });
+        withCanon(run, 40, [[5, ['Her brother is dead.', 'They kissed at the lighthouse.'], [0, 5]]]);
+        const { text } = await run.write();
+
+        expect(text).toMatch(/^\[Established facts\]:\n\n\* Her brother is dead\.\n\* They kissed at the lighthouse\.\n\n\[Following is a list of recent events\]:/);
+    });
+
+    /**
+     * Decision 3, and the check §5's run reads: a batch written between rebuilds
+     * changes nothing, and the rebuild turn admits it. Canon moving on any other
+     * turn would change bytes above every summary and break the whole block.
+     */
+    it('admits a new batch only on a turn that was rebuilding anyway', async () => {
+        const run = harness({ cap: 6_000 });
+        const plans = [];
+        let written = false;
+
+        for (let length = 31; length <= 200; length++) {
+            run.context.chat = makeQvinkChat({ length, summarisedThrough: length - 11 });
+            // One batch from the start, and a second written mid-run, well before
+            // any rebuild is due.
+            run.context.chat[5].extra.cairn = cairnCanonStore(['Her brother is dead.'], [0, 5]);
+            if (length >= 60) written = true;
+            if (written) run.context.chat[9].extra.cairn = cairnCanonStore(['Aster owns a green boat.'], [6, 9]);
+            plans.push({ length, ...(await run.plan()) });
+        }
+
+        const moved = plans.filter((plan, i) => i > 0 && plan.canonAdmitted !== plans[i - 1].canonAdmitted);
+        expect(moved.length).toBeGreaterThan(0);
+        for (const plan of moved) {
+            expect(plan.evicted > 0 || plan.stepReason === 'first-turn', `turn ${plan.length}`).toBe(true);
+        }
+        // And it did land: the second batch is in the block by the end.
+        expect(plans.at(-1).canonAdmitted).toBe(2);
+    });
+
+    /**
+     * The same invariant under a *moving* cap, which is what the P4 run hit
+     * (docs/decisions.md D-0059). `canonCap`'s guard is `cap - 2 * stepTokens`, so
+     * summaries that lengthen as a chat runs drag the cap down twice as fast — and
+     * a cap applied live re-trims the block's head on ordinary turns. The fixture
+     * above cannot catch it: uniform summaries hold `stepTokens` still.
+     */
+    it('holds the admitted set when a lengthening chat drags the canon cap down', async () => {
+        // Esin's proportions: a ~2.4k block where one see-saw step costs about half
+        // of it, which is where the guard takes over from the share.
+        const run = harness({ cap: 2_500 });
+        const plans = [];
+
+        for (let length = 31; length <= 200; length++) {
+            // Summaries lengthen as the chat runs, which is what moved `stepTokens`
+            // on Esin (1,031 to 1,193 against a 2,440 cap). 353 is the mock's
+            // default and MAX_SUMMARY_CHARS is 1_500, so this stays in range.
+            const chars = 340 + Math.round((length - 31) * 1.1);
+            run.context.chat = makeQvinkChat({ length, summarisedThrough: length - 11, chars });
+            run.context.chat[5].extra.cairn = cairnCanonStore(
+                ['Her brother is dead.', 'Aster owns a green boat.', 'The lamp in the hall is broken.'],
+                [0, 5],
+            );
+            plans.push({ length, ...(await run.plan()) });
+        }
+
+        // The fixture has to actually move the cap, or it proves nothing.
+        const caps = plans.map((plan) => plan.canonCap);
+        expect(Math.min(...caps), 'the cap never fell — fixture is too gentle').toBeLessThan(caps[0]);
+
+        const moved = plans.filter((plan, i) => i > 0 && plan.canonAdmitted !== plans[i - 1].canonAdmitted);
+        for (const plan of moved) {
+            expect(plan.evicted > 0 || plan.stepReason === 'first-turn', `turn ${plan.length}`).toBe(true);
+        }
+
+        // What the freeze costs: canon may sit above the live cap between rebuilds.
+        // It may never sit above the one its rebuild froze, and the block as a whole
+        // may never exceed its cap — that one is not negotiable, it is the prompt.
+        // Canon's own see-saw guarantee has its own test below.
+        for (const plan of plans) {
+            expect(plan.canonTokens, `turn ${plan.length}`).toBeLessThanOrEqual(plan.canonCapApplied);
+            expect(plan.tokens, `turn ${plan.length}`).toBeLessThanOrEqual(plan.cap);
+        }
+    });
+
+    it('holds the canon text byte-identical between rebuilds', async () => {
+        const run = harness({ cap: 6_000 });
+        const heads = [];
+
+        for (let length = 31; length <= 80; length++) {
+            run.context.chat = makeQvinkChat({ length, summarisedThrough: length - 11 });
+            run.context.chat[5].extra.cairn = cairnCanonStore(['Her brother is dead.'], [0, 5]);
+            run.context.chat[9].extra.cairn = cairnCanonStore(['Aster owns a green boat.'], [6, 9]);
+            const { report, text } = await run.write();
+            if (!report.evicted && report.stepReason !== 'first-turn') {
+                heads.push(text.slice(0, text.indexOf('[Following')));
+            }
+        }
+
+        expect(new Set(heads).size).toBe(1);
+    });
+
+    it('admits everything on the first turn of a session, so a reload catches up', async () => {
+        const fresh = () => {
+            const run = harness({ cap: 6_000 });
+            run.context.chat = makeQvinkChat({ length: 60, summarisedThrough: 49 });
+            run.context.chat[5].extra.cairn = cairnCanonStore(['One.'], [0, 5]);
+            run.context.chat[9].extra.cairn = cairnCanonStore(['Two.'], [6, 9]);
+            return run;
+        };
+
+        expect((await fresh().plan()).canonAdmitted).toBe(2);
+    });
+
+    it('rolls a branch back with no rollback code', async () => {
+        const run = harness({ cap: 6_000 });
+        withCanon(run, 60, [[5, ['One.'], [0, 5]], [49, ['Two.'], [6, 49]]]);
+        expect((await run.plan()).canonAdmitted).toBe(2);
+
+        // A branch takes the chat back past the second batch's message.
+        run.context.chat = run.context.chat.slice(0, 40);
+        expect((await run.plan()).canonAdmitted).toBe(1);
+    });
+
+    it('never lets the whole block exceed the cap, canon included', async () => {
+        const run = harness({ cap: 6_000 });
+        const facts = Array.from({ length: 40 }, (_, i) => `Durable fact number ${i + 1}, stated plainly and at some length.`);
+
+        for (let length = 31; length <= 200; length++) {
+            run.context.chat = makeQvinkChat({ length, summarisedThrough: length - 11 });
+            run.context.chat[5].extra.cairn = cairnCanonStore(facts, [0, 5]);
+            const plan = await run.plan();
+
+            expect(plan.tokens, `turn ${length}`).toBeLessThanOrEqual(plan.cap);
+            expect(plan.canonTokens, `turn ${length}`).toBeLessThanOrEqual(plan.canonCap);
+        }
+    });
+
+    /** Decision 5's guard, end to end: canon must never recouple the see-saw. */
+    it('is squeezed out before the two cadences collapse', async () => {
+        const run = harness({ cap: 6_000 });
+        const facts = Array.from({ length: 60 }, (_, i) => `Durable fact number ${i + 1}, stated plainly and at some length.`);
+
+        for (let length = 31; length <= 200; length++) {
+            run.context.chat = makeQvinkChat({ length, summarisedThrough: length - 11 });
+            run.context.chat[5].extra.cairn = cairnCanonStore(facts, [0, 5]);
+            const plan = await run.plan();
+
+            expect(plan.recoupled, `turn ${length}`).toBe(false);
+            expect(plan.sceneCap, `turn ${length}`).toBeGreaterThanOrEqual(2 * plan.stepTokens);
+        }
+    });
+
+    it('leaves the block alone when the setting is off', async () => {
+        const context = createContext({ chat: [], extensions: [QVINK_EXTENSION] });
+        context.extensionSettings.qvink_memory = makeQvinkSettings();
+        const assembler = createAssembler(() => context, {
+            reserves: NO_RESERVES,
+            maxPromptTokens: async () => Math.ceil(6_000 / CAP_FRACTION),
+            settings: () => ({ keepCanon: false }),
+        });
+        context.chat = makeQvinkChat({ length: 40, summarisedThrough: 29 });
+        context.chat[5].extra.cairn = cairnCanonStore(['Her brother is dead.'], [0, 5]);
+
+        const { report, text } = await assembler.plan();
+
+        expect(text).toBe(asQvinkWouldRender(readScenes(context.chat).slice(0, 30)));
+        expect(report.canonFacts).toBe(0);
+        expect(report.canonAdmitted).toBe(0);
     });
 });

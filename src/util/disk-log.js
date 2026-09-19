@@ -137,6 +137,7 @@ function toEntry(snapshot) {
         ...memoryFields(snapshot.memory),
         ...summaryFields(snapshot.summaries),
         ...stateFields(snapshot.state, snapshot.summaries?.state),
+        ...compactionFields(snapshot.summaries?.canon),
     };
 }
 
@@ -175,7 +176,28 @@ function memoryFields(memory) {
         // The cap in use: the smaller of the fixed share and what the chat leaves
         // (docs/decisions.md D-0038, D-0052).
         memory_cap: memory.cap,
+        // Canon at the block's head (docs/p4-plan.md §3). `memory_canon_admitted` is the
+        // check the run reads: it may change only on a turn where `memory_evicted > 0`
+        // or `memory_step_reason` is `first-turn`.
+        memory_canon_facts: memory.canonFacts ?? null,
+        memory_canon_admitted: memory.canonAdmitted ?? null,
+        memory_canon_tokens: memory.canonTokens ?? null,
+        memory_canon_cap: memory.canonCap ?? null,
+        // What the block was fitted to, which between rebuilds is the cap the last
+        // rebuild froze. A gap against `memory_canon_cap` is canon over its share.
+        memory_canon_cap_applied: memory.canonCapApplied ?? null,
+        // share or guard — whether canon's fifth or the see-saw's two steps bound it.
+        memory_canon_limited_by: memory.canonLimitedBy ?? null,
+        memory_canon_full: memory.canonFull ?? null,
+        // Facts the chat holds that the cap left out of this block.
+        memory_canon_spilled: memory.canonSpilled ?? null,
+        memory_canon_through: memory.canonThrough ?? null,
+        // The cap less what canon took: what the summaries are actually fitted to.
+        memory_scene_cap: memory.sceneCap ?? null,
         memory_floor: memory.floor,
+        // What one see-saw step costs. It drives `canonCap`'s guard, so without it a
+        // moving canon cap cannot be explained from the log alone.
+        memory_step_tokens: memory.stepTokens ?? null,
         memory_max_prompt_tokens: memory.maxPromptTokens,
         ...budgetFields(memory.budget),
         memory_chars: memory.chars,
@@ -243,6 +265,40 @@ function summaryFields(status) {
         summary_tokens_in: status.tokensIn,
         summary_tokens_out: status.tokensOut,
         summary_prompt_default: status.promptDefault ?? null,
+    };
+}
+
+/**
+ * The compaction queue as the prompt went out (docs/p4-plan.md §3). Counts are running
+ * totals for the chat, so the work between two generations is the difference of two
+ * lines, and every one of them is of the *applied* change (CLAUDE.md §4.18). Never a
+ * fact's text.
+ */
+function compactionFields(status) {
+    if (!status) return { compaction_reported: false };
+
+    return {
+        compaction_reported: true,
+        // ready, off, not-writing, no-profile, group-chat, no-chat or profile-missing.
+        compaction_gate: status.gate ?? null,
+        compaction_in_flight: status.inFlight != null,
+        // The range a due pass would read, or null when none is due.
+        compaction_pending: status.pending?.covers ?? null,
+        compaction_pending_summaries: status.pending?.summaries ?? null,
+        compaction_given_up: status.givenUp ?? null,
+        // No room left, so no call is made at all (decision 6). P5's evidence.
+        compaction_full: status.full ?? null,
+        compaction_passes: status.calls ?? null,
+        compaction_written: status.written ?? null,
+        compaction_promoted: status.promoted ?? null,
+        compaction_duplicates: status.duplicates ?? null,
+        compaction_dropped_fields: status.refused ?? null,
+        compaction_failed: status.failures ?? null,
+        compaction_last_reason: status.lastReason ?? null,
+        compaction_ms: status.ms ?? null,
+        compaction_last_ms: status.lastMs ?? null,
+        compaction_tokens_in: status.tokensIn ?? null,
+        compaction_tokens_out: status.tokensOut ?? null,
     };
 }
 

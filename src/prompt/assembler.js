@@ -32,7 +32,9 @@
  * nothing learned last turn can bend this one (docs/decisions.md D-0033, D-0052).
  */
 import { pendingScenes, qvinkExcluding, qvinkInjecting, readScenes } from '../memory/scenes.js';
-import { createBudget, deriveCap, recoupled } from '../pipeline/budgeter.js';
+import { admitCanon, canonFor, canonRoom } from '../memory/canon.js';
+import { canonCap, createBudget, deriveCap, recoupled } from '../pipeline/budgeter.js';
+import { pendingCompaction } from '../pipeline/compactor.js';
 import { createSeeSaw } from '../pipeline/scheduler.js';
 import { assessHandover } from './handover.js';
 import { createReserves } from './reserves.js';
@@ -53,6 +55,17 @@ export const BLOCK_RENDERING = Object.freeze({
 });
 
 /**
+ * Canon's own section, above the summaries (docs/p4-plan.md decision 4). The same
+ * shape as the block's, so the two read as one thing, and **no canon means no
+ * section at all** — a chat that has never had a pass gets today's bytes exactly.
+ */
+export const CANON_RENDERING = Object.freeze({
+    template: '[Established facts]:\n{{facts}}\n',
+    separator: '\n* ',
+    macro: 'facts',
+});
+
+/**
  * Where it goes: qvink's default placement (its index.js:153-156), `IN_PROMPT`
  * after the story string (public/script.js:486) with the system role.
  * `setExtensionPrompt`'s arguments (public/script.js:8926).
@@ -70,13 +83,25 @@ export const BLOCK_PLACEMENT = Object.freeze({ position: 0, depth: 2, role: 0, s
  * @param {{template: string, separator: string, macro: string}} [rendering]
  * @returns {string}
  */
-export function renderBlock(scenes, { template, separator, macro } = BLOCK_RENDERING) {
-    if (!scenes?.length) return '';
+export function renderBlock(items, { template, separator, macro } = BLOCK_RENDERING) {
+    if (!items?.length) return '';
 
-    const body = scenes.map((scene) => `${separator}${scene.text}`).join('');
+    const body = items.map((item) => `${separator}${item.text}`).join('');
     // A replacer function, not a replacement string: a summary containing `$&`
     // would otherwise be read as a substitution pattern and quietly mangled.
     return template.replace(macroPattern(macro), () => body);
+}
+
+/**
+ * The whole memory block: canon's section, a blank line, then the summaries.
+ *
+ * Either half may be empty. With no canon this returns the summaries byte for byte,
+ * which is what makes "no canon, no change" a test rather than a hope.
+ */
+export function renderMemory(canonText, sceneText) {
+    if (!canonText) return sceneText;
+    if (!sceneText) return canonText;
+    return `${canonText}\n${sceneText}`;
 }
 
 /**
@@ -86,12 +111,12 @@ export function renderBlock(scenes, { template, separator, macro } = BLOCK_RENDE
  *
  * @returns {number} Exactly `renderBlock(scenes, rendering).length`.
  */
-export function blockChars(scenes, { template, separator, macro } = BLOCK_RENDERING) {
-    if (!scenes?.length) return 0;
+export function blockChars(items, { template, separator, macro } = BLOCK_RENDERING) {
+    if (!items?.length) return 0;
 
     const slots = template.match(macroPattern(macro))?.length ?? 0;
-    const body = scenes.length * separator.length
-        + scenes.reduce((total, scene) => total + scene.chars, 0);
+    const body = items.length * separator.length
+        + items.reduce((total, item) => total + item.chars, 0);
     return template.length + slots * (body - macroToken(macro).length);
 }
 
@@ -118,6 +143,23 @@ export function createAssembler(getContext, {
     let ownInjection = Boolean(own);
     /** The report the observer logs, from the plan made earlier this turn. */
     let latest = null;
+    /**
+     * The newest message whose canon batch the block has admitted. Advances only on a
+     * rebuild turn and only forward, like `budget.oldest` (docs/p4-plan.md decision 3):
+     * canon sits at the block's head, so admitting a batch on an ordinary turn would
+     * change bytes above every summary. A rebuild changes the head anyway, so the two
+     * head-changes land together and cost one break instead of two.
+     */
+    let admittedThrough = -Infinity;
+    /**
+     * The canon cap in force at the last rebuild, held for the cycle. `canonCap`'s
+     * guard tracks `stepTokens`, which moves every turn, so applying a live cap
+     * re-trims the block's head mid-cycle — the break the mark above exists to avoid
+     * (docs/decisions.md D-0059).
+     */
+    let admittedCap = null;
+    /** This turn's compaction pass, for the summarizer. Never reaches the log. */
+    let pendingPass = null;
 
     /**
      * @returns {Promise<{report: object, text: string, blank: number[],
@@ -165,15 +207,67 @@ export function createAssembler(getContext, {
         const candidateTokens = candidateText ? await countTokens(context, candidateText) : 0;
         const charsPerToken = candidateTokens > 0 ? candidateText.length / candidateTokens : 1;
         const tokensOf = (list) => Math.ceil(blockChars(list) / charsPerToken);
+        const canonTokensOf = (list) => Math.ceil(blockChars(list, CANON_RENDERING) / charsPerToken);
 
-        const fit = budget.fit({
+        // What the next step will add, from what this block costs per scene. One
+        // scene per message is the ceiling rather than the rule, so this reads a
+        // little high — which errs towards noticing the two cadences have
+        // recoupled rather than towards missing it (pipeline/budgeter.js).
+        //
+        // Measured before the fit, because canon's cap is derived from it and the
+        // scene budget from canon's cap. The candidate and the kept set share their
+        // per-scene cost to within the template's own length, so the number the log
+        // carries is the one P6 measured (docs/decisions.md D-0052).
+        const stepTokens = candidate.length
+            ? Math.round((candidateTokens / candidate.length) * seeSaw.step)
+            : 0;
+
+        const keepCanon = settings?.().keepCanon !== false;
+        const canonFold = keepCanon ? canonFor(chat) : { facts: [], batches: 0, coveredThrough: null };
+        const allFacts = withChars(canonFold.facts);
+        const canonBudget = canonCap({ cap, stepTokens });
+        // Last turn's admitted set, since the fit is what says whether this turn may
+        // move the mark. Held at the last rebuild's cap: the live cap is reported, but
+        // a cap that moves every turn may not rewrite the head on an ordinary one.
+        const heldCap = admittedCap ?? canonBudget.cap;
+        let canon = admitCanon({
+            facts: allFacts.filter((fact) => fact.index <= admittedThrough),
+            cap: heldCap,
+            tokensOf: canonTokensOf,
+        });
+
+        let fit = budget.fit({
             scenes: covered,
-            cap,
+            sceneCap: Math.max(0, cap - canon.tokens),
             tokensOf,
             rebuild: step.reason === 'first-turn',
         });
 
-        const text = renderBlock(fit.kept);
+        // A rebuild changes the block's head whatever we do, so this is the turn a
+        // new batch costs nothing extra. Admitting it shrinks the scene budget, so
+        // the summaries are fitted again — to the floor of the budget they actually
+        // have, not the one they had before canon grew.
+        const rebuilt = fit.evicted > 0 || step.reason === 'first-turn';
+        let evicted = fit.evicted;
+        if (rebuilt) admittedCap = canonBudget.cap;
+        if (rebuilt && allFacts.length) {
+            admittedThrough = Math.max(admittedThrough, allFacts[allFacts.length - 1].index);
+            const admitted = admitCanon({ facts: allFacts, cap: canonBudget.cap, tokensOf: canonTokensOf });
+            if (admitted.tokens !== canon.tokens) {
+                canon = admitted;
+                fit = budget.fit({
+                    scenes: covered,
+                    sceneCap: Math.max(0, cap - canon.tokens),
+                    tokensOf,
+                    rebuild: true,
+                });
+                evicted += fit.evicted;
+            }
+        }
+
+        const sceneText = renderBlock(fit.kept);
+        const canonText = renderBlock(canon.facts, CANON_RENDERING);
+        const text = renderMemory(canonText, sceneText);
         const tokens = text === candidateText
             ? candidateTokens
             : (text ? await countTokens(context, text) : 0);
@@ -181,14 +275,28 @@ export function createAssembler(getContext, {
         const change = comparePrompts(previousBlock, text);
         previousBlock = text;
 
-        // What the next step will add, from what this block costs per scene. One
-        // scene per message is the ceiling rather than the rule, so this reads a
-        // little high — which errs towards noticing the two cadences have
-        // recoupled rather than towards missing it (pipeline/budgeter.js).
-        const stepTokens = fit.kept.length
-            ? Math.round((tokens / fit.kept.length) * seeSaw.step)
-            : 0;
-        const stuck = recoupled({ cap, floor: fit.floor, stepTokens });
+        const stuck = recoupled({ sceneCap: fit.sceneCap, floor: fit.floor, stepTokens });
+
+        // Whether a compaction pass is due, worked out here because every number it
+        // needs is this turn's budget (pipeline/compactor.js). The summarizer reads it
+        // through a getter and runs it after the reply lands; it carries the chat's
+        // own words, so it goes to the job and never to the report.
+        const room = canonRoom({ facts: allFacts, cap: canonBudget.cap, tokensOf: canonTokensOf });
+        const due = pendingCompaction({
+            scenes: fit.kept,
+            coveredThrough: canonFold.coveredThrough,
+            sceneCap: fit.sceneCap,
+            floor: fit.floor,
+            stepTokens,
+            room: room.facts,
+            tokensOf,
+        });
+        pendingPass = {
+            ...due,
+            writing: gate.writing,
+            canon: allFacts.map((fact) => ({ text: fact.text })),
+            message: due.due ? chat[due.covers[1]] : null,
+        };
 
         // The cap is meant to hold still between a card edit, a book edit, a
         // context change and a heavier run of messages. Saying when it moves is
@@ -197,11 +305,11 @@ export function createAssembler(getContext, {
             debug(`Memory block: cap ${previousCap ?? '—'} → ${cap} tokens, limited by ${budgeted.limitedBy}.`);
             previousCap = cap;
         }
-        if (fit.evicted) {
-            debug(`Memory block: evicted ${fit.evicted} scene(s) to the floor (${fit.tokens}/${cap} tokens).`);
+        if (evicted) {
+            debug(`Memory block: evicted ${evicted} scene(s) to the floor (${fit.tokens}/${fit.sceneCap} scene tokens).`);
         }
         if (stuck) {
-            debug(`Memory block: ${cap - fit.floor} tokens of slack cannot hold a ${stepTokens}-token step; every step will rebuild.`);
+            debug(`Memory block: ${fit.sceneCap - fit.floor} tokens of slack cannot hold a ${stepTokens}-token step; every step will rebuild.`);
         }
 
         latest = {
@@ -223,9 +331,24 @@ export function createAssembler(getContext, {
             included: fit.kept.length,
             oldest: fit.kept[0]?.index ?? null,
             newest: fit.kept[fit.kept.length - 1]?.index ?? null,
-            evicted: fit.evicted,
+            evicted,
             overCap: fit.over,
             cap,
+            // Canon (docs/p4-plan.md §3). `canonAdmitted` is the check the run reads: it
+            // may change only on a turn where `evicted > 0` or the step reason is
+            // `first-turn`. Any other turn where it moves is decision 3 failing.
+            canonFacts: allFacts.length,
+            canonAdmitted: canon.facts.length,
+            canonTokens: canon.tokens,
+            canonCap: canonBudget.cap,
+            // What the block was actually fitted to. Equal to `canonCap` on a rebuild;
+            // between rebuilds it is the cap that rebuild froze (D-0059).
+            canonCapApplied: admittedCap ?? heldCap,
+            canonLimitedBy: canonBudget.limitedBy,
+            canonFull: room.full,
+            canonSpilled: allFacts.length - canon.facts.length,
+            canonThrough: Number.isFinite(admittedThrough) ? admittedThrough : null,
+            sceneCap: fit.sceneCap,
             // Where the cap came from, so a log says whether the ceiling or the
             // chat is what bound it (docs/decisions.md D-0052).
             budget: {
@@ -243,7 +366,7 @@ export function createAssembler(getContext, {
                 state: budgeted.parts?.state ?? null,
             },
             floor: fit.floor,
-            slack: Math.max(0, cap - fit.floor),
+            slack: Math.max(0, fit.sceneCap - fit.floor),
             stepTokens,
             recoupled: stuck,
             maxPromptTokens: maxPrompt,
@@ -288,6 +411,9 @@ export function createAssembler(getContext, {
             reserves.reset();
             previousBlock = null;
             previousCap = null;
+            admittedThrough = -Infinity;
+            admittedCap = null;
+            pendingPass = null;
             latest = null;
         },
 
@@ -295,7 +421,21 @@ export function createAssembler(getContext, {
         get latest() {
             return latest;
         },
+
+        /**
+         * This turn's compaction pass, for the summarizer (docs/p4-plan.md decision 6).
+         * Separate from `latest` because it carries the summaries a pass would read,
+         * and the report is counts and offsets only.
+         */
+        get pendingPass() {
+            return pendingPass;
+        },
     };
+}
+
+/** Canon facts sized the way scenes are, so `blockChars` can price a candidate list. */
+function withChars(facts) {
+    return facts.map((fact) => ({ ...fact, chars: fact.text.length }));
 }
 
 /** Who wrote the block's summaries: `qvink`, `cairn`, `mixed`, or null for no block. */

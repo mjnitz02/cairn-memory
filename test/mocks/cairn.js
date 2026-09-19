@@ -15,6 +15,27 @@ export function cairnStore(message, text, { prompt = 'h:00000000000001', at = '2
     return { v: 1, scene: { text, hash: hashString(message.mes), prompt, at } };
 }
 
+/**
+ * A v3 store carrying a canon batch, written out by hand (docs/p4-plan.md decision 1).
+ * A plain string is a fact with no entities; the tags are stored and unread in P4.
+ *
+ * @param {Array<string|{text: string, entities?: string[]}>} facts
+ * @param {number[]} covers The summaries the pass read, `[oldest, newest]`.
+ */
+export function cairnCanonStore(facts, covers, { prompt = 'h:00000000000003', at = '2026-09-17T09:00:00.000Z' } = {}) {
+    return {
+        v: 3,
+        canon: {
+            facts: facts.map((fact) => (typeof fact === 'string'
+                ? { text: fact, entities: [] }
+                : { text: fact.text, entities: [...(fact.entities ?? [])] })),
+            covers: [...covers],
+            prompt,
+            at,
+        },
+    };
+}
+
 /** A Cairn summary, distinguishable from a qvink one by eye and by prefix. */
 export function cairnSummary(index, chars = 353) {
     return `Cairn ${makeSummary(index, chars)}`.slice(0, chars);

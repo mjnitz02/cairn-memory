@@ -411,16 +411,80 @@ D-0035).
 
 ## Compaction
 
-Under budget pressure, in this order: **promote** durable facts into canon and
-state, **merge** what remains about the same thread, **drop** texture with no
-forward relevance. Sources are archived to tier 4 rather than destroyed, so a
-bad pass is recoverable.
-
 Recursive summarisation produces holes because it destroys the source before
 extracting what must survive. Extraction goes first here, always.
 
+A rebuild drops the oldest summaries out of the prompt. One see-saw step *before*
+that rebuild, Cairn asks the memory model which of those summaries said something
+that will still be true long after the scene ended — a death, a kinship, a promise
+made, a place learned, something permanently broken or given — and keeps those
+one-liners as **canon** at the head of the block:
+
+```
+[Established facts]:
+
+* Her brother drowned in the spring flood.
+* They kissed on the lighthouse stair.
+
+[Following is a list of recent events]:
+
+* …
+```
+
+**A chat with no canon renders exactly the bytes it did before**, section and all.
+
+The pass fires a step early on purpose. Canon sits above every summary, so adding
+a fact changes the block's head — the expensive break. A rebuild changes the head
+anyway, so the assembler holds a new batch back until the turn eviction fires and
+the two head-changes cost one break instead of two. Between rebuilds the canon
+text is byte-identical. The pass also gets a whole step of wall-clock, which is why
+it is the lowest-priority memory call: behind the world state, which the very next
+prompt carries, and behind the summaries, one of which can hold the step.
+
+**Canon's room is derived, not a setting.** It takes at most a fifth of the block,
+and never more than the block has left after reserving two see-saw steps for the
+summaries. That second term is a guard: canon takes its room from the scene budget,
+so it is the one thing that could collapse growth and eviction back into a single
+cadence. Reserving two steps makes that arithmetically impossible — canon is
+squeezed to nothing first, which is the right order of sacrifice, because the
+summaries are the memory and canon is only what is left of the ones already gone.
+
+**And the room is settled at the rebuild, not every turn.** Both terms above move
+as a chat runs — the block's cap falls as the card, lorebook and raw window grow,
+and a see-saw step costs more as summaries lengthen — so a cap applied live would
+re-cut the block's head on ordinary turns. Canon is fitted to the cap that was in
+force at the last rebuild and held there until the next one, which is the only turn
+the head changes anyway. The cost is that canon can sit a little above its live
+share mid-cycle, bounded by what it held at that rebuild; the log carries both
+numbers as `memory_canon_cap` and `memory_canon_cap_applied`
+(`docs/decisions.md` D-0059).
+
+**A fact cannot be taken back.** A summary and a state are caches of text and go
+stale when it is edited; a fact says something *happened*, so no edit unmakes it,
+and P4 ships no lever to remove one. The prompt is written to err towards keeping
+fewer, the parser drops a fact over its cap rather than shortening it, a repeat is
+refused, and every promotion is shown in the chat under the message it was written
+on. What the panel reports is what was actually written, never what the model
+claimed.
+
+Two of the three operations `DESIGN.md` §8 declares are built: **promote**, and
+**drop**, which the budgeter already did. **Merge** waits for evidence that the
+block still loses things worth keeping after promotion. Making room once canon is
+full — merging its lines, or moving the oldest to episodes — is P5's, and until
+then a full canon simply stops promoting and says so.
+
 ## Storage and branching
 
-Per-message data lives in `message.extra`, which branches and swipes correctly
-for free. Chat-global stores live in `chatMetadata` with explicit checkpoints
-keyed to message index, and roll back on a branch or swipe.
+Per-message data lives in `message.extra`, which branches and swipes correctly for
+free. All three tiers use it: a summary on the message it summarises, a world state
+on the newest message it read, and a canon batch on the newest summary its pass read.
+
+Nothing records which of them is current. The newest valid state wins, and the canon
+set is a fold over the chat, both read fresh every turn — so a branch, a swipe or a
+deletion rolls the memory back by taking the messages with it, and there is no
+checkpoint to keep in step and no rollback code to get wrong. A canon batch lands on
+a message behind the raw window by construction, where swipes never reach.
+
+**Cairn keeps nothing in `chatMetadata`.** The design once put canon there with
+checkpoints keyed to message index; per-message storage removed the need
+(`docs/decisions.md` D-0055).

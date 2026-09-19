@@ -55,6 +55,10 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
         let inspector;
         const summarizer = createSummarizer(getContext, {
             settings: () => settings,
+            // The budget a compaction pass needs lives in the assembler, so the pass it
+            // works out each turn comes through rather than being derived twice
+            // (docs/p4-plan.md decision 6).
+            memory: () => assembler.pendingPass,
             onUpdate: () => {
                 inspector?.summaries(summarizer.status);
                 marks.refresh();
@@ -99,6 +103,8 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
                 summarizer.drain();
                 marks.refresh();
             },
+            // Off takes effect at the next generation; on waits for the next pressure.
+            onKeepCanonChange: () => summarizer.drain(),
             // A newly chosen profile may have a backlog waiting for it.
             onMemoryProfileChange: () => summarizer.drain(),
         }));

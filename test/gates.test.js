@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assessStateUpdates, assessSummarizing } from '../src/pipeline/gates.js';
+import { assessCompaction, assessStateUpdates, assessSummarizing } from '../src/pipeline/gates.js';
 import { QVINK_EXTENSION } from '../src/memory/scenes.js';
 import { WTRACKERS } from '../src/memory/state.js';
 import { createRequestService } from './mocks/llm.js';
@@ -109,5 +109,50 @@ describe('whether Cairn may update the world state', () => {
 
     it('flags a memory profile that is the chat\'s own', () => {
         expect(assessStateUpdates(context({ selectedProfile: MEMORY.id }), settings).sameProfile).toBe(true);
+    });
+});
+
+/** docs/p4-plan.md decision 9: what a compaction pass needs, and the handover's say in it. */
+describe('whether Cairn may run a compaction pass', () => {
+    const ready = { memoryProfileId: MEMORY.id, keepCanon: true };
+
+    it('is ready with a memory profile and Cairn writing the block', () => {
+        expect(assessCompaction(context(), ready, { writing: true }))
+            .toEqual({ ready: true, reason: 'ready', sameProfile: false });
+    });
+
+    it('shows the switch first when the user turned it off', () => {
+        // Even where something else would also block it: `off` is the reason worth showing.
+        expect(assessCompaction(context(), { memoryProfileId: '', keepCanon: false }, { writing: true }).reason).toBe('off');
+    });
+
+    /**
+     * The one gate summaries and the state do not have. While qvink is injecting,
+     * Cairn is measuring and nothing more (docs/decisions.md D-0020, D-0027), and a
+     * canon section would put bytes in the block qvink's own render cannot match.
+     */
+    it('waits while qvink is still writing the block', () => {
+        expect(assessCompaction(context(), ready, { writing: false }).reason).toBe('not-writing');
+        expect(assessCompaction(context(), ready, { writing: true }).ready).toBe(true);
+        // No verdict yet — the assembler has not planned a turn — is not a closed gate.
+        expect(assessCompaction(context(), ready, {}).ready).toBe(true);
+    });
+
+    it('needs everything every memory call needs', () => {
+        const group = context();
+        group.groupId = 'a-group';
+
+        expect(assessCompaction(context(), { keepCanon: true }, { writing: true }).reason).toBe('no-profile');
+        expect(assessCompaction(group, ready, { writing: true }).reason).toBe('group-chat');
+    });
+
+    it('says when the memory profile is the one the chat is using', () => {
+        const same = context({ selectedProfile: MEMORY.id });
+
+        expect(assessCompaction(same, ready, { writing: true })).toMatchObject({ ready: true, sameProfile: true });
+    });
+
+    it('is on by default, so an unconfigured install still promotes', () => {
+        expect(assessCompaction(context(), { memoryProfileId: MEMORY.id }, { writing: true }).ready).toBe(true);
     });
 });

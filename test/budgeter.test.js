@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     CAP_FRACTION, MARGIN_FRACTION, MIN_CAP_FRACTION,
-    createBudget, deriveCap, FLOOR_FRACTION,
+    canonCap, createBudget, deriveCap, FLOOR_FRACTION, recoupled,
 } from '../src/pipeline/budgeter.js';
 import { NEAR_LIMIT_FRACTION } from '../src/util/context-size.js';
 import { mulberry32 } from './helpers/random.js';
@@ -115,6 +115,61 @@ describe('how much room the block gets', () => {
     });
 });
 
+/** docs/p4-plan.md decision 5: canon's share, and the guard that keeps the see-saw apart. */
+describe('canon\'s share of the block', () => {
+    it('takes its fifth when the block has room for it', () => {
+        // Esin's derived cap (docs/decisions.md D-0054) against a ~1,060-token step.
+        expect(canonCap({ cap: 3_463, stepTokens: 1_060 })).toEqual({
+            cap: 692, share: 692, guard: 1_343, limitedBy: 'share',
+        });
+    });
+
+    it('gives way to the scene budget when two steps need the room', () => {
+        const narrow = canonCap({ cap: 2_000, stepTokens: 900 });
+
+        expect(narrow).toEqual({ cap: 200, share: 400, guard: 200, limitedBy: 'guard' });
+    });
+
+    it('gets nothing at all on a chat whose block cannot hold two steps', () => {
+        // The right order of sacrifice: the summaries are the memory.
+        expect(canonCap({ cap: 1_000, stepTokens: 600 })).toMatchObject({ cap: 0, limitedBy: 'guard' });
+        expect(canonCap({ cap: 0, stepTokens: 100 })).toMatchObject({ cap: 0 });
+        expect(canonCap()).toMatchObject({ cap: 0 });
+    });
+
+    it('takes its share before the block has a step to measure', () => {
+        // The first turn of a chat: no block, so no step size yet.
+        expect(canonCap({ cap: 3_463, stepTokens: 0 })).toMatchObject({ cap: 692, limitedBy: 'share' });
+    });
+
+    /**
+     * The invariant the guard exists for (CLAUDE.md §3.10). Canon takes room from the
+     * summaries, so it is the one thing in P4 that could recouple the two cadences.
+     * Whatever the cap and the step, the scene budget keeps two steps or canon is zero.
+     */
+    it('can never recouple the see-saw, whatever the cap and the step', () => {
+        const random = mulberry32(0x04a1);
+
+        for (let i = 0; i < 1_000; i++) {
+            const cap = Math.floor(random() * 12_000);
+            const stepTokens = Math.floor(random() * 3_000);
+            const canon = canonCap({ cap, stepTokens });
+            // A pass never promotes past the cap, and the block admits no more than it.
+            const sceneCap = cap - canon.cap;
+            const floor = Math.max(0, Math.floor(sceneCap * FLOOR_FRACTION));
+
+            const seed = JSON.stringify({ cap, stepTokens });
+            expect(canon.cap, seed).toBeGreaterThanOrEqual(0);
+            expect(canon.cap, seed).toBeLessThanOrEqual(cap);
+            if (canon.cap > 0) expect(sceneCap, seed).toBeGreaterThanOrEqual(2 * stepTokens);
+            // And the report that follows from it: canon never turns `recoupled` on.
+            if (canon.cap > 0 && !recoupled({ sceneCap: cap, floor: Math.floor(cap * FLOOR_FRACTION), stepTokens })) {
+                expect(recoupled({ sceneCap, floor, stepTokens }), seed).toBe(false);
+            }
+        }
+    });
+});
+
 /**
  * The first turn of a session changes the block's head whatever the budget does,
  * so it may as well land at the floor: the rebuild is already paid for, and the
@@ -123,7 +178,7 @@ describe('how much room the block gets', () => {
 describe('the first turn of a session', () => {
     it('lands at the floor even when the block is under the cap', () => {
         const budget = createBudget();
-        const fit = budget.fit({ scenes: scenes(0, 7), cap: 100, tokensOf, rebuild: true });
+        const fit = budget.fit({ scenes: scenes(0, 7), sceneCap: 100, tokensOf, rebuild: true });
 
         expect(fit.over).toBe(false);
         expect(fit.kept.map((scene) => scene.index)).toEqual([3, 4, 5, 6, 7]);
@@ -132,7 +187,7 @@ describe('the first turn of a session', () => {
 
     it('leaves a block already under the floor alone', () => {
         const budget = createBudget();
-        const fit = budget.fit({ scenes: scenes(0, 3), cap: 100, tokensOf, rebuild: true });
+        const fit = budget.fit({ scenes: scenes(0, 3), sceneCap: 100, tokensOf, rebuild: true });
 
         expect(fit.kept).toHaveLength(4);
         expect(fit.evicted).toBe(0);
@@ -140,14 +195,14 @@ describe('the first turn of a session', () => {
 
     it('is the same answer for the same chat, however often it is asked', () => {
         // A reload is a new budget on the same chat: nothing carried, same block.
-        const first = createBudget().fit({ scenes: scenes(0, 30), cap: 100, tokensOf, rebuild: true });
-        const again = createBudget().fit({ scenes: scenes(0, 30), cap: 100, tokensOf, rebuild: true });
+        const first = createBudget().fit({ scenes: scenes(0, 30), sceneCap: 100, tokensOf, rebuild: true });
+        const again = createBudget().fit({ scenes: scenes(0, 30), sceneCap: 100, tokensOf, rebuild: true });
 
         expect(again.kept).toEqual(first.kept);
     });
 
     it('does not trim on a turn that is not a rebuild', () => {
-        const fit = createBudget().fit({ scenes: scenes(0, 7), cap: 100, tokensOf });
+        const fit = createBudget().fit({ scenes: scenes(0, 7), sceneCap: 100, tokensOf });
 
         expect(fit.kept).toHaveLength(8);
     });
@@ -156,7 +211,7 @@ describe('the first turn of a session', () => {
 describe('fitting the block to the cap', () => {
     it('keeps everything while it fits', () => {
         const budget = createBudget();
-        const fit = budget.fit({ scenes: scenes(0, 9), cap: 200, tokensOf });
+        const fit = budget.fit({ scenes: scenes(0, 9), sceneCap: 200, tokensOf });
 
         expect(fit.kept).toHaveLength(10);
         expect(fit.evicted).toBe(0);
@@ -165,7 +220,7 @@ describe('fitting the block to the cap', () => {
 
     it('drops to the floor in one pass, oldest first', () => {
         const budget = createBudget();
-        const fit = budget.fit({ scenes: scenes(0, 19), cap: 100, tokensOf });
+        const fit = budget.fit({ scenes: scenes(0, 19), sceneCap: 100, tokensOf });
 
         expect(fit.floor).toBe(100 * FLOOR_FRACTION);
         expect(fit.tokens).toBeLessThanOrEqual(fit.floor);
@@ -184,7 +239,7 @@ describe('fitting the block to the cap', () => {
         const evictions = [];
 
         for (let newest = 19; newest <= 40; newest++) {
-            const fit = budget.fit({ scenes: scenes(0, newest), cap: 100, tokensOf });
+            const fit = budget.fit({ scenes: scenes(0, newest), sceneCap: 100, tokensOf });
             if (fit.evicted) evictions.push(newest);
         }
 
@@ -194,9 +249,9 @@ describe('fitting the block to the cap', () => {
 
     it('holds the mark forward so an unchanged chat is an unchanged block', () => {
         const budget = createBudget();
-        budget.fit({ scenes: scenes(0, 19), cap: 100, tokensOf });
+        budget.fit({ scenes: scenes(0, 19), sceneCap: 100, tokensOf });
         const oldest = budget.oldest;
-        const again = budget.fit({ scenes: scenes(0, 19), cap: 100, tokensOf });
+        const again = budget.fit({ scenes: scenes(0, 19), sceneCap: 100, tokensOf });
 
         expect(budget.oldest).toBe(oldest);
         expect(again.evicted).toBe(0);
@@ -205,7 +260,7 @@ describe('fitting the block to the cap', () => {
 
     it('never empties the block, even against a cap it cannot meet', () => {
         const budget = createBudget();
-        const fit = budget.fit({ scenes: scenes(0, 9), cap: 1, tokensOf });
+        const fit = budget.fit({ scenes: scenes(0, 9), sceneCap: 1, tokensOf });
 
         expect(fit.kept).toHaveLength(1);
         expect(fit.kept[0].index).toBe(9);
@@ -213,19 +268,19 @@ describe('fitting the block to the cap', () => {
 
     it('rewinds when a branch takes the chat back past the mark', () => {
         const budget = createBudget();
-        budget.fit({ scenes: scenes(0, 19), cap: 100, tokensOf });
+        budget.fit({ scenes: scenes(0, 19), sceneCap: 100, tokensOf });
         expect(budget.oldest).toBe(15);
 
         // The branch point is before everything we were keeping: those summaries
         // are gone, and the mark described a chat that no longer exists.
-        const fit = budget.fit({ scenes: scenes(0, 8), cap: 100, tokensOf });
+        const fit = budget.fit({ scenes: scenes(0, 8), sceneCap: 100, tokensOf });
 
         expect(fit.kept.map((s) => s.index)).toEqual([...Array(9).keys()]);
     });
 
     it('ignores a cap of zero rather than evicting everything', () => {
         // An unconfigured limit is not "no room" — it is "no limit given".
-        const fit = createBudget().fit({ scenes: scenes(0, 9), cap: 0, tokensOf, rebuild: true });
+        const fit = createBudget().fit({ scenes: scenes(0, 9), sceneCap: 0, tokensOf, rebuild: true });
 
         expect(fit.kept).toHaveLength(10);
         expect(fit.over).toBe(false);
@@ -233,9 +288,9 @@ describe('fitting the block to the cap', () => {
 
     it('starts over on a new chat', () => {
         const budget = createBudget();
-        budget.fit({ scenes: scenes(0, 19), cap: 100, tokensOf });
+        budget.fit({ scenes: scenes(0, 19), sceneCap: 100, tokensOf });
         budget.reset();
 
-        expect(budget.fit({ scenes: scenes(0, 5), cap: 200, tokensOf }).kept).toHaveLength(6);
+        expect(budget.fit({ scenes: scenes(0, 5), sceneCap: 200, tokensOf }).kept).toHaveLength(6);
     });
 });

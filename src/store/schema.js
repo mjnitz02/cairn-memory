@@ -11,7 +11,7 @@ import { error } from '../util/log.js';
 export const SETTINGS_VERSION = 1;
 
 /** Bump on any change to what we write into message.extra / chatMetadata. */
-export const STORE_VERSION = 2;
+export const STORE_VERSION = 3;
 
 /**
  * `extra.cairn` migrations, keyed by the version being left. They run on read and
@@ -23,6 +23,8 @@ export const STORE_VERSION = 2;
 export const STORE_MIGRATIONS = {
     // v2 adds `state` (docs/decisions.md D-0045). A v1 store has none, so it is already a v2 one.
     1: (store) => ({ ...store, v: 2 }),
+    // v3 adds `canon` (docs/p4-plan.md decision 1). Same shape: a v2 store has none.
+    2: (store) => ({ ...store, v: 3 }),
 };
 
 /**
@@ -90,6 +92,12 @@ export const DEFAULT_SETTINGS = Object.freeze({
      * Inert until a memory profile is chosen, and held while WTracker is loaded.
      */
     worldState: true,
+    /**
+     * Promote the permanent facts out of summaries before they are dropped, and keep
+     * them at the head of the block (docs/p4-plan.md decision 10). Inert until a memory
+     * profile is chosen, and held while qvink is still writing the block.
+     */
+    keepCanon: true,
 });
 
 /**

@@ -9,7 +9,43 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-09-18
+
 ### Added
+
+- **Keep canon.** Before the oldest summaries are dropped from the prompt to make
+  room, Cairn asks the memory model which of them said something permanent — a
+  death, a kinship, a promise made, a place learned, something broken or given —
+  and keeps those one-liners under **Established facts** at the top of the memory
+  block. It runs one see-saw step before the rebuild that would drop them, so the
+  facts and the rebuild change the block together and cost one break instead of
+  two, and it is the last of the three memory calls: the world state and every
+  waiting summary come first. Each batch of facts is stored on the newest summary
+  it read, so branches and swipes carry it correctly, and each is shown in the chat
+  under that message. Canon takes at most a fifth of the memory block, and always
+  less than that if the summaries would otherwise be left with under two steps of
+  room. That share is settled when the block is rebuilt and held until the next
+  rebuild, so the facts at the top of the block never move on an ordinary turn.
+  A chat with no canon yet has exactly the memory block it had before.
+  **A fact kept this way cannot be removed**, so the prompt errs towards keeping
+  fewer, and a fact longer than 160 characters is thrown away rather than shortened.
+  On by default, and inert until a memory connection profile is chosen.
+- New log fields: `memory_canon_facts`, `memory_canon_admitted`,
+  `memory_canon_tokens`, `memory_canon_cap`, `memory_canon_limited_by`,
+  `memory_canon_full`, `memory_canon_spilled`, `memory_canon_through`,
+  `memory_canon_cap_applied`, `memory_scene_cap`, `memory_step_tokens`, and the
+  `compaction_*` group for the pass queue.
+- The inspector gains a **Canon** line in the memory block section, a **Scene
+  budget** line saying what the summaries were fitted to, and a **Canon** section
+  under the summaries with the pass tally: facts promoted, facts canon already
+  held, and facts the parser refused.
+
+### Changed
+
+- **Stored data is now version 3.** A canon batch is written to
+  `message.extra.cairn.canon` alongside the summary and the world state. Chats
+  written by an earlier version are read unchanged and upgraded by the next write —
+  nothing is lost and nothing needs converting.
 
 - Cairn writes its own summaries. After each reply, and as soon as you edit a
   message, it summarises the messages waiting for one, one request at a time, through the **Memory connection**

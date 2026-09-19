@@ -35,8 +35,11 @@ edit — do not quietly work around it.**
 
 ## 2. SillyTavern first
 
-5. Before inventing a mechanism, check whether ST already has it. `world_info_position.outlet`
-   is the cautionary tale — it existed the whole time.
+5. Before inventing a mechanism, check whether ST already has the **lever** — and if it does,
+   the work is the *timing*, not the mechanism (`docs/decisions.md` D-0066).
+   `world_info_position.outlet` was the cautionary tale; `strip_examples`,
+   `world_info_budget_cap` and ordered World Info trimming make it four. ST ships these off,
+   static, or needing per-card configuration nobody does. That gap is the product.
 6. **Every claim about ST internals cites `file:line` from the pinned checkout**, in the code
    comment or the doc that relies on it. An uncited claim about an ST API is an unverified
    claim. DESIGN.md §7 is the format to follow.

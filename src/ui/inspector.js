@@ -222,9 +222,38 @@ function renderMemory(memory) {
             ${row('Written by', describeSource(memory))}
             ${row('See-saw', `${step} at message ${memory.summarisedThrough}, ${memory.rawWindow} kept raw${waiting}`)}
             ${row('Budget', budget)}
+            ${renderCanon(memory)}
             ${renderCap(memory.budget)}
             ${row('Block change', change)}
         </details>`;
+}
+
+/**
+ * Canon's share of the block (docs/p4-plan.md §3). Only shown once a chat has facts:
+ * before that the block is byte-for-byte what it was, and a row of zeroes would
+ * suggest otherwise.
+ */
+function renderCanon(memory) {
+    if (!memory.canonFacts) return '';
+
+    const spilled = memory.canonSpilled
+        ? ` <span class="${SLUG}-fair">\u2014 ${fmt(memory.canonSpilled)} left out for want of room</span>`
+        : '';
+    // The applied cap is what the block was actually fitted to, so it is what the
+    // numbers here are measured against (CLAUDE.md \u00a74.18). The live cap moves every
+    // turn; showing it would read as "49 / 0 tokens" on a turn canon is still holding.
+    const applied = memory.canonCapApplied ?? memory.canonCap;
+    const room = memory.canonFull
+        ? `<span class="${SLUG}-fair">full \u2014 no more will be promoted until P5 makes room</span>`
+        : `${fmt(Math.max(0, applied - memory.canonTokens))} tokens spare`;
+    const held = applied !== memory.canonCap
+        ? ` <span class="${SLUG}-fair">\u2014 share is now ${fmt(memory.canonCap)}, held until the next rebuild</span>`
+        : '';
+
+    return row('Canon', `${fmt(memory.canonAdmitted)} of ${fmt(memory.canonFacts)} facts, `
+        + `${fmt(memory.canonTokens)} / ${fmt(applied)} tokens \u2014 ${room}${spilled}${held}`)
+        + row('Scene budget', `${fmt(memory.sceneCap)} tokens, `
+            + `after canon took ${fmt(memory.cap - memory.sceneCap)} of the block's ${fmt(memory.cap)}`);
 }
 
 /** How the cap was arrived at, in words rather than as four bare numbers. */
@@ -324,7 +353,44 @@ function renderSummaries(status) {
             ${row('Time', average)}
             ${row('Tokens', `${fmt(status.tokensIn)} in, ${fmt(status.tokensOut)} out <span class="dim">(estimated)</span>`)}
             ${row('Prompt', status.promptDefault === false ? 'edited' : 'default')}
+        </details>` + renderCompaction(status.canon);
+}
+
+/**
+ * The compaction queue (docs/p4-plan.md §3), under the summaries it reads. Its counts
+ * are of the applied change: what was promoted, what canon already held, and what the
+ * parser refused (CLAUDE.md §4.18).
+ */
+function renderCompaction(status) {
+    if (!status) return '';
+
+    const failures = status.failures
+        ? `<span class="${SLUG}-poor">${fmt(status.failures)} failed</span> <span class="dim">(last: ${escapeHtml(status.lastReason)})</span>`
+        : 'none failed';
+    const refused = status.duplicates || status.refused
+        ? `, ${fmt(status.duplicates)} already known, ${fmt(status.refused)} refused`
+        : '';
+    const average = status.calls ? `${fmt(Math.round(status.ms / status.calls))} ms a pass` : '\u2014';
+
+    return `
+        <details class="${SLUG}-details">
+            <summary>Canon: ${describeCompaction(status)}</summary>
+            ${row('This chat', `${fmt(status.promoted)} facts from ${fmt(status.calls)} passes, ${failures}${refused}`)}
+            ${row('Time', average)}
+            ${row('Tokens', `${fmt(status.tokensIn)} in, ${fmt(status.tokensOut)} out <span class="dim">(estimated)</span>`)}
         </details>`;
+}
+
+function describeCompaction(status) {
+    if (status.inFlight != null) return 'promoting facts from the oldest summaries';
+    if (status.gate === null) return 'not started';
+    if (status.gate === 'off') return 'off';
+    if (status.gate === 'not-writing') return 'waiting \u2014 qvink is still writing the block';
+    if (status.gate !== 'ready') return escapeHtml(GATES[status.gate] ?? status.gate);
+    if (status.givenUp) return `<span class="${SLUG}-poor">gave up</span>`;
+    if (status.full) return 'no room left';
+    if (status.pending) return `a pass is due over summaries #${status.pending.covers[0]}\u2013#${status.pending.covers[1]}`;
+    return 'nothing to promote yet';
 }
 
 function describeWork(status) {

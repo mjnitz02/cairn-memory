@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { STORE_VERSION } from '../src/store/schema.js';
 import {
-    MIN_SUMMARY_TOKENS, hashRange, readRange, readScene, readState, summarisable, writeScene, writeState,
+    MIN_SUMMARY_TOKENS, hashRange, readCanon, readRange, readScene, readState, summarisable,
+    writeCanon, writeScene, writeState,
 } from '../src/store/chat-store.js';
 import { hashString } from '../src/util/hash.js';
 import { STORE_V1, STORE_V1_MES, storeV1Message } from './fixtures/store-v1.js';
 import { STORE_V2, STORE_V2_MES, storeV2Chat } from './fixtures/store-v2.js';
+import { STORE_V3, STORE_V3_CANON, storeV3Chat } from './fixtures/store-v3.js';
 import { makeQvinkChat } from './mocks/qvink.js';
 
 const IGNORE = Symbol.for('ignore');
@@ -40,19 +42,52 @@ describe('the v2 store fixture', () => {
         expect(readState(chat, 1)).toEqual({ status: 'valid', state: STORE_V2.state });
     });
 
+    it('reports no canon, so a v2 store is already a v3 one', () => {
+        const chat = storeV2Chat();
+
+        expect(readCanon(chat[1])).toEqual({ status: 'none', canon: null });
+    });
+
+    it('is upgraded to the current version by the next write, keeping its scene and state', () => {
+        const chat = storeV2Chat();
+        writeCanon(chat, 1, { facts: [], covers: [0, 1], prompt: 'h:1', at: 'T' });
+
+        expect(chat[1].extra.cairn.v).toBe(STORE_VERSION);
+        expect(readScene(chat[1])).toEqual({ status: 'valid', scene: STORE_V2.scene });
+        expect(readState(chat, 1)).toEqual({ status: 'valid', state: STORE_V2.state });
+    });
+});
+
+describe('the v3 store fixture', () => {
+    it('reads as a canon batch behind the raw window and a state on the newest message', () => {
+        const chat = storeV3Chat();
+
+        expect(readCanon(chat[1])).toEqual({ status: 'valid', canon: STORE_V3_CANON.canon });
+        expect(readScene(chat[1])).toEqual({ status: 'valid', scene: STORE_V3_CANON.scene });
+        expect(readCanon(chat[3])).toEqual({ status: 'none', canon: null });
+        expect(readState(chat, 3)).toEqual({ status: 'valid', state: STORE_V3.state });
+    });
+
     it('is the exact shape the writers produce today', () => {
         // If this fails the stored shape moved: bump STORE_VERSION, keep this
         // fixture as the old shape, and ship a migration (CLAUDE.md §8.32).
-        const chat = storeV2Chat();
+        const chat = storeV3Chat();
         delete chat[1].extra.cairn;
-        const { scene, state } = STORE_V2;
-        writeScene(chat[1], { text: scene.text, prompt: scene.prompt, at: scene.at });
-        writeState(chat, 1, {
+        delete chat[3].extra.cairn;
+        const { scene: canonScene, canon } = STORE_V3_CANON;
+        const { scene, state } = STORE_V3;
+        writeScene(chat[1], { text: canonScene.text, prompt: canonScene.prompt, at: canonScene.at });
+        writeCanon(chat, 1, {
+            facts: structuredClone(canon.facts), covers: [...canon.covers], prompt: canon.prompt, at: canon.at,
+        });
+        writeScene(chat[3], { text: scene.text, prompt: scene.prompt, at: scene.at });
+        writeState(chat, 3, {
             value: structuredClone(state.value), read: state.read, changed: [...state.changed], prompt: state.prompt, at: state.at,
         });
 
-        expect(chat[1].extra.cairn).toEqual(STORE_V2);
-        expect(STORE_VERSION).toBe(2);
+        expect(chat[1].extra.cairn).toEqual(STORE_V3_CANON);
+        expect(chat[3].extra.cairn).toEqual(STORE_V3);
+        expect(STORE_VERSION).toBe(3);
     });
 });
 
@@ -357,6 +392,143 @@ describe('writing a state', () => {
         });
         expect(chat[1].extra[IGNORE]).toBe(true);
         expect(chat[2].extra[IGNORE]).toBe(true);
+    });
+});
+
+describe('reading a canon batch back', () => {
+    it('reports none when Cairn has never written one to the message', () => {
+        expect(readCanon({ mes: 'x', extra: {} })).toEqual({ status: 'none', canon: null });
+        expect(readCanon({ mes: 'x', extra: { cairn: { v: 3, state: STORE_V3.state } } })).toEqual({ status: 'none', canon: null });
+        expect(readCanon({ mes: 'x' })).toEqual({ status: 'none', canon: null });
+        expect(readCanon(null)).toEqual({ status: 'none', canon: null });
+    });
+
+    it('keeps a batch valid after its messages are edited (docs/p4-plan.md decision 2)', () => {
+        // A scene and a state cache text and go stale when it changes. A canon fact
+        // says something *happened*, and no edit unmakes that.
+        const chat = storeV3Chat();
+        chat[0].mes = 'Something else entirely.';
+        chat[1].mes = `${chat[1].mes} Then the fog closed in.`;
+
+        expect(readScene(chat[1]).status).toBe('stale');
+        expect(readCanon(chat[1])).toEqual({ status: 'valid', canon: STORE_V3_CANON.canon });
+    });
+
+    it('takes an empty batch, which records a pass that found nothing durable', () => {
+        const chat = storeV3Chat();
+        writeCanon(chat, 1, { facts: [], covers: [0, 1], prompt: 'h:1', at: 'T' });
+
+        expect(readCanon(chat[1])).toEqual({
+            status: 'valid', canon: { facts: [], covers: [0, 1], prompt: 'h:1', at: 'T' },
+        });
+    });
+
+    it('rejects a malformed batch rather than trusting part of it', () => {
+        const { canon } = STORE_V3_CANON;
+        const broken = [
+            { ...canon, facts: null },
+            { ...canon, facts: {} },
+            { ...canon, facts: [{ text: 'A fact.' }] },
+            { ...canon, facts: [{ text: '', entities: [] }] },
+            { ...canon, facts: [{ text: 42, entities: [] }] },
+            { ...canon, facts: [{ text: 'A fact.', entities: 'Wren' }] },
+            { ...canon, facts: [{ text: 'A fact.', entities: [7] }] },
+            { ...canon, facts: [{ text: 'A fact.', entities: [''] }] },
+            { ...canon, covers: [0] },
+            { ...canon, covers: [0, 1, 2] },
+            { ...canon, covers: [1, 0] },
+            { ...canon, covers: ['0', '1'] },
+            { ...canon, covers: [0.5, 1] },
+            { ...canon, prompt: undefined },
+            { ...canon, at: 7 },
+        ];
+
+        for (const batch of broken) {
+            const chat = storeV3Chat();
+            chat[1].extra.cairn = { v: 3, canon: batch };
+            expect(readCanon(chat[1]).status, JSON.stringify(batch)).toBe('invalid');
+        }
+    });
+
+    it('leaves a batch from a newer Cairn alone rather than misreading it', () => {
+        const chat = storeV3Chat();
+        chat[1].extra.cairn = { ...STORE_V3_CANON, v: STORE_VERSION + 1 };
+
+        expect(readCanon(chat[1])).toEqual({ status: 'future', canon: null });
+    });
+});
+
+describe('writing a canon batch', () => {
+    it('keeps the scene and state already on the message', () => {
+        const chat = storeV3Chat();
+        writeCanon(chat, 3, { facts: [{ text: 'They crossed at first light.', entities: [] }], covers: [2, 3], prompt: 'h:1', at: 'T' });
+
+        expect(readScene(chat[3])).toEqual({ status: 'valid', scene: STORE_V3.scene });
+        expect(readState(chat, 3)).toEqual({ status: 'valid', state: STORE_V3.state });
+        expect(readCanon(chat[3]).canon.facts).toHaveLength(1);
+    });
+
+    it('copies the facts it is given, so a later edit to the caller\'s array cannot reach the store', () => {
+        const chat = storeV3Chat();
+        const facts = [{ text: 'A durable fact.', entities: ['Wren'] }];
+        const covers = [0, 1];
+        writeCanon(chat, 1, { facts, covers, prompt: 'h:1', at: 'T' });
+
+        facts.push({ text: 'Added afterwards.', entities: [] });
+        facts[0].entities.push('Aster');
+        covers[1] = 99;
+
+        expect(readCanon(chat[1]).canon).toEqual({
+            facts: [{ text: 'A durable fact.', entities: ['Wren'] }], covers: [0, 1], prompt: 'h:1', at: 'T',
+        });
+    });
+
+    it('refuses what would corrupt the store, writing nothing', () => {
+        const good = { facts: [], covers: [0, 1], prompt: 'h:1', at: 'T' };
+        const refused = [
+            { ...good, facts: null },
+            { ...good, facts: [{ text: 'A fact.' }] },
+            { ...good, facts: [{ text: '', entities: [] }] },
+            { ...good, covers: [1, 0] },
+            { ...good, covers: [0, 1, 2] },
+            { ...good, prompt: 7 },
+        ];
+
+        for (const batch of refused) {
+            const chat = storeV3Chat();
+            const before = structuredClone(chat[1].extra.cairn);
+            expect(writeCanon(chat, 1, batch), JSON.stringify(batch)).toBe(false);
+            expect(chat[1].extra.cairn).toEqual(before);
+        }
+    });
+
+    it('refuses a message that is not there', () => {
+        const chat = storeV3Chat();
+
+        expect(writeCanon(chat, 9, { facts: [], covers: [0, 1], prompt: 'h:1', at: 'T' })).toBe(false);
+        expect(writeCanon(chat, -1, { facts: [], covers: [0, 1], prompt: 'h:1', at: 'T' })).toBe(false);
+    });
+
+    it('refuses to overwrite a store from a newer Cairn', () => {
+        const chat = storeV3Chat();
+        const future = { v: STORE_VERSION + 1, canon: { facts: [] } };
+        chat[1].extra.cairn = future;
+
+        expect(writeCanon(chat, 1, { facts: [], covers: [0, 1], prompt: 'h:1', at: 'T' })).toBe(false);
+        expect(chat[1].extra.cairn).toBe(future);
+    });
+
+    it('mutates the message in place, never a copy (DESIGN.md §9)', () => {
+        const chat = storeV3Chat();
+        const messages = [...chat];
+        const extras = chat.map((message) => message.extra);
+
+        expect(writeCanon(chat, 1, { facts: [], covers: [0, 1], prompt: 'h:1', at: 'T' })).toBe(true);
+
+        chat.forEach((message, i) => {
+            expect(message).toBe(messages[i]);
+            expect(message.extra).toBe(extras[i]);
+        });
     });
 });
 

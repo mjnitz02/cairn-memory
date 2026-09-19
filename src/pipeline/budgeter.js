@@ -9,23 +9,26 @@
  * dropping down to a floor rather than shaving the single summary that happened
  * to overflow.
  *
- * Two numbers, both worked out from the chat and the settings rather than
+ * Three numbers, all worked out from the chat and the settings rather than
  * measured turn to turn (docs/decisions.md D-0033):
  *
- *   `cap`   — the smaller of `CAP_FRACTION` of the max prompt and the room the
- *             rest of the prompt leaves, never below `MIN_CAP_FRACTION`
- *             (docs/decisions.md D-0038, D-0052). No setting, and nothing
- *             measured feeds it.
- *   `floor` — where a rebuild lands. Half the cap, so the next rebuild is half a
- *             cap of growth away instead of one summary away (D-0026).
+ *   `cap`      — the smaller of `CAP_FRACTION` of the max prompt and the room the
+ *                rest of the prompt leaves, never below `MIN_CAP_FRACTION`
+ *                (docs/decisions.md D-0038, D-0052). No setting, and nothing
+ *                measured feeds it.
+ *   `sceneCap` — what is left of it once canon has taken its share
+ *                (`canonCap`, docs/p4-plan.md decision 5). This is what the summaries
+ *                are fitted to; the cap above is the whole block's.
+ *   `floor`    — where a rebuild lands. Half the scene cap, so the next rebuild is
+ *                half a cap of growth away instead of one summary away (D-0026).
  *
  * The mark only ever moves forward within a session, which is what makes the
  * deferral hold. A reload starts it over: the first turn of a session rebuilds
  * the block anyway, so it lands at the floor too and buys the full slack.
  *
  * **The deferral is conditional and the condition is checkable.** Rebuilds are
- * spaced `(cap - floor) / growth-per-step` steps apart, so a cap only a step or
- * two wide puts eviction back on every step — qvink's behaviour, reached by a
+ * spaced `(sceneCap - floor) / growth-per-step` steps apart, so a cap only a step
+ * or two wide puts eviction back on every step — qvink's behaviour, reached by a
  * longer road. `recoupled()` says when that has happened (CLAUDE.md §9.35).
  *
  * Pure but for one index of state. No ST, no DOM, no network.
@@ -49,6 +52,14 @@ export const CAP_FRACTION = 0.35;
  * `prompt_near_limit` firing means a reserve missed something (D-0052).
  */
 export const MARGIN_FRACTION = 0.05;
+
+/**
+ * Canon's **ceiling** share of the block (docs/p4-plan.md decision 5). On Esin's derived
+ * cap that is ~720 tokens, about 45 one-liners, against a block that holds 34
+ * summaries. Conservative on purpose: the first run's numbers are the evidence for
+ * moving it, not an argument made in advance.
+ */
+export const CANON_FRACTION = 0.20;
 
 /**
  * The floor under the cap. A card, lorebook and raw window that already fill the
@@ -104,17 +115,49 @@ function nonNegative(value) {
 }
 
 /**
+ * How much of the block canon may take, and why that number (docs/p4-plan.md decision 5).
+ *
+ * Canon takes its room from the scene budget, so it can cause exactly the collapse
+ * `recoupled()` reports. The second term makes that arithmetically impossible: the
+ * scene budget keeps at least two steps whatever canon holds, so canon is squeezed to
+ * nothing before the see-saw recouples. A starved chat (docs/decisions.md D-0052) gets no
+ * canon at all, which is the right order of sacrifice — the summaries are the memory,
+ * and canon is what is left of the ones already dropped.
+ *
+ * @param {{cap: number, stepTokens: number}} input The block's cap and what one
+ *        see-saw step adds, both as the assembler works them out.
+ * @returns {{cap: number, share: number, guard: number, limitedBy: 'share'|'guard'}}
+ */
+export function canonCap({ cap, stepTokens } = {}) {
+    const block = nonNegative(cap);
+    const step = nonNegative(stepTokens);
+    const share = Math.floor(block * CANON_FRACTION);
+    const guard = block - 2 * step;
+
+    return {
+        cap: Math.max(0, Math.min(share, guard)),
+        share,
+        guard,
+        limitedBy: share <= guard ? 'share' : 'guard',
+    };
+}
+
+/**
  * Whether growth and eviction have collapsed back into one cadence.
  *
  * True when the slack a rebuild buys cannot absorb even one see-saw step, so the
  * next step overflows the cap immediately and every step is also a rebuild.
  *
- * @param {{cap: number, floor: number, stepTokens: number}} input
+ * Measured against the **scene** cap, not the block's: canon takes its room from the
+ * summaries, so it is the summaries' slack that says whether the see-saw still holds.
+ * `canonCap`'s guard is what keeps this false whatever canon holds.
+ *
+ * @param {{sceneCap: number, floor: number, stepTokens: number}} input
  *        `stepTokens` is what one step adds, estimated from the block itself.
  */
-export function recoupled({ cap, floor, stepTokens }) {
-    if (!(cap > 0) || !(stepTokens > 0)) return false;
-    return cap - floor < stepTokens;
+export function recoupled({ sceneCap, floor, stepTokens }) {
+    if (!(sceneCap > 0) || !(stepTokens > 0)) return false;
+    return sceneCap - floor < stepTokens;
 }
 
 /**
@@ -128,17 +171,18 @@ export function createBudget({ floorFraction = FLOOR_FRACTION } = {}) {
         /**
          * Choose what stays in the block.
          *
-         * @param {{scenes: Array<{index: number}>, cap: number,
+         * @param {{scenes: Array<{index: number}>, sceneCap: number,
          *          tokensOf: (scenes: Array<object>) => number,
          *          rebuild?: boolean}} input
-         *        `tokensOf` sizes a candidate list; it is called once per dropped
-         *        summary, so it must be cheap. `rebuild` means this turn changes
-         *        the block's head whatever we do — the first turn of a session —
-         *        so trimming to the floor now costs nothing extra.
+         *        `sceneCap` is the block's cap less canon's share. `tokensOf` sizes a
+         *        candidate list; it is called once per dropped summary, so it must be
+         *        cheap. `rebuild` means this turn changes the block's head whatever we
+         *        do — the first turn of a session — so trimming to the floor now costs
+         *        nothing extra.
          * @returns {{kept: Array<object>, evicted: number, oldest: number,
-         *            tokens: number, cap: number, floor: number, over: boolean}}
+         *            tokens: number, sceneCap: number, floor: number, over: boolean}}
          */
-        fit({ scenes, cap, tokensOf, rebuild = false }) {
+        fit({ scenes, sceneCap, tokensOf, rebuild = false }) {
             const all = scenes ?? [];
 
             // A branch or swipe can take the chat back past our mark, leaving
@@ -149,12 +193,12 @@ export function createBudget({ floorFraction = FLOOR_FRACTION } = {}) {
             }
 
             let kept = all.filter((scene) => scene.index >= oldest);
-            const floor = Math.max(0, Math.floor(cap * floorFraction));
+            const floor = Math.max(0, Math.floor(sceneCap * floorFraction));
             let tokens = tokensOf(kept);
-            const over = cap > 0 && tokens > cap;
+            const over = sceneCap > 0 && tokens > sceneCap;
             let evicted = 0;
 
-            if (over || (rebuild && cap > 0 && tokens > floor)) {
+            if (over || (rebuild && sceneCap > 0 && tokens > floor)) {
                 // Drop to the floor in one pass, oldest first. Never to nothing:
                 // an empty block is a full rebuild *and* the memory gone with it.
                 while (kept.length > 1 && tokens > floor) {
@@ -165,7 +209,7 @@ export function createBudget({ floorFraction = FLOOR_FRACTION } = {}) {
                 if (kept.length) oldest = kept[0].index;
             }
 
-            return { kept, evicted, oldest, tokens, cap, floor, over };
+            return { kept, evicted, oldest, tokens, sceneCap, floor, over };
         },
 
         /** A new chat is a new block. */

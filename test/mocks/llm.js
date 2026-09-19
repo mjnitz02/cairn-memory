@@ -170,6 +170,91 @@ export const badStateOutputs = {
     empty: () => '',
 };
 
+/**
+ * Realistic replies to the canon prompt, which asks for `{"promote":[{fact, entities}]}`
+ * (docs/p4-plan.md decision 7). Each takes the promotions the model *meant* to send. No
+ * Cairn canon reply has been seen in play yet, so the shapes are the two catalogues
+ * above carried over, plus the ways a model asked to promote nothing sends something.
+ * Every one has a case in test/canon-strategy.test.js (CLAUDE.md §3.12).
+ */
+export const badCanonOutputs = {
+    /** A json fence, pretty-printed. */
+    fenced: (promote) => '```json\n' + JSON.stringify({ promote }, null, 2) + '\n```',
+
+    /** Preamble and sign-off around bare JSON. */
+    preambleAndSignOff: (promote) =>
+        `Looking at these summaries, here are the facts that will still hold:\n\n${JSON.stringify({ promote })}\n\nLet me know if you'd like fewer.`,
+
+    /** Reasoning model leaks its thinking into content. */
+    leakedReasoning: (promote) =>
+        `<think>The brother's death is permanent. The mood is not.</think>\n${JSON.stringify({ promote })}`,
+
+    /** The template opened the think block in the prompt, so only its close arrives. */
+    orphanThinkClose: (promote) =>
+        `The death is permanent; the weather belongs to the scene record.\n</think>\n\n${JSON.stringify({ promote })}`,
+
+    /** Ran out of tokens while still thinking. */
+    unterminatedReasoning: () => '<think>Three candidates here. The first one is clearly permanent, but the second',
+
+    /** Hit max_tokens mid-array. ST reports no finish reason (custom-request.js:60). */
+    truncated: (promote) => {
+        const json = JSON.stringify({ promote }, null, 2);
+        return json.slice(0, Math.floor(json.length * 0.6));
+    },
+
+    /** Content-policy refusal in place of output. */
+    refusal: () => 'I’m sorry, but I can’t extract facts from this content.',
+
+    /** Lists the facts in prose instead of writing the object. */
+    prose: () => 'The main lasting facts are that Wren\'s brother drowned, and that Aster promised her a crossing.',
+
+    /** Says "nothing to promote" in the clumsiest way available to it. */
+    nullPromote: () => '{"promote": null}',
+
+    /** Says it in the second clumsiest way: the key left out entirely. */
+    noPromoteKey: () => '{"facts": []}',
+
+    /** A bare array, the wrapper forgotten. */
+    bareArray: (promote) => JSON.stringify(promote),
+
+    /** Uses `text` where the prompt said `fact`. */
+    wrongKey: (promote) => JSON.stringify({ promote: promote.map(({ fact }) => ({ text: fact, entities: [] })) }),
+
+    /** Facts as plain strings, the object dropped. */
+    plainStrings: (promote) => JSON.stringify({ promote: promote.map(({ fact }) => fact) }),
+
+    /** Writes a paragraph where one sentence goes. */
+    overlong: (promote) => JSON.stringify({
+        promote: [{
+            fact: 'Wren\'s brother drowned in the spring flood the year before the story begins, during the crossing he had made every winter since he was a boy, and the harbour has not run a winter ferry since, which is the reason the board still reads DELAYED whenever the fog comes in off the water.',
+            entities: ['Wren'],
+        }, ...promote.slice(1)],
+    }),
+
+    /** Tags the whole cast and then some: six entities, two past the cap. */
+    manyEntities: (promote) => JSON.stringify({
+        promote: [{ ...promote[0], entities: ['Wren', 'Aster', 'the flood', 'the harbour', 'the ferry', 'the feast day'] }],
+    }),
+
+    /** An entity written as a sentence rather than a name. */
+    entitySentence: (promote) => JSON.stringify({
+        promote: [{ ...promote[0], entities: ['Wren\'s brother, who drowned in the spring flood last year'] }],
+    }),
+
+    /** Ignores the room it was given and promotes everything it found. */
+    overRoom: () => JSON.stringify({
+        promote: Array.from({ length: 12 }, (_, i) => ({ fact: `Durable fact number ${i + 1}.`, entities: [] })),
+    }),
+
+    /** Promotes the mood the prompt told it to leave, beside a real fact. */
+    mood: (promote) => JSON.stringify({
+        promote: [promote[0], { fact: 'Aster was shaken by the question.', entities: ['Aster'] }],
+    }),
+
+    /** Empty, which a stalled endpoint returns with a 200. */
+    empty: () => '',
+};
+
 /** Title-case the schema's keys, leaving character names and values alone. */
 function capitalise(patch) {
     const title = (key) => key[0].toUpperCase() + key.slice(1);

@@ -1,7 +1,7 @@
 /**
  * The summaries, shown under the messages they summarise — where qvink shows its
- * own (its index.js:1445-1511), so switching between them reads the same — and the
- * world state stored on each message, collapsed beneath them.
+ * own (its index.js:1445-1511), so switching between them reads the same — with the
+ * world state and any canon batch stored on each message collapsed beneath them.
  *
  * Also the only feedback that summarising is happening at all: the message being
  * summarised says so while its request is out. Nothing here waits on it, and
@@ -12,6 +12,7 @@
 import { SLUG } from '../constants.js';
 import { pendingScenes, qvinkDisplaying, readScenes } from '../memory/scenes.js';
 import { usableState, wtrackerLoaded } from '../memory/state.js';
+import { canonTexts } from './canon-section.js';
 import { renderState } from '../memory/state-schema.js';
 import { MAX_ATTEMPTS } from '../pipeline/summarizer.js';
 import { warn } from '../util/log.js';
@@ -90,7 +91,8 @@ export function renderMark(mark) {
 
 /**
  * @param {() => object} getContext
- * @param {{status: () => (object|null), settings?: () => {worldState?: boolean}}} options
+ * @param {{status: () => (object|null),
+ *          settings?: () => {worldState?: boolean, keepCanon?: boolean}}} options
  */
 export function createChatMarks(getContext, { status, settings }) {
     let running = false;
@@ -111,10 +113,15 @@ export function createChatMarks(getContext, { status, settings }) {
             // Hidden where no state goes in the prompt: switched off, or a WTracker keeps its own.
             const showStates = running && settings?.()?.worldState !== false && !wtrackerLoaded(context);
             const states = showStates ? stateTexts(context.chat) : new Map();
+            // Hidden where no canon goes in the prompt. Unlike a summary or a state, a
+            // fact cannot be taken back, so seeing it is the only check there is.
+            const showCanon = running && settings?.()?.keepCanon !== false;
+            const facts = showCanon ? canonTexts(context.chat) : new Map();
             for (const element of root.querySelectorAll('.mes[mesid]')) {
                 const index = Number(element.getAttribute('mesid'));
                 draw(element, marks.get(index));
                 drawState(element, states.get(index));
+                drawCanon(element, facts.get(index));
             }
         } catch (err) {
             warn('Could not show summaries in the chat.', err);
@@ -155,6 +162,25 @@ export function createChatMarks(getContext, { status, settings }) {
             node.innerHTML = '<summary>World state</summary><pre></pre>';
             // A summary drawn later goes directly after the body, so it still lands above this.
             (element.querySelector(`.${SLUG}-scene`) ?? body).after(node);
+        }
+        const pre = node.querySelector('pre');
+        if (pre.textContent !== text) pre.textContent = text;
+    }
+
+    /** Below the state, so the head of the block reads last where it was written. */
+    function drawCanon(element, text) {
+        let node = element.querySelector(`.${SLUG}-canon`);
+        if (text === undefined) {
+            node?.remove();
+            return;
+        }
+        if (!node) {
+            const body = element.querySelector('.mes_text');
+            if (!body) return;
+            node = document.createElement('details');
+            node.className = `${SLUG}-canon`;
+            node.innerHTML = '<summary>Established facts</summary><pre></pre>';
+            (element.querySelector(`.${SLUG}-state`) ?? element.querySelector(`.${SLUG}-scene`) ?? body).after(node);
         }
         const pre = node.querySelector('pre');
         if (pre.textContent !== text) pre.textContent = text;

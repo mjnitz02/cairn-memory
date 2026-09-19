@@ -40,6 +40,30 @@ export function assessStateUpdates(context, { memoryProfileId, worldState } = {}
     return { ready: true, reason: 'ready', sameProfile: sameProfile(context, memoryProfileId), tracker: null };
 }
 
+/**
+ * Whether Cairn may run a compaction pass in this chat now, and if not, why
+ * (docs/p4-plan.md decision 9).
+ *
+ * The handover gate has a say here that it does not have over summaries or the state:
+ * while qvink is injecting, Cairn is measuring and nothing more (docs/decisions.md
+ * D-0020, D-0027), and a canon section would put bytes in the block that qvink's own
+ * render has no counterpart for.
+ *
+ * @param {object} context SillyTavern.getContext()
+ * @param {{memoryProfileId?: string, keepCanon?: boolean}} settings
+ * @param {{writing?: boolean}} [handover] The assembler's gate verdict this turn.
+ * @returns {{ready: boolean, reason: string, sameProfile: boolean}}
+ */
+export function assessCompaction(context, { memoryProfileId, keepCanon } = {}, { writing } = {}) {
+    const blocked = (reason) => ({ ready: false, reason, sameProfile: false });
+    // The switch first: when the user turned it off, that is the reason worth showing.
+    if (keepCanon === false) return blocked('off');
+    const reason = memoryCallsBlocked(context, memoryProfileId);
+    if (reason) return blocked(reason);
+    if (writing === false) return blocked('not-writing');
+    return { ready: true, reason: 'ready', sameProfile: sameProfile(context, memoryProfileId) };
+}
+
 /** What every memory call needs, or the reason it cannot be made. */
 function memoryCallsBlocked(context, memoryProfileId) {
     const settings = context?.extensionSettings ?? {};
