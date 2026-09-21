@@ -104,6 +104,13 @@ export function makePowerUser(overrides = {}) {
     return {
         prefer_character_prompt: true,
         sysprompt: { enabled: true, name: 'Neutral - Chat', content: '', post_history: '' },
+        // Both ship off (public/scripts/power-user.js:121-122) and are the two
+        // halves of one three-way control: `#example_messages_behavior` sets
+        // normal / keep / strip (:3314-3331). `strip_examples` wins, because ST
+        // blanks the array at public/script.js:4738-4739 before it pins anything
+        // at :4861.
+        strip_examples: false,
+        pin_examples: false,
         ...overrides,
     };
 }

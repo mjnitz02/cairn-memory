@@ -36,6 +36,7 @@ import { admitCanon, canonFor, canonRoom } from '../memory/canon.js';
 import { canonCap, createBudget, deriveCap, recoupled } from '../pipeline/budgeter.js';
 import { pendingCompaction } from '../pipeline/compactor.js';
 import { createSeeSaw } from '../pipeline/scheduler.js';
+import { createExamplesLatch, examplesSuperseded } from '../memory/examples.js';
 import { assessHandover } from './handover.js';
 import { createReserves } from './reserves.js';
 import { comparePrompts } from '../util/prefix.js';
@@ -127,7 +128,8 @@ export function blockChars(items, { template, separator, macro } = BLOCK_RENDERI
  *
  * @param {() => object} getContext Returns a fresh SillyTavern.getContext()
  * @param {{seeSaw?: object, budget?: object, maxPromptTokens?: Function,
- *          reserves?: object, settings?: () => object, own?: boolean}} [options]
+ *          reserves?: object, settings?: () => object, own?: boolean,
+ *          examplesLatch?: object}} [options]
  */
 export function createAssembler(getContext, {
     seeSaw = createSeeSaw(),
@@ -135,6 +137,7 @@ export function createAssembler(getContext, {
     maxPromptTokens = createMaxPromptTokens(),
     settings = null,
     reserves = createReserves(getContext, { settings }),
+    examplesLatch = createExamplesLatch(getContext),
     own = false,
 } = {}) {
     let previousBlock = null;
@@ -182,6 +185,14 @@ export function createAssembler(getContext, {
         const pending = pendingScenes(chat);
         const step = seeSaw.advance(chat.length, { firstPending: pending[0] ?? null });
 
+        // Once summaries stand in for messages, example dialogue is dominated by
+        // the raw window and goes for good (docs/decisions.md D-0068). Derived
+        // here, before the reserves are read, because `cardReserve` must size the
+        // card the prompt will actually carry — a reserve that disagrees with the
+        // flag hides the whole reclaim in the margin.
+        const stripExamples = examplesSuperseded(scenes, step.summarisedThrough);
+        const examples = examplesLatch.apply(stripExamples);
+
         // How much room the rest of the prompt leaves. Every part of it is worked
         // out from this chat and these settings — nothing measured from a prompt
         // that went out (docs/decisions.md D-0033, D-0052).
@@ -189,6 +200,7 @@ export function createAssembler(getContext, {
         const reserved = await reserves.read(maxPrompt, {
             runLength: seeSaw.rawWindow + seeSaw.step - 1,
             since: step.summarisedThrough,
+            stripExamples: examples.stripped,
         });
         const budgeted = deriveCap({ maxPromptTokens: maxPrompt, reserves: reserved });
         const cap = budgeted.cap;
@@ -328,6 +340,12 @@ export function createAssembler(getContext, {
             stepWaiting: step.waiting,
             rawWindow: seeSaw.rawWindow,
             step: seeSaw.step,
+            // The examples latch (docs/decisions.md D-0068). The run's first check is
+            // that `examplesStripped` goes false->true exactly once and never back,
+            // and that `budgetCard` falls by the card's example tokens on the same
+            // turn `examplesLatched` is true. Both, or the reclaim did not happen.
+            examplesStripped: examples.stripped,
+            examplesLatched: examples.changed,
             included: fit.kept.length,
             oldest: fit.kept[0]?.index ?? null,
             newest: fit.kept[fit.kept.length - 1]?.index ?? null,
@@ -409,6 +427,7 @@ export function createAssembler(getContext, {
             seeSaw.reset();
             budget.reset();
             reserves.reset();
+            examplesLatch.reset();
             previousBlock = null;
             previousCap = null;
             admittedThrough = -Infinity;

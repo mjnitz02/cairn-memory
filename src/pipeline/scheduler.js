@@ -20,9 +20,20 @@
 /**
  * Messages kept raw behind the threshold. They are already summarised, but their
  * summaries are held back so the model sees the prose rather than both.
- * qvink's `summary_injection_threshold` default (its index.js:134).
+ *
+ * Was qvink's `summary_injection_threshold` default of 10 (its index.js:134).
+ * **8 since P5** (docs/decisions.md D-0068): raw messages carry tone, style,
+ * pacing and dialogue and almost none of the narrative content, because the
+ * summaries already carry that — so the window is paying 41.7% of the prompt to
+ * say how people speak. With `STEP` it swings between 8 and 15 messages, which is
+ * the six-to-ten-message lag hundreds of played characters read correctly at.
+ *
+ * 8 rather than 6 is deliberate: it lands the cap just *under* D-0038's 35%
+ * share, so the share binds for the first time without being exceeded and P5 does
+ * not have to re-derive it. If the prose degrades at this floor, this number and
+ * `STEP` are the whole of the revert.
  */
-export const RAW_WINDOW = 10;
+export const RAW_WINDOW = 8;
 
 /**
  * Messages the threshold advances by. `0` means "advance every turn", which is
@@ -30,7 +41,7 @@ export const RAW_WINDOW = 10;
  * block's ends both move on every single message. A real step is the point, and
  * `0` stays reachable because it is the control this is measured against.
  */
-export const STEP = 10;
+export const STEP = 8;
 
 /**
  * @param {{rawWindow?: number, step?: number}} [options]

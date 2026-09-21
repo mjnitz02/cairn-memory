@@ -54,6 +54,18 @@ export const CARD_FIELDS = Object.freeze([
 ]);
 
 /**
+ * The same fields once the examples latch is set (docs/decisions.md D-0068). ST
+ * blanks `mesExamplesArray` outright at public/script.js:4738-4739, so the
+ * examples are not in the prompt and reserving for them would hand the margin
+ * 2,176 tokens the block should have had — **the failure most likely to make the
+ * whole reclaim invisible**, because the cap would not move and nothing would say
+ * why.
+ */
+export const CARD_FIELDS_STRIPPED = Object.freeze(
+    CARD_FIELDS.filter((field) => field !== 'mesExamples'),
+);
+
+/**
  * The longest run of raw messages the window ever holds. The see-saw keeps
  * `RAW_WINDOW` behind the threshold and advances in `STEP`s, so the turn before
  * a step is the widest it gets (pipeline/scheduler.js).
@@ -175,9 +187,13 @@ export function systemPromptText({ powerUser, cardSystem, mainApi }) {
  *
  * @param {object} fields `getCharacterCardFields()`
  * @param {string} [systemPrompt] From `systemPromptText`.
+ * @param {{stripExamples?: boolean}} [options] The examples latch, which has to
+ *        be the *same* latch that wrote `power_user.strip_examples` — a reserve
+ *        that disagrees with the prompt is worse than either alone (D-0068).
  */
-export function cardText(fields, systemPrompt = '') {
-    return [systemPrompt, ...CARD_FIELDS.map((field) => fields?.[field] ?? '')]
+export function cardText(fields, systemPrompt = '', { stripExamples = false } = {}) {
+    const names = stripExamples ? CARD_FIELDS_STRIPPED : CARD_FIELDS;
+    return [systemPrompt, ...names.map((field) => fields?.[field] ?? '')]
         .map((part) => String(part ?? ''))
         .filter(Boolean)
         .join('\n');
@@ -217,19 +233,24 @@ export function createReserves(getContext, {
      *        see-saw's own widest window, so a changed `RAW_WINDOW` or `STEP`
      *        cannot leave this reading a number the scheduler no longer uses.
      *        `since` is the threshold: messages after it go to the model raw.
+     *        `stripExamples` is the examples latch (memory/examples.js).
      * @returns {Promise<{card: number, lore: number, loreBound: string,
      *                    window: number, windowNow: number, state: number}|null>}
      *          null when a read failed: the budgeter then falls back to the fixed
      *          share rather than to a reserve of zero, which would hand the block
      *          room the prompt does not have.
      */
-    async function read(maxPromptTokens, { runLength: width = runLength, since = -1 } = {}) {
+    async function read(maxPromptTokens, {
+        runLength: width = runLength,
+        since = -1,
+        stripExamples = false,
+    } = {}) {
         try {
             const context = getContext();
             const sizeOf = (text) => sized(context, text);
 
             const reserves = {
-                card: await cardReserve(context, sizeOf),
+                card: await cardReserve(context, sizeOf, stripExamples),
                 ...await loreFor(context, maxPromptTokens, sizeOf),
                 ...await windowReserve(context, sizeOf, width, since),
                 state: stateReserve(context),
@@ -246,14 +267,14 @@ export function createReserves(getContext, {
         }
     }
 
-    async function cardReserve(context, sizeOf) {
+    async function cardReserve(context, sizeOf, stripExamples) {
         const fields = context.getCharacterCardFields();
         const system = systemPromptText({
             powerUser: context.powerUserSettings,
             cardSystem: fields?.system,
             mainApi: context.mainApi,
         });
-        return sizeOf(cardText(fields, system));
+        return sizeOf(cardText(fields, system, { stripExamples }));
     }
 
     async function loreFor(context, maxPromptTokens, sizeOf) {

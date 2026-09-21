@@ -32,7 +32,11 @@ describe('the heaviest run of messages', () => {
         // The turn before a step: RAW_WINDOW behind the threshold plus a step's
         // worth in front of it, less the message the step itself lands on.
         expect(RUN_LENGTH).toBe(RAW_WINDOW + STEP - 1);
-        expect(RUN_LENGTH).toBe(19);
+        // The literal is deliberate and it is the reclaim's own number: 8/8 makes
+        // the window swing between 8 and 15 messages, which is what takes the
+        // reserve from 9,613 tokens to ~7,758 (docs/decisions.md D-0068). Moving
+        // the width is allowed; moving it without noticing is not.
+        expect(RUN_LENGTH).toBe(15);
     });
 
     it('finds the heaviest window, not the last one', () => {

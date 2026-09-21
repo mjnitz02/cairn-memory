@@ -9,6 +9,28 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ## [Unreleased]
 
+### Changed
+
+- **Example dialogue is dropped once summaries stand in for messages.** A card's
+  example messages say how a character *would* speak in a situation that never
+  happened, and they do not move as the character develops — thirty turns of
+  someone growing into confidence are contradicted by examples that still show
+  them meek. Once any message behind the raw window carries a summary, the real
+  messages say it better, so Cairn switches SillyTavern's own **Strip Examples**
+  behaviour on and the card's examples leave the prompt for good. On the run's
+  card that is about 2,176 tokens, 49% of the card, handed back to memory. It
+  latches: it happens once per chat, never flips back while you play forward, and
+  a branch taken before the first summary correctly gets its examples again.
+  **Your saved setting is not changed** — the switch lasts for the session, so a
+  brand-new chat still opens with its examples, which is the one place they earn
+  their tokens. SillyTavern's own dropdown still shows what you chose; Cairn's
+  inspector says when it is stripping.
+- **The raw window is narrower: 8 messages behind the threshold, advancing in
+  8s.** It was 10 and 10. The window swings between 8 and 15 messages instead of
+  10 and 19, which is the six-to-ten-message lag that reads correctly in play,
+  and it hands the memory block about 1,855 tokens it was reserving to carry
+  prose the summaries already carry.
+
 ## [0.10.0] — 2026-09-18
 
 ### Added

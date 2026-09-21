@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BLOCK_PLACEMENT, BLOCK_RENDERING, blockChars, createAssembler, renderBlock } from '../src/prompt/assembler.js';
 import { QVINK_EXTENSION, readScenes } from '../src/memory/scenes.js';
 import { CAP_FRACTION, createBudget } from '../src/pipeline/budgeter.js';
-import { createSeeSaw } from '../src/pipeline/scheduler.js';
+import { RAW_WINDOW, STEP, createSeeSaw } from '../src/pipeline/scheduler.js';
 import { createObserver } from '../src/prompt/observer.js';
 import { createReserves, heaviestRun } from '../src/prompt/reserves.js';
 import { collectedKeys, createContext, extension_prompt_types } from './mocks/sillytavern.js';
@@ -32,6 +32,14 @@ function asQvinkWouldRender(scenes) {
  * the cap it asked for. The reserves themselves are exercised below.
  */
 const NO_RESERVES = Object.freeze({ read: async () => null, reset() {} });
+
+/**
+ * The see-saw's threshold for a chat of this length, derived rather than typed
+ * in: `RAW_WINDOW` and `STEP` are two numbers P5 moved once and may move again
+ * (docs/decisions.md D-0068), and a fixture that hardcodes their arithmetic fails
+ * for the wrong reason when they do (CLAUDE.md §9.35).
+ */
+const threshold = (length) => length - 1 - RAW_WINDOW;
 
 function harness({
     seeSaw = createSeeSaw(),
@@ -148,7 +156,7 @@ describe('a see-saw step changes the block tail, not its head', () => {
         const run = harness();
         await run.turn(31);
 
-        for (let length = 32; length <= 40; length++) {
+        for (let length = 32; length < 31 + STEP; length++) {
             const plan = await run.turn(length);
             expect(plan.stepped).toBe(false);
             expect(plan.change.stabilityPercent).toBe(100);
@@ -159,9 +167,9 @@ describe('a see-saw step changes the block tail, not its head', () => {
     it('breaks at the very end of the block when it does step', async () => {
         const run = harness();
         await run.turn(31);
-        for (let length = 32; length <= 40; length++) await run.turn(length);
+        for (let length = 32; length < 31 + STEP; length++) await run.turn(length);
 
-        const step = await run.turn(41);
+        const step = await run.turn(31 + STEP);
 
         expect(step.stepped).toBe(true);
         expect(step.included).toBe(31);
@@ -217,6 +225,47 @@ describe('a see-saw step changes the block tail, not its head', () => {
     });
 });
 
+/**
+ * The reclaim's end-to-end check (docs/decisions.md D-0068). The two things a run
+ * reads off the log, asserted here so a run never has to be the first place they
+ * are noticed.
+ */
+describe('the example-dialogue latch, over a played chat', () => {
+    it('flips once, never back, and says which turn it moved on', async () => {
+        const run = harness();
+        const plans = [];
+        for (let length = 2; length <= 60; length++) plans.push(await run.turn(length));
+
+        const stripped = plans.map((plan) => plan.examplesStripped);
+        expect(stripped.at(0)).toBe(false);
+        expect(stripped.at(-1)).toBe(true);
+        // Monotonic: once true it stays true for the rest of the chat.
+        expect(stripped.indexOf(true)).toBe(stripped.lastIndexOf(false) + 1);
+
+        // And the cache miss is exactly one turn — the turn it first read true.
+        const moved = plans.filter((plan) => plan.examplesLatched);
+        expect(moved.length).toBe(1);
+        expect(moved[0]).toBe(plans[stripped.indexOf(true)]);
+    });
+
+    it('goes back to false on a branch taken before the first summary', async () => {
+        const run = harness();
+        await run.turn(60);
+        expect((await run.turn(60)).examplesStripped).toBe(true);
+
+        expect((await run.turn(4)).examplesStripped).toBe(false);
+    });
+
+    it('is written straight into ST, and put back on a new chat', async () => {
+        const run = harness();
+        await run.turn(60);
+        expect(run.context.powerUserSettings.strip_examples).toBe(true);
+
+        run.assembler.reset();
+        expect(run.context.powerUserSettings.strip_examples).toBe(false);
+    });
+});
+
 describe('eviction under a cap the block cannot fit', () => {
     it('drops a batch once rather than a summary per turn', async () => {
         const run = harness({ cap: 6_000 });
@@ -254,7 +303,9 @@ describe('eviction under a cap the block cannot fit', () => {
  */
 describe('detecting the two cadences collapsing back into one', () => {
     it('says so when the cap cannot hold a step past the floor', async () => {
-        const run = harness({ cap: 1_500 });
+        // Sized in units of `STEP`, because "barely wider than one step" is what
+        // this test means and a step is `STEP` summaries wide (D-0068).
+        const run = harness({ cap: 150 * STEP });
         const plans = [];
         for (let length = 31; length <= 70; length++) plans.push(await run.turn(length));
 
@@ -317,12 +368,12 @@ describe('branches, swipes and new chats', () => {
     it('follows the chat back when a branch shortens it', async () => {
         const run = harness();
         await run.turn(61);
-        expect((await run.turn(61)).newest).toBe(50);
+        expect((await run.turn(61)).newest).toBe(threshold(61));
 
         const branched = await run.turn(36);
 
-        expect(branched.summarisedThrough).toBe(25);
-        expect(branched.newest).toBe(25);
+        expect(branched.summarisedThrough).toBe(threshold(36));
+        expect(branched.newest).toBe(threshold(36));
         expect(branched.stepReason).toBe('rollback');
     });
 
@@ -580,9 +631,9 @@ describe('P2: a block read from qvink and Cairn together', () => {
         const { text, report } = await run.write();
 
         const qvinkPart = [...Array(30).keys()].map((i) => ({ text: makeSummary(i) }));
-        const cairnPart = [...Array(21).keys()].map((i) => ({ text: cairnSummary(30 + i) }));
+        const cairnPart = [...Array(threshold(61) - 29).keys()].map((i) => ({ text: cairnSummary(30 + i) }));
         const p1 = asQvinkWouldRender(qvinkPart);
-        expect(report).toMatchObject({ summarisedThrough: 50, source: 'mixed', cairnScenes: 30 });
+        expect(report).toMatchObject({ summarisedThrough: threshold(61), source: 'mixed', cairnScenes: 30 });
         expect(text).toBe(asQvinkWouldRender([...qvinkPart, ...cairnPart]));
         // Everything but the template's closing newline is a shared prefix.
         expect(text.startsWith(p1.slice(0, -1))).toBe(true);
@@ -591,15 +642,15 @@ describe('P2: a block read from qvink and Cairn together', () => {
     it('holds the step while a summary is missing, and takes it once filled', async () => {
         const run = harness();
         run.context.chat = makeMixedChat({ length: 41, qvinkThrough: 19, cairnThrough: 39 });
-        expect((await run.plan()).summarisedThrough).toBe(30);
+        expect((await run.plan()).summarisedThrough).toBe(threshold(41));
 
         run.context.chat = makeMixedChat({ length: 51, qvinkThrough: 19, cairnThrough: 49, gaps: [35] });
         const held = await run.write();
-        expect(held.report).toMatchObject({ summarisedThrough: 30, stepReason: 'held', stepWaiting: true });
-        expect(Math.max(...held.blank)).toBe(30);
+        expect(held.report).toMatchObject({ summarisedThrough: threshold(41), stepReason: 'held', stepWaiting: true });
+        expect(Math.max(...held.blank)).toBe(threshold(41));
 
         run.context.chat[35].extra.cairn = cairnStore(run.context.chat[35], cairnSummary(35));
-        expect(await run.plan()).toMatchObject({ summarisedThrough: 40, stepReason: 'step', stepWaiting: false });
+        expect(await run.plan()).toMatchObject({ summarisedThrough: threshold(51), stepReason: 'step', stepWaiting: false });
     });
 
     it('is not held by a message too short or hidden to summarise', async () => {
@@ -611,7 +662,7 @@ describe('P2: a block read from qvink and Cairn together', () => {
             run.context.chat = makeMixedChat({ length: 51, qvinkThrough: 19, cairnThrough: 49, ...skip });
             const plan = await run.write();
 
-            expect(plan.report, JSON.stringify(skip)).toMatchObject({ summarisedThrough: 40, stepReason: 'step' });
+            expect(plan.report, JSON.stringify(skip)).toMatchObject({ summarisedThrough: threshold(51), stepReason: 'step' });
             expect(plan.blank).not.toContain(35);
         }
     });
@@ -640,9 +691,9 @@ describe('P2: a block read from qvink and Cairn together', () => {
         const plan = await run.write();
 
         expect(plan.report.stepReason).toBe('rollback');
-        expect(plan.blank.at(-1)).toBe(25);
+        expect(plan.blank.at(-1)).toBe(threshold(36));
         expect(plan.blank.every((i) => i < 36 && hasValidScene(run.context.chat[i]))).toBe(true);
-        expect(plan.text).toContain(cairnSummary(25));
+        expect(plan.text).toContain(cairnSummary(threshold(36)));
     });
 
     /**
@@ -904,7 +955,7 @@ describe('canon at the head of the block', () => {
         run.context.chat = makeQvinkChat({ length: 40, summarisedThrough: 29 });
         const { report, text } = await run.write();
 
-        expect(text).toBe(asQvinkWouldRender(readScenes(run.context.chat).slice(0, 30)));
+        expect(text).toBe(asQvinkWouldRender(readScenes(run.context.chat).slice(0, threshold(40) + 1)));
         expect(text).not.toContain('[Established facts]');
         expect(report.canonFacts).toBe(0);
         expect(report.canonAdmitted).toBe(0);
@@ -1074,7 +1125,7 @@ describe('canon at the head of the block', () => {
 
         const { report, text } = await assembler.plan();
 
-        expect(text).toBe(asQvinkWouldRender(readScenes(context.chat).slice(0, 30)));
+        expect(text).toBe(asQvinkWouldRender(readScenes(context.chat).slice(0, threshold(40) + 1)));
         expect(report.canonFacts).toBe(0);
         expect(report.canonAdmitted).toBe(0);
     });

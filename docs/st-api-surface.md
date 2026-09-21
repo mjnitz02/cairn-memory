@@ -86,6 +86,11 @@ literally against the cited line.
 | `const storyStringParams = {` | Which of those fields actually reach the prompt | `public/script.js` | 4703 |
 | `powerUserSettings: power_user,` | `sysprompt.enabled`, `sysprompt.content` and `prefer_character_prompt`, for the system prompt | `public/scripts/st-context.js` | 229 |
 | `system = power_user.prefer_character_prompt && system` | The system prompt ST uses: the character's own, else the instruct one, else nothing | `public/script.js` | 4689 |
+| `strip_examples: false,` | Ships off. **Cairn writes this** once summaries stand in for messages (D-0068) — the only `power_user` setting we set, and never persisted | `public/scripts/power-user.js` | 122 |
+| `if (power_user.strip_examples) {` | What it does: blanks the examples outright, after the story string is rendered — so the card reserve must drop `mesExamples` on the same turn | `public/script.js` | 4738 |
+| `mesExamplesArray = [];` | ...to nothing at all, which is why stripping wins over pinning below | `public/script.js` | 4739 |
+| `pin_examples: false,` | The other half of the same control. Left alone: stripping already blanked the array before this is read | `public/scripts/power-user.js` | 121 |
+| `$('#example_messages_behavior').on('change', function () {` | ST's own control is a three-way select (normal / keep / strip) that persists the choice, so our write does not move the dropdown | `public/scripts/power-user.js` | 3314 |
 | `export async function getSortedEntries` | Every lorebook entry ST scans — global, character, chat and persona | `public/scripts/world-info.js` | 4590 |
 | `await eventSource.emit(event_types.WORLDINFO_ENTRIES_LOADED` | Calling it emits this, so our call fires it a second time per generation | `public/scripts/world-info.js` | 4604 |
 | `export let world_info_budget = 25;` | The World Info budget, as a percentage of the max prompt | `public/scripts/world-info.js` | 73 |
