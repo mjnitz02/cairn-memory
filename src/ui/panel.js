@@ -13,6 +13,7 @@ import { setDebugEnabled } from '../util/log.js';
  * @param {{onEnabledChange?: (enabled: boolean) => void,
  *           onLogToDiskChange?: (enabled: boolean) => void,
  *           onHoldWorldInfoChange?: (enabled: boolean) => void,
+ *           onLoreCapChange?: (cap: number) => void,
  *           onOwnMemoryBlockChange?: (enabled: boolean) => void,
  *           onWorldStateChange?: (enabled: boolean) => void,
  *           onKeepCanonChange?: (enabled: boolean) => void,
@@ -29,6 +30,7 @@ export async function renderSettingsPanel(context, handlers = {}) {
     bindCheckbox(context, 'showInspector', (value) => toggleInspector(value));
     bindCheckbox(context, 'logToDisk', (value) => handlers.onLogToDiskChange?.(value));
     bindCheckbox(context, 'holdWorldInfo', (value) => handlers.onHoldWorldInfoChange?.(value));
+    bindNumber(context, 'loreCap', (value) => handlers.onLoreCapChange?.(value));
     bindCheckbox(context, 'ownMemoryBlock', (value) => handlers.onOwnMemoryBlockChange?.(value));
     bindCheckbox(context, 'worldState', (value) => handlers.onWorldStateChange?.(value));
     bindCheckbox(context, 'keepCanon', (value) => handlers.onKeepCanonChange?.(value));
@@ -92,6 +94,23 @@ function bindCheckbox(context, key, onChange) {
         context.extensionSettings[SLUG][key] = input.checked;
         context.saveSettingsDebounced();
         onChange?.(input.checked);
+    });
+}
+
+/**
+ * A whole number of tokens, never negative and never NaN: a blanked box reads as
+ * 0, which is the same "no cap" ST's own field means (src/prompt/lore-cap.js).
+ */
+function bindNumber(context, key, onChange) {
+    const input = field(key);
+    if (!input) return;
+    input.value = String(context.extensionSettings[SLUG][key] ?? 0);
+    input.addEventListener('change', () => {
+        const value = Math.max(0, Math.floor(Number(input.value)) || 0);
+        input.value = String(value);
+        context.extensionSettings[SLUG][key] = value;
+        context.saveSettingsDebounced();
+        onChange?.(value);
     });
 }
 

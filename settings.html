@@ -59,6 +59,16 @@
                 tokens of stale lore; saves a full prompt rebuild each time an entry flickers.
             </div>
 
+            <label for="cairn_loreCap">Lorebook cap (tokens)</label>
+            <input id="cairn_loreCap" type="number" class="text_pole" min="0" step="100">
+            <div class="cairn-hint">
+                The most of the prompt your lorebook may take. SillyTavern's own cap ships at 0 —
+                no cap — so only its 25% budget binds, and on a large book that is more than the
+                character card costs. Lowering this hands the difference to memory. <b>0</b> leaves
+                SillyTavern's budget alone. This is SillyTavern's own setting, so it applies to
+                every chat, not just this one.
+            </div>
+
             <label class="checkbox_label" for="cairn_ownMemoryBlock">
                 <input id="cairn_ownMemoryBlock" type="checkbox">
                 <span>Write the memory block</span>

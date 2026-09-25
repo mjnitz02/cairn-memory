@@ -258,6 +258,9 @@ describe('reading the reserves off the chat', () => {
         expect(read.card).toBe(tokens('d'.repeat(8_000) + '\n' + 'e'.repeat(8_000)));
         expect(read.loreBound).toBe('books');
         expect(read.lore).toBeGreaterThan(0);
+        // The budget itself, not just what the books weigh against it: the World
+        // Info holder trims to this number at a rebuild (docs/decisions.md D-0069).
+        expect(read.loreBudget).toBe(5_760);
         expect(read.window).toBeGreaterThan(0);
         expect(read.state).toBe(STATE_RESERVE_TOKENS);
     });

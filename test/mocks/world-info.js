@@ -190,7 +190,7 @@ export function makeBook(world = "Wren's Lorebook") {
  * not here.
  */
 export function makeWorldInfoModule({ entries = [], budget = 25, budgetCap = 0 } = {}) {
-    const settings = { budget, budgetCap };
+    const settings = { budget, budgetCap, saves: 0 };
     return {
         get world_info_budget() {
             return settings.budget;
@@ -199,9 +199,28 @@ export function makeWorldInfoModule({ entries = [], budget = 25, budgetCap = 0 }
             return settings.budgetCap;
         },
         getSortedEntries: async () => entries,
+        /**
+         * :819-853 — only the keys present in the object are set, each through its
+         * own coercion (`Number` for the cap, :834), and the call ends in
+         * `saveSettingsDebounced()` (:852). The save is counted rather than
+         * performed: that it persists at all is the reason the cap is a setting the
+         * user owns (src/prompt/lore-cap.js).
+         */
+        updateWorldInfoSettings(next) {
+            if (Object.hasOwn(next ?? {}, 'world_info_budget_cap')) {
+                settings.budgetCap = Number(next.world_info_budget_cap);
+            }
+            if (Object.hasOwn(next ?? {}, 'world_info_budget')) {
+                settings.budget = Number(next.world_info_budget);
+            }
+            settings.saves++;
+        },
         /** Test-only, not part of ST's surface. */
         set(next) {
             Object.assign(settings, next);
+        },
+        get saves() {
+            return settings.saves;
         },
     };
 }

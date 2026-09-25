@@ -235,7 +235,8 @@ export function createReserves(getContext, {
      *        `since` is the threshold: messages after it go to the model raw.
      *        `stripExamples` is the examples latch (memory/examples.js).
      * @returns {Promise<{card: number, lore: number, loreBound: string,
-     *                    window: number, windowNow: number, state: number}|null>}
+     *                    loreBudget: number, window: number, windowNow: number,
+     *                    state: number}|null>}
      *          null when a read failed: the budgeter then falls back to the fixed
      *          share rather than to a reserve of zero, which would hand the block
      *          room the prompt does not have.
@@ -294,7 +295,11 @@ export function createReserves(getContext, {
             budget,
             sizeOf,
         });
-        return { lore: tokens, loreBound: bound };
+        // The budget itself, not just what the books weigh against it: the holder
+        // trims the held set to this number at a rebuild (docs/decisions.md D-0069),
+        // and it has to be the same budget the reserve was worked out from or the
+        // two disagree the way the card and the examples latch could (D-0068).
+        return { lore: tokens, loreBound: bound, loreBudget: budget };
     }
 
     /**

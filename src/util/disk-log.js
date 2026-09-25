@@ -131,6 +131,12 @@ function toEntry(snapshot) {
         // How many entries the holder is keeping in; null when it is off, which is
         // what tells a control run apart from a treatment run.
         world_info_held: snapshot.worldInfoHeld ?? null,
+        // The held set's re-evaluation (docs/decisions.md D-0069). `lore_reprioritised`
+        // is true only on turns where `memory_rebuilt` is; any other turn is D-0067
+        // failing. `lore_dropped` is non-zero only on those same turns.
+        lore_reprioritised: Boolean(snapshot.worldInfoTrim),
+        lore_dropped: snapshot.worldInfoTrim?.dropped ?? null,
+        lore_held_tokens: snapshot.worldInfoTrim?.tokens ?? null,
         // Full enough that text completion may have dropped the oldest raw messages,
         // which the block's cap cannot see (util/context-size.js).
         prompt_near_limit: nearPromptLimit(snapshot.promptTokens, snapshot.memory?.maxPromptTokens),
@@ -172,6 +178,9 @@ function memoryFields(memory) {
         memory_stepped: memory.stepped,
         memory_step_reason: memory.stepReason,
         memory_evicted: memory.evicted,
+        // The rebuild turn (docs/decisions.md D-0067): everything discontinuous
+        // batches here, and nothing discontinuous may happen anywhere else.
+        memory_rebuilt: memory.rebuilt ?? null,
         memory_over_cap: memory.overCap,
         // The cap in use: the smaller of the fixed share and what the chat leaves
         // (docs/decisions.md D-0038, D-0052).
@@ -233,6 +242,8 @@ function budgetFields(budget) {
         budget_lore: budget.lore ?? null,
         // budget, books or none — what bound the lore reserve.
         budget_lore_bound: budget.loreBound ?? null,
+        // ST's own World Info budget, which the holder trims the held set to (D-0069).
+        budget_lore_budget: budget.loreBudget ?? null,
         budget_window: budget.window ?? null,
         budget_window_now: budget.windowNow ?? null,
         budget_state: budget.state ?? null,

@@ -3,6 +3,16 @@
  * here (DESIGN.md §11). Three writes, all in the generate interceptor: the World
  * Info holder (P1 step 1), the memory block (P1 step 3) and the world state (P3).
  *
+ * **The memory block is planned before the hold runs, though it is written after
+ * it.** The holder may only re-evaluate what it holds on a rebuild turn (D-0067),
+ * and "is this a rebuild turn" is the assembler's own arithmetic — it does not
+ * exist until the plan does. Trimming on last turn's plan would instead land the
+ * lore change one turn after the rebuild and cost a second prefix break, which is
+ * the thing D-0067 exists to prevent. The reorder is safe because both writes
+ * complete inside the interceptor and the scan reads them afterwards
+ * (public/script.js:4564 against :4635), so their order relative to each other
+ * cannot change what activates.
+ *
  * ST re-derives the activated set from a two-message keyword scan every turn.
  * When that scan happens to seed nothing the whole lore block vanishes and comes
  * back a turn later — two full prompt rebuilds for a set that never actually
@@ -36,6 +46,7 @@
 import { SLUG } from '../constants.js';
 import { createRememberedSet } from './lorebook.js';
 import { STATE_INJECTION } from './state-placement.js';
+import { countTokens } from '../util/tokens.js';
 import { debug, toastOnce, warn } from '../util/log.js';
 
 /**
@@ -69,6 +80,8 @@ export function createInjector(getContext, { remembered = createRememberedSet(),
      * different from clearing everyone's.
      */
     let flagged = new Set();
+    /** This turn's lore trim, for the log. Null on every turn that is not a rebuild. */
+    let lastTrim = null;
 
     /** Add-only: learn every entry ST activated, including ones we forced. */
     function onWorldInfoActivated(entries) {
@@ -105,14 +118,24 @@ export function createInjector(getContext, { remembered = createRememberedSet(),
         // whose prefix we are protecting (vectors does the same, its index.js:778).
         if (!running || type === 'quiet') return;
 
-        await holdWorldInfo();
+        // Planned first, written second: see the note on ordering in the header.
         const plan = await applyMemory();
+        await holdWorldInfo(plan);
         await applyState(chat, plan);
     }
 
-    /** P1 step 1 — push the held lore back in before ST's scan reads it. */
-    async function holdWorldInfo() {
+    /**
+     * P1 step 1 — push the held lore back in before ST's scan reads it, having
+     * first re-evaluated what we are holding if this turn is a rebuild.
+     *
+     * @param {object|null} plan This turn's memory plan, for its `rebuilt` flag
+     *        and ST's own World Info budget.
+     */
+    async function holdWorldInfo(plan) {
+        lastTrim = null;
         if (!enabled || remembered.size === 0) return;
+
+        await reprioritise(plan);
 
         try {
             const { eventSource, eventTypes } = getContext();
@@ -123,6 +146,36 @@ export function createInjector(getContext, { remembered = createRememberedSet(),
             // a broken generation.
             warn('Failed to hold the World Info block; falling back to ST\'s own scan.', err);
             toastOnce('Cairn could not hold the World Info block this turn. Lore is unaffected.');
+        }
+    }
+
+    /**
+     * Trim the held set to ST's budget, on a rebuild turn and no other
+     * (docs/decisions.md D-0069, D-0067). Between rebuilds the set is add-only,
+     * so a keyword-scan miss still cannot evict anything (D-0023).
+     *
+     * Its own degrade: a failed trim leaves the set exactly as it was and the
+     * hold still happens. Holding too much costs ST's own budget stop, which is
+     * what would have happened without Cairn at all.
+     */
+    async function reprioritise(plan) {
+        if (!plan?.report?.rebuilt) return;
+
+        const budget = plan.report.budget?.loreBudget;
+        if (!Number.isFinite(budget) || budget <= 0) return;
+
+        try {
+            const context = getContext();
+            const result = await remembered.trim({
+                budget,
+                sizeOf: (text) => countTokens(context, text),
+            });
+            lastTrim = { ...result, budget };
+            if (result.dropped) {
+                debug(`World Info: trimmed ${result.dropped} held entries to the ${budget}-token budget.`);
+            }
+        } catch (err) {
+            warn('Failed to re-evaluate the held World Info set; keeping it as it was.', err);
         }
     }
 
@@ -302,11 +355,17 @@ export function createInjector(getContext, { remembered = createRememberedSet(),
         /** A new chat is a new set — another character's lore is not ours to hold. */
         reset() {
             remembered.clear();
+            lastTrim = null;
             release();
         },
 
         intercept,
         remembered,
+
+        /** What the last rebuild's trim did, for the observer. Null between rebuilds. */
+        get lastTrim() {
+            return lastTrim;
+        },
 
         get parked() {
             return parked;

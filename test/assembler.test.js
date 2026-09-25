@@ -1130,3 +1130,49 @@ describe('canon at the head of the block', () => {
         expect(report.canonAdmitted).toBe(0);
     });
 });
+
+/**
+ * The rebuild turn, named in the report (docs/decisions.md D-0067).
+ *
+ * Everything discontinuous batches onto the turn the block's head is moving
+ * anyway — canon admission, the examples latch, and the World Info holder's trim
+ * (D-0069). Each of those reads this flag, so a flag that is true on an ordinary
+ * turn spends a prefix break nobody asked for, and the block looks perfectly
+ * correct the whole time.
+ */
+describe('the rebuild turn', () => {
+    it('is the first turn of a session, and the turns that evict', async () => {
+        const run = harness({ cap: 6_000 });
+
+        const first = await run.turn(200);
+        const held = await run.turn(201);
+
+        expect(first.stepReason).toBe('first-turn');
+        expect(first.rebuilt).toBe(true);
+        expect(held.evicted).toBe(0);
+        expect(held.rebuilt).toBe(false);
+    });
+
+    it('is false on every turn that neither evicts nor starts a session', async () => {
+        const run = harness({ cap: 1_000_000 });
+        const reports = [];
+        for (let length = 20; length <= 60; length++) reports.push(await run.turn(length));
+
+        // A cap nothing can reach: one rebuild at the start and none after it.
+        expect(reports.filter((report) => report.rebuilt)).toHaveLength(1);
+        expect(reports[0].rebuilt).toBe(true);
+    });
+
+    it('agrees with the eviction it is derived from, over a whole run', async () => {
+        const run = harness({ cap: 6_000 });
+        const reports = [];
+        for (let length = 20; length <= 120; length++) reports.push(await run.turn(length));
+
+        for (const report of reports) {
+            expect(report.rebuilt).toBe(report.evicted > 0 || report.stepReason === 'first-turn');
+        }
+        // Or the equivalence above holds over a run with only one kind of turn in it.
+        expect(reports.some((report) => report.rebuilt)).toBe(true);
+        expect(reports.some((report) => !report.rebuilt)).toBe(true);
+    });
+});

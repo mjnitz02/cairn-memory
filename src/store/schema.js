@@ -5,6 +5,7 @@
  * migration, and gains a fixture of the old shape in the test suite. We never
  * orphan someone's accumulated memory.
  */
+import { DEFAULT_LORE_CAP } from '../prompt/lore-cap.js';
 import { error } from '../util/log.js';
 
 /** Bump on any change to the settings shape. */
@@ -98,6 +99,12 @@ export const DEFAULT_SETTINGS = Object.freeze({
      * profile is chosen, and held while qvink is still writing the block.
      */
     keepCanon: true,
+    /**
+     * The most tokens the lorebook may take in the prompt (docs/decisions.md D-0069).
+     * Written into ST's own `world_info_budget_cap`, which ships at 0 — no cap —
+     * so the percentage budget never binds. 0 here means the same: leave it alone.
+     */
+    loreCap: DEFAULT_LORE_CAP,
 });
 
 /**

@@ -28,11 +28,13 @@ const DEFAULT_HISTORY = 20;
  *
  * @param {() => object} getContext Returns a fresh SillyTavern.getContext()
  * @param {{limit?: number, onSnapshot?: (snapshot: object) => void,
- *           holding?: () => (number|null),
+ *           holding?: () => (number|null), trimmed?: () => (object|null),
  *           memory?: (turn: {promptTokens: number}) => Promise<object|null>,
  *           summaries?: () => (object|null), state?: () => (object|null)}} [options]
  *        `holding` reports how many World Info entries the holder is keeping in,
  *        so a logged run says whether the fix was on (docs/decisions.md D-0024).
+ *        `trimmed` is the last rebuild's re-evaluation of that set, null between
+ *        rebuilds — the check that it fires on rebuild turns and no others (D-0069).
  *        `memory` returns the report from the plan the interceptor already
  *        acted on (docs/decisions.md D-0027). It is handed what this prompt cost
  *        for reporting only; the plan never reads it back (D-0033).
@@ -40,7 +42,9 @@ const DEFAULT_HISTORY = 20;
  *        a log says whether a summary request overlapped a generation.
  *        `state` is the world state the interceptor placed this turn.
  */
-export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot, holding, memory, summaries, state } = {}) {
+export function createObserver(getContext, {
+    limit = DEFAULT_HISTORY, onSnapshot, holding, trimmed, memory, summaries, state,
+} = {}) {
     /**
      * Previous flattened prompt per API path — the baseline the meter compares
      * against. Keyed by API because a text-completion string and a flattened
@@ -86,6 +90,7 @@ export function createObserver(getContext, { limit = DEFAULT_HISTORY, onSnapshot
             worldInfo: pendingWorldInfo,
             worldInfoOrdering: assessOrdering(pendingWorldInfo),
             worldInfoHeld: holding?.() ?? null,
+            worldInfoTrim: read(trimmed, 'the World Info trim'),
             memory: await planMemory(promptTokens),
             summaries: read(summaries, 'the summarizer status'),
             state: read(state, 'the world state placement'),

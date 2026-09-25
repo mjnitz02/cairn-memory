@@ -95,9 +95,14 @@ literally against the cited line.
 | `await eventSource.emit(event_types.WORLDINFO_ENTRIES_LOADED` | Calling it emits this, so our call fires it a second time per generation | `public/scripts/world-info.js` | 4604 |
 | `export let world_info_budget = 25;` | The World Info budget, as a percentage of the max prompt | `public/scripts/world-info.js` | 73 |
 | `export let world_info_budget_cap = 0;` | An absolute cap on it, when set | `public/scripts/world-info.js` | 81 |
+| `export function updateWorldInfoSettings` | How Cairn sets that cap: it takes only the keys present, so one key is safe to pass | `public/scripts/world-info.js` | 819 |
+| `    saveSettingsDebounced();` | ...and it **persists**, which is why the cap is a setting the user owns rather than a derived value | `public/scripts/world-info.js` | 852 |
+| `$('#world_info_budget_cap').val(world_info_budget_cap);` | ST fills its own field on load and never again, so a write behind it leaves the number on screen stale | `public/scripts/world-info.js` | 989 |
 | `let budget = Math.round(world_info_budget * maxContext / 100)` | How the budget is worked out, and never zero | `public/scripts/world-info.js` | 4736 |
 | `if (!entry.ignoreBudget && (textToScanTokens` | ST stops adding entries at the budget, so lore cannot pass it | `public/scripts/world-info.js` | 5061 |
 | `ignoreBudget: entry.extensions?.ignore_budget ?? false,` | ...except an entry marked to ignore it, which is added on top | `public/scripts/world-info.js` | 5669 |
+| `newContent +=` | Each entry is joined on a newline *before* the budget test, so an overflow takes everything after it too | `public/scripts/world-info.js` | 5059 |
+| `if (world_info_recursive && !token_budget_overflowed` | Recursion stops once the budget overflows, so a trimmed entry is not pulled straight back in | `public/scripts/world-info.js` | 5097 |
 | `src="script.js"` | The URL ST loads it under, so `/script.js` is the same module however deeply we are installed | `public/index.html` | 8218 |
 | `setExtensionPrompt` | Park the memory block | `public/scripts/st-context.js` | 153 |
 | `setExtensionPrompt` | Signature: `(key, value, position, depth, scan, role, filter)` | `public/script.js` | 8926 |

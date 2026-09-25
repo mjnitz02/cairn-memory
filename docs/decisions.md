@@ -8,6 +8,49 @@ what we believed and why it changed.
 
 ---
 
+## D-0073 — The lorebook cap is a Cairn setting that writes ST's, and it persists
+**2026-09-22.** P5 stage 1, item 3. Scopes D-0069 rather than superseding it: the cap, the
+ordering and the trim are still ST's, and Cairn still only decides the *when*. What changed is
+what "Cairn sets it" costs.
+
+**What we found.** `world_info_budget_cap` is an `export let` inside `world-info.js`
+(`public/scripts/world-info.js:81`) and is not on `getContext()`, so it cannot be assigned from
+outside the module the way `power_user.strip_examples` can. Both routes that do set it persist:
+`updateWorldInfoSettings` ends in `saveSettingsDebounced()` (`:819`, `:852`), and the field's own
+handler calls `saveSettings()` (`:6297`). It is also global rather than per-chat. **So there is
+no version of this write that lasts only for the session** — which is exactly the escape D-0068
+used to make the examples latch safe, and it is not available here.
+
+**The decision.** It becomes a Cairn setting — `loreCap`, default 3,500 tokens — written into
+ST's `world_info_budget_cap` at load and whenever it changes (`src/prompt/lore-cap.js`). `0`
+means what ST means by it: no cap. A number the user can see, raise, lower or switch off is the
+honest form for something that changes every chat they have, and it is one knob with one
+sentence (CLAUDE.md §4.15).
+
+**Why not a cap Cairn keeps to itself.** Two independent reasons, and each alone is fatal:
+
+- `loreReserve` is bounded by `loreBudget`, which reads `world_info_budget` and
+  `world_info_budget_cap` as live exports (D-0016). A private cap would trim the held set while
+  the reserve still counted ST's larger budget, and the whole reclaim would disappear into the
+  margin with nothing to see — the card-and-examples disagreement of D-0068, exactly.
+- ST's scan obeys its own budget and nothing else (`:5061`). Entries that activate by keyword
+  are added up to *that* number regardless of what Cairn holds, so a private cap would leave the
+  reserve claiming 3,500 against a prompt that can carry 4,982. A reserve that is not an upper
+  bound is what `prompt/reserves.js` exists not to be.
+
+**Where 3,500 comes from.** The P4 run's book weighed 4,982 tokens of a 23,040-token prompt
+against a 25% (5,760) budget that had never bound. 3,500 hands ~1,480 back to the memory block
+and still leaves the lorebook more room than the character card has. It is a default, not a
+derivation, because the right number depends on a book we cannot see from here.
+
+**A discovery worth the entry** (CLAUDE.md §6.27). `Number(null)`, `Number('')` and
+`Number(false)` are all `0`, and `0` here means *uncap the lorebook*. A missing setting or a
+blanked input would therefore have silently removed the cap while looking like a no-op. Caught
+by a test that asserted the refusal, not by reading the code.
+
+**Reopens if:** a released ST puts the setting on `getContext()` or offers a non-persisting
+write, in which case the knob can go back to being derived.
+
 ## D-0072 — Scene segmentation is explored and set aside; P5's shape is unchanged
 **2026-09-19.** A day-after re-examination of D-0070 and D-0071. It changed nothing in
 `docs/p5-plan.md`, and this entry exists so the next session does not re-derive it

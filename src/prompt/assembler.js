@@ -346,6 +346,10 @@ export function createAssembler(getContext, {
             // turn `examplesLatched` is true. Both, or the reclaim did not happen.
             examplesStripped: examples.stripped,
             examplesLatched: examples.changed,
+            // The rebuild turn (docs/decisions.md D-0067). Everything discontinuous
+            // batches here, and the injector reads it to know when the World Info
+            // holder may re-evaluate what it is holding (D-0069).
+            rebuilt,
             included: fit.kept.length,
             oldest: fit.kept[0]?.index ?? null,
             newest: fit.kept[fit.kept.length - 1]?.index ?? null,
@@ -378,6 +382,8 @@ export function createAssembler(getContext, {
                 card: budgeted.parts?.card ?? null,
                 lore: budgeted.parts?.lore ?? null,
                 loreBound: reserved?.loreBound ?? null,
+                // ST's own World Info budget, which the holder trims to (D-0069).
+                loreBudget: reserved?.loreBudget ?? null,
                 window: budgeted.parts?.window ?? null,
                 // Reported, never planned against: it swings across a see-saw cycle.
                 windowNow: reserved?.windowNow ?? null,

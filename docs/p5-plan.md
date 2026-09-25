@@ -309,6 +309,9 @@ one summary call, at a twenty-seventh of the frequency.
 - **`prompt/reserves.js`:** `cardReserve` reads the examples latch and drops `mesExamples` from
   `CARD_FIELDS` once it is set. `RUN_LENGTH` follows `RAW_WINDOW` / `STEP` with no change.
 - **`prompt/lorebook.js`:** the union-then-trim at a rebuild; add-only between them.
+- **`prompt/lore-cap.js` (new):** the `loreCap` setting written into ST's
+  `world_info_budget_cap`. Separate, and a setting rather than a derived number, because
+  the write persists and is global — there is no session-only form of it (D-0073).
 - **`pipeline/scheduler.js`:** `RAW_WINDOW` and `STEP` to 8.
 - **`memory/examples.js` (new):** the derived latch and the `strip_examples` write. Small, and
   separate because it is the only module that writes a `power_user` setting.
@@ -333,7 +336,8 @@ one summary call, at a twenty-seventh of the frequency.
   - `canon_rederived` is true only on turns where `evicted > 0` or the step reason is
     `first-turn`. Any other turn is decision 1 failing.
   - `lore_dropped` is non-zero only on those same turns.
-  - `budget_limited_by` reads `share`, not `room` or `starved`.
+  - `budget_limited_by` reads `room`, not `starved` — and `budget_cap` lands ~111 under
+    the share, so one further reclaim would make the share bind.
   - `memory_canon_limited_by` reads `share`, not `guard`.
 - **The inspector** gains an index line (records, pending, the four-way split) and shows the
   examples latch and the lore cap in the reserves breakdown.
@@ -396,7 +400,7 @@ reclaimed cap, a rebuild is every ~27 messages — so the run has to be sized of
 rather than off P4's, and the cycle shrunk first if it comes out long.
 
 **Measure:**
-- **The reclaim landed.** `budget_card` falls by ~2,176, `budget_limited_by` reads `share`,
+- **The reclaim landed.** `budget_card` falls by ~2,176, `budget_limited_by` reads `room`,
   `memory_canon_cap` reads ~1,591 and `memory_canon_limited_by` reads `share`.
 - **The latch fired once.** One transition, one cache miss, and the prefix recovers the turn
   after.
@@ -448,8 +452,8 @@ all.** It is also the half that makes the derive half affordable.
 
 **Check** — on the run's chat, on the first turn, no play needed: `budget_card` falls by ~2,176
 **and** `examples_stripped` goes true, both or the latch and the reserve disagree and the whole
-reclaim vanishes into the margin; `budget_limited_by` reads `share`; `memory_canon_cap` reads
-~1,591 and `memory_canon_limited_by` reads `share`. If the prose degrades at an eight-message
+reclaim vanishes into the margin; `budget_limited_by` reads `room`, not `starved`;
+`memory_canon_cap` reads ~1,591 and `memory_canon_limited_by` reads `share`. If the prose degrades at an eight-message
 floor, decision 4 reverts on its own — it is two numbers.
 
 ### Stage 2 — The record. Storage and parsing, no behaviour change.

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createInjector } from '../src/prompt/injector.js';
+import { createRememberedSet } from '../src/prompt/lorebook.js';
 import { createContext } from './mocks/sillytavern.js';
 import { createWorldInfoEngine, makeBook } from './mocks/world-info.js';
 
@@ -486,5 +487,169 @@ describe('the memory block when Cairn is switched off', () => {
 
         expect(context.extensionPrompts.cairn_memory.value).toBe('BLOCK');
         expect(chat[0].extra[IGNORE]).toBe(true);
+    });
+});
+
+/**
+ * The held set's re-evaluation (docs/decisions.md D-0069).
+ *
+ * Driven through `intercept` rather than through the World Info engine on
+ * purpose: the engine deliberately does not model the token budget
+ * (test/mocks/world-info.js), and recursion in a budget-free scan pulls every
+ * trimmed entry straight back in — which is exactly what ST's own
+ * `!token_budget_overflowed` guard (world-info.js:5097) stops it doing.
+ *
+ * The book's entries weigh 15, 13, 16, 14, 13 and 13 tokens at the mock
+ * tokenizer's four characters each, in descending `order`, so a budget of 50
+ * keeps the first three and the fourth is where it overflows.
+ */
+describe('the held World Info set at a rebuild', () => {
+    const BUDGET_KEEPING_THREE = 50;
+
+    function withLore({ rebuilt = false, loreBudget = BUDGET_KEEPING_THREE, remembered } = {}) {
+        const context = createContext();
+        const report = { rebuilt, budget: { loreBudget } };
+        const memory = { plan: async () => ({ ...makePlan(), report }) };
+        const injector = createInjector(() => context, { memory, ...(remembered ? { remembered } : {}) });
+        injector.setHoldEnabled(true);
+        injector.start();
+        // What WORLD_INFO_ACTIVATED would have taught it on an earlier turn.
+        const learn = (entries) => context.eventSource.emit(context.eventTypes.WORLD_INFO_ACTIVATED, entries);
+        const forced = [];
+        context.eventSource.on(context.eventTypes.WORLDINFO_FORCE_ACTIVATE, (entries) => forced.push(entries));
+        const turn = () => injector.intercept([], 4096, () => {}, undefined);
+        return { context, injector, report, learn, forced, turn };
+    }
+
+    it('is add-only between rebuilds: an ordinary turn trims nothing', async () => {
+        const harness = withLore();
+        await harness.learn(makeBook());
+
+        await harness.turn();
+
+        expect(harness.injector.remembered.size).toBe(6);
+        expect(harness.injector.lastTrim).toBeNull();
+        expect(harness.forced.at(-1)).toHaveLength(6);
+    });
+
+    it('trims to the budget at a rebuild, lowest order first', async () => {
+        const harness = withLore({ rebuilt: true });
+        await harness.learn(makeBook());
+
+        await harness.turn();
+
+        expect(harness.injector.lastTrim).toMatchObject({ dropped: 3, kept: 3, budget: 50 });
+        // The book descends by `order` from `hearth`, so the last three go.
+        expect(harness.injector.remembered.entries().map((e) => e.comment))
+            .toEqual(['hearth', 'ferris', 'weft']);
+        // Trimmed *before* the push, so the turn it fires is the turn it lands.
+        expect(harness.forced.at(-1)).toHaveLength(3);
+    });
+
+    it('does not evict an entry that missed the scan on the rebuild turn', async () => {
+        // The union, restated as a test: the held set is what was ever activated,
+        // never what activated this turn. A recompute would drop five of six here,
+        // which is D-0023's failure landing on the one turn nobody is watching.
+        const harness = withLore({ rebuilt: true, loreBudget: 10_000 });
+        await harness.learn(makeBook());
+
+        await harness.turn();
+
+        expect(harness.injector.remembered.size).toBe(6);
+        expect(harness.injector.lastTrim).toMatchObject({ dropped: 0, kept: 6 });
+    });
+
+    it('trims once per rebuild, not once per turn', async () => {
+        const harness = withLore({ rebuilt: true });
+        await harness.learn(makeBook());
+
+        await harness.turn();
+        harness.report.rebuilt = false;
+        await harness.turn();
+        await harness.turn();
+
+        expect(harness.injector.remembered.size).toBe(3);
+        expect(harness.injector.lastTrim).toBeNull();
+    });
+
+    it('leaves the set alone when there is no budget to trim to', async () => {
+        // CLAUDE.md §4.17: a reserve read that failed hands the plan no budget,
+        // and a missing number must not read as a budget of nothing.
+        const harness = withLore({ rebuilt: true, loreBudget: null });
+        await harness.learn(makeBook());
+
+        await harness.turn();
+
+        expect(harness.injector.remembered.size).toBe(6);
+        expect(harness.injector.lastTrim).toBeNull();
+    });
+
+    it('still forces the held set when the trim itself fails', async () => {
+        const base = createRememberedSet();
+        const broken = Object.create(base);
+        broken.trim = async () => { throw new Error('tokenizer gone'); };
+        const harness = withLore({ rebuilt: true, remembered: broken });
+        await harness.learn(makeBook());
+
+        await harness.turn();
+
+        expect(harness.injector.remembered.size).toBe(6);
+        expect(harness.forced.at(-1)).toHaveLength(6);
+    });
+
+    it('drops the trim with the chat it was made for', async () => {
+        const harness = withLore({ rebuilt: true });
+        await harness.learn(makeBook());
+        await harness.turn();
+
+        harness.injector.reset();
+
+        expect(harness.injector.lastTrim).toBeNull();
+        expect(harness.injector.remembered.size).toBe(0);
+    });
+});
+
+/**
+ * The step order inside the interceptor. The hold runs second because the trim
+ * needs to know whether this is a rebuild turn, and that is the assembler's own
+ * arithmetic — it does not exist until the plan does (D-0067, D-0069).
+ */
+describe('the order of the interceptor\'s writes', () => {
+    it('plans the memory block before it forces the held set', async () => {
+        const context = createContext();
+        const order = [];
+        const remembered = createRememberedSet();
+        remembered.observe(makeBook());
+        context.eventSource.on(context.eventTypes.WORLDINFO_FORCE_ACTIVATE, () => order.push('hold'));
+
+        const injector = createInjector(() => context, {
+            remembered,
+            memory: { plan: async () => { order.push('plan'); return makePlan(); } },
+        });
+        injector.start();
+
+        await injector.intercept([], 4096, () => {}, undefined);
+
+        expect(order).toEqual(['plan', 'hold']);
+    });
+
+    it('still holds the lore when the plan throws', async () => {
+        // The reorder must not make the holder depend on the assembler: a failed
+        // plan leaves last turn's block in place, and the lore is not its business.
+        const context = createContext();
+        const remembered = createRememberedSet();
+        remembered.observe(makeBook());
+        const forced = [];
+        context.eventSource.on(context.eventTypes.WORLDINFO_FORCE_ACTIVATE, (entries) => forced.push(entries));
+
+        const injector = createInjector(() => context, {
+            remembered,
+            memory: { plan: async () => { throw new Error('no plan'); } },
+        });
+        injector.start();
+
+        await injector.intercept([], 4096, () => {}, undefined);
+
+        expect(forced.at(-1)).toHaveLength(6);
     });
 });

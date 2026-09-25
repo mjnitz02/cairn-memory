@@ -81,6 +81,83 @@ export function entryKey(entry) {
 }
 
 /**
+ * Trim a held set to ST's World Info budget, lowest `order` first
+ * (docs/decisions.md D-0069).
+ *
+ * The holder is add-only, so it only grows. ST caps the block at
+ * `world_info_budget` percent of the max prompt, optionally capped absolutely by
+ * `world_info_budget_cap` (world-info.js:4736-4741). Once the held set passes
+ * that budget ST drops the tail itself — but it decides where the tail starts
+ * from a running token count taken *during* the scan (:5061), so the boundary
+ * entry moves turn to turn and the block below it is rewritten each time. That
+ * is D-0023's failure one level up: a set that never really changed, rebuilding
+ * the prompt anyway.
+ *
+ * Trimming here puts the held set under the budget before it is forced, so none
+ * of ours sits on ST's boundary. It is only called at a rebuild, which is the
+ * turn the prompt's head is moving regardless (D-0067).
+ *
+ * Mirrors ST's own arithmetic rather than inventing one:
+ *
+ *   - `ignoreBudget` entries are kept whatever happens and cost nothing against
+ *     the budget — ST adds them on top (:5061, :5669).
+ *   - The rest are walked highest `order` first (`sortFn`, :88), and the first
+ *     one whose running total *reaches* the budget takes everything after it
+ *     with it, because ST adds an entry's content to the running count before
+ *     testing it (:5059-5061) so a pass cannot recover once it overflows.
+ *
+ * The tiebreak is first-activation order, which is ours and not ST's: ST scores
+ * every forced entry -1 and falls back to its walk over `sortedEntries`
+ * (:5002), which we cannot see from here. It does not need to match. ST still
+ * governs what reaches the prompt; this only decides what we stop forcing, and
+ * an order that never changes between turns is the property we want.
+ *
+ * Pure: `sizeOf` is injected.
+ *
+ * @param {{entries: Array<object>, budget: number,
+ *          sizeOf: (text: string) => Promise<number>}} input
+ * @returns {Promise<{kept: Array<object>, dropped: Array<object>, tokens: number}>}
+ *          `kept` stays in the order it arrived in, which is the order it is forced in.
+ */
+export async function trimToBudget({ entries, budget, sizeOf }) {
+    const held = [...(entries ?? [])];
+    // No usable budget is no trim, not a trim to nothing (CLAUDE.md §4.17).
+    if (!Number.isFinite(budget) || budget <= 0) return { kept: held, dropped: [], tokens: 0 };
+
+    const ranked = held
+        .map((entry, arrival) => ({ entry, arrival }))
+        .filter(({ entry }) => !entry?.ignoreBudget)
+        .sort((a, b) => (b.entry?.order ?? 0) - (a.entry?.order ?? 0) || a.arrival - b.arrival);
+
+    const dropped = new Set();
+    /** What the kept set weighs — the running total *before* the one that overflowed. */
+    let tokens = 0;
+    let running = 0;
+    let overflowed = false;
+
+    for (const { entry } of ranked) {
+        if (overflowed) {
+            dropped.add(entry);
+            continue;
+        }
+        // ST counts the entry plus the newline it joins on (:5059).
+        running += await sizeOf(`${entry?.content ?? ''}\n`);
+        if (running >= budget) {
+            overflowed = true;
+            dropped.add(entry);
+        } else {
+            tokens = running;
+        }
+    }
+
+    return {
+        kept: held.filter((entry) => !dropped.has(entry)),
+        dropped: held.filter((entry) => dropped.has(entry)),
+        tokens,
+    };
+}
+
+/**
  * The remembered set — add-only membership for the World Info block
  * (docs/decisions.md D-0023).
  *
@@ -146,6 +223,27 @@ export function createRememberedSet() {
                 }
             }
             return dropped;
+        },
+
+        /**
+         * Re-evaluate the held set against ST's budget (docs/decisions.md D-0069).
+         *
+         * The union of "currently held" and "currently activated" is the held set
+         * itself — `observe` has already folded every activation in — so the union
+         * is implicit and only the trim is work. That is the point: a *recompute*
+         * from this turn's activations would let a keyword-scan miss landing on a
+         * rebuild turn evict an entry, which is D-0023's failure again, rarer and
+         * harder to catch.
+         *
+         * Only ever called on a rebuild turn (prompt/injector.js, D-0067).
+         *
+         * @param {{budget: number, sizeOf: (text: string) => Promise<number>}} input
+         * @returns {Promise<{dropped: number, kept: number, tokens: number}>}
+         */
+        async trim({ budget, sizeOf }) {
+            const result = await trimToBudget({ entries: [...held.values()], budget, sizeOf });
+            for (const entry of result.dropped) held.delete(entryKey(entry));
+            return { dropped: result.dropped.length, kept: result.kept.length, tokens: result.tokens };
         },
 
         /** A new chat is a new set. */

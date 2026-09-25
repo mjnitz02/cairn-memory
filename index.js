@@ -6,6 +6,7 @@ import { DISPLAY_NAME, SLUG } from './src/constants.js';
 import { createDiskLog } from './src/util/disk-log.js';
 import { createAssembler } from './src/prompt/assembler.js';
 import { createInjector } from './src/prompt/injector.js';
+import { createLoreCap } from './src/prompt/lore-cap.js';
 import { createObserver } from './src/prompt/observer.js';
 import { createStatePlacement } from './src/prompt/state-placement.js';
 import { createSummarizer } from './src/pipeline/summarizer.js';
@@ -31,6 +32,12 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
 
         const diskLog = createDiskLog();
         diskLog.setEnabled(settings.logToDisk);
+
+        // The lorebook's ceiling, which is ST's own setting and ships at no cap
+        // (src/prompt/lore-cap.js, docs/decisions.md D-0069). Applied before the
+        // first plan, so the reserve and the holder read the same number.
+        const loreCap = createLoreCap();
+        await loreCap.apply(settings.loreCap);
 
         // Plans the memory block every turn. Whether the plan is written is the
         // handover gate's call (src/prompt/handover.js, docs/decisions.md D-0027).
@@ -74,6 +81,7 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
                 diskLog.append(snapshot, getContext);
             },
             holding: () => (settings.holdWorldInfo ? injector.remembered.size : null),
+            trimmed: () => injector.lastTrim,
             // The plan the interceptor already acted on. Nothing measured here
             // flows back into the next plan (docs/decisions.md D-0033).
             memory: () => assembler.latest,
@@ -97,6 +105,7 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
             },
             onLogToDiskChange: (enabled) => diskLog.setEnabled(enabled),
             onHoldWorldInfoChange: (enabled) => injector.setHoldEnabled(enabled),
+            onLoreCapChange: (cap) => loreCap.apply(cap),
             onOwnMemoryBlockChange: (enabled) => assembler.setOwnEnabled(enabled),
             // Off takes effect at the next generation; on may have a state to bring up to date.
             onWorldStateChange: () => {

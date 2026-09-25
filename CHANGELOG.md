@@ -9,6 +9,17 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ## [Unreleased]
 
+### Added
+
+- **Lorebook cap.** A new setting, in tokens, for the most of the prompt your
+  lorebook may take. SillyTavern has always had this cap and ships it at 0 — no
+  cap — so only its 25% budget binds, and on a large book that is more than the
+  character card costs and more than the whole memory block gets. Cairn defaults
+  it to **3,500** and hands the difference to memory. Set it to 0 to leave
+  SillyTavern's budget exactly as it was. It is SillyTavern's own setting, so it
+  applies to every chat and is saved with the rest of your settings — that is why
+  it is a number you can see and change rather than something Cairn decides.
+
 ### Changed
 
 - **Example dialogue is dropped once summaries stand in for messages.** A card's
@@ -30,6 +41,17 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
   10 and 19, which is the six-to-ten-message lag that reads correctly in play,
   and it hands the memory block about 1,855 tokens it was reserving to carry
   prose the summaries already carry.
+- **The held World Info set is re-checked against SillyTavern's lorebook budget,
+  and only on a rebuild turn.** Cairn holds every lorebook entry that has ever
+  fired so a missed keyword scan cannot make the block vanish, which means the
+  set only ever grows. Once it outgrows the budget SillyTavern drops the tail
+  itself, and it picks where the tail starts from a count taken mid-scan — so the
+  entry on the boundary moves turn to turn and the prompt below it is rewritten
+  each time. Cairn now trims the held set to the budget itself, lowest priority
+  first, on the turn the memory block is being rebuilt anyway. Between rebuilds
+  nothing is ever dropped, so a keyword miss still cannot evict an entry, and an
+  entry that was trimmed comes straight back if the lorebook activates it again.
+  Entries set to ignore the budget are never trimmed.
 
 ## [0.10.0] — 2026-09-18
 
