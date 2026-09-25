@@ -38,6 +38,7 @@ import { pendingCompaction } from '../pipeline/compactor.js';
 import { createSeeSaw } from '../pipeline/scheduler.js';
 import { createExamplesLatch, examplesSuperseded } from '../memory/examples.js';
 import { assessHandover } from './handover.js';
+import { FIRST_TURN, isRebuild } from './rebuild.js';
 import { createReserves } from './reserves.js';
 import { comparePrompts } from '../util/prefix.js';
 import { createMaxPromptTokens } from '../util/context-size.js';
@@ -252,14 +253,14 @@ export function createAssembler(getContext, {
             scenes: covered,
             sceneCap: Math.max(0, cap - canon.tokens),
             tokensOf,
-            rebuild: step.reason === 'first-turn',
+            rebuild: step.reason === FIRST_TURN,
         });
 
         // A rebuild changes the block's head whatever we do, so this is the turn a
         // new batch costs nothing extra. Admitting it shrinks the scene budget, so
         // the summaries are fitted again — to the floor of the budget they actually
         // have, not the one they had before canon grew.
-        const rebuilt = fit.evicted > 0 || step.reason === 'first-turn';
+        const rebuilt = isRebuild({ evicted: fit.evicted, stepReason: step.reason });
         let evicted = fit.evicted;
         if (rebuilt) admittedCap = canonBudget.cap;
         if (rebuilt && allFacts.length) {

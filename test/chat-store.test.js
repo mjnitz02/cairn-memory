@@ -1,16 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import { STORE_VERSION } from '../src/store/schema.js';
 import {
-    MIN_SUMMARY_TOKENS, hashRange, readCanon, readRange, readScene, readState, summarisable,
-    writeCanon, writeScene, writeState,
+    MIN_SUMMARY_TOKENS, hashRange, readCanon, readIndex, readRange, readScene, readState,
+    summarisable, writeCanon, writeIndex, writeScene, writeState,
 } from '../src/store/chat-store.js';
 import { hashString } from '../src/util/hash.js';
 import { STORE_V1, STORE_V1_MES, storeV1Message } from './fixtures/store-v1.js';
 import { STORE_V2, STORE_V2_MES, storeV2Chat } from './fixtures/store-v2.js';
 import { STORE_V3, STORE_V3_CANON, storeV3Chat } from './fixtures/store-v3.js';
+import { STORE_V4, STORE_V4_CANON, storeV4Chat } from './fixtures/store-v4.js';
 import { makeQvinkChat } from './mocks/qvink.js';
 
 const IGNORE = Symbol.for('ignore');
+
+/** A record `validRecord` accepts (memory/index-record.js), for the store's own tests. */
+const RECORD = Object.freeze({
+    kind: 'major',
+    who: Object.freeze(['Aster', 'Wren']),
+    what: 'Aster promised to get Wren across before the feast day',
+    changed: 'Wren has a crossing promised',
+    because: 'the ferry was posted delayed',
+});
 
 describe('the v1 store fixture', () => {
     it('reads as a valid scene with no state', () => {
@@ -68,26 +78,71 @@ describe('the v3 store fixture', () => {
         expect(readState(chat, 3)).toEqual({ status: 'valid', state: STORE_V3.state });
     });
 
+    it('reads with no index record, which is what a v3 chat is', () => {
+        const chat = storeV3Chat();
+
+        expect(readIndex(chat[1])).toEqual({ status: 'none', index: null });
+        expect(readIndex(chat[3])).toEqual({ status: 'none', index: null });
+    });
+
+    it('upgrades to v4 on the next write, keeping every key it already had', () => {
+        // The migration is not written back on its own: the next write stores the
+        // current shape and nothing is lost on the way (schema.js).
+        const chat = storeV3Chat();
+        expect(chat[1].extra.cairn.v).toBe(3);
+
+        expect(writeIndex(chat, 1, { record: RECORD, prompt: 'h:index', at: 'T' })).toBe(true);
+
+        expect(chat[1].extra.cairn.v).toBe(STORE_VERSION);
+        expect(readScene(chat[1])).toEqual({ status: 'valid', scene: STORE_V3_CANON.scene });
+        expect(readCanon(chat[1])).toEqual({ status: 'valid', canon: STORE_V3_CANON.canon });
+        expect(readIndex(chat[1]).status).toBe('valid');
+    });
+});
+
+describe('the v4 store fixture', () => {
+    it('reads all four tiers, the index record beside the summary it came from', () => {
+        const chat = storeV4Chat();
+
+        expect(readScene(chat[1])).toEqual({ status: 'valid', scene: STORE_V4_CANON.scene });
+        expect(readIndex(chat[1])).toEqual({ status: 'valid', index: STORE_V4_CANON.index });
+        expect(readCanon(chat[1])).toEqual({ status: 'valid', canon: STORE_V4_CANON.canon });
+        expect(readIndex(chat[3])).toEqual({ status: 'valid', index: STORE_V4.index });
+        expect(readState(chat, 3)).toEqual({ status: 'valid', state: STORE_V4.state });
+    });
+
     it('is the exact shape the writers produce today', () => {
         // If this fails the stored shape moved: bump STORE_VERSION, keep this
         // fixture as the old shape, and ship a migration (CLAUDE.md §8.32).
-        const chat = storeV3Chat();
+        const chat = storeV4Chat();
         delete chat[1].extra.cairn;
         delete chat[3].extra.cairn;
-        const { scene: canonScene, canon } = STORE_V3_CANON;
-        const { scene, state } = STORE_V3;
+        const { scene: canonScene, index: canonIndex, canon } = STORE_V4_CANON;
+        const { scene, index, state } = STORE_V4;
         writeScene(chat[1], { text: canonScene.text, prompt: canonScene.prompt, at: canonScene.at });
+        writeIndex(chat, 1, {
+            record: structuredClone(canonIndex.record), prompt: canonIndex.prompt, at: canonIndex.at,
+        });
         writeCanon(chat, 1, {
             facts: structuredClone(canon.facts), covers: [...canon.covers], prompt: canon.prompt, at: canon.at,
         });
         writeScene(chat[3], { text: scene.text, prompt: scene.prompt, at: scene.at });
+        writeIndex(chat, 3, { record: structuredClone(index.record), prompt: index.prompt, at: index.at });
         writeState(chat, 3, {
             value: structuredClone(state.value), read: state.read, changed: [...state.changed], prompt: state.prompt, at: state.at,
         });
 
-        expect(chat[1].extra.cairn).toEqual(STORE_V3_CANON);
-        expect(chat[3].extra.cairn).toEqual(STORE_V3);
-        expect(STORE_VERSION).toBe(3);
+        expect(chat[1].extra.cairn).toEqual(STORE_V4_CANON);
+        expect(chat[3].extra.cairn).toEqual(STORE_V4);
+        expect(STORE_VERSION).toBe(4);
+    });
+
+    it('holds the hash of the summary, not of the message', () => {
+        // What makes a resummarise invalidate the record (chat-store.js).
+        const chat = storeV4Chat();
+
+        expect(STORE_V4_CANON.index.hash).toBe(hashString(STORE_V4_CANON.scene.text));
+        expect(STORE_V4_CANON.index.hash).not.toBe(hashString(chat[1].mes));
     });
 });
 
@@ -524,6 +579,153 @@ describe('writing a canon batch', () => {
         const extras = chat.map((message) => message.extra);
 
         expect(writeCanon(chat, 1, { facts: [], covers: [0, 1], prompt: 'h:1', at: 'T' })).toBe(true);
+
+        chat.forEach((message, i) => {
+            expect(message).toBe(messages[i]);
+            expect(message.extra).toBe(extras[i]);
+        });
+    });
+});
+
+describe('reading an index record back', () => {
+    const summarised = (scene = { text: 'Aster promised a crossing.', prompt: 'h:p', at: 'T' }) => {
+        const chat = [{ name: 'Aster', mes: 'Aster said she would get her across before the feast day.', extra: {} }];
+        writeScene(chat[0], scene);
+        return chat;
+    };
+
+    it('reports none when Cairn has never written one', () => {
+        expect(readIndex({ mes: 'x', extra: {} })).toEqual({ status: 'none', index: null });
+        expect(readIndex({ mes: 'x', extra: { cairn: { v: 4, scene: STORE_V4.scene } } }))
+            .toEqual({ status: 'none', index: null });
+        expect(readIndex(null)).toEqual({ status: 'none', index: null });
+    });
+
+    it('reports a future store rather than reading it', () => {
+        const message = { mes: 'x', extra: { cairn: { v: STORE_VERSION + 1, index: STORE_V4.index } } };
+        expect(readIndex(message)).toEqual({ status: 'future', index: null });
+    });
+
+    it('reports invalid for a record missing a field the reader needs', () => {
+        const chat = summarised();
+        for (const missing of ['record', 'hash', 'prompt', 'at']) {
+            const entry = { ...structuredClone(STORE_V4.index) };
+            delete entry[missing];
+            chat[0].extra.cairn = { ...chat[0].extra.cairn, index: entry };
+            expect(readIndex(chat[0]).status, missing).toBe('invalid');
+        }
+    });
+
+    it('reports invalid for a record the strategy could not have produced', () => {
+        const chat = summarised();
+        const broken = [
+            { ...RECORD, what: '' },
+            { ...RECORD, who: 'Aster, Wren' },
+            { ...RECORD, who: ['Aster', ''] },
+            { ...RECORD, changed: null },
+            { ...RECORD, kind: '' },
+        ];
+        for (const record of broken) {
+            chat[0].extra.cairn = { ...chat[0].extra.cairn, index: { ...STORE_V4.index, record } };
+            expect(readIndex(chat[0]).status, JSON.stringify(record)).toBe('invalid');
+        }
+    });
+
+    it('goes stale when the summary it was derived from is resummarised', () => {
+        const chat = summarised();
+        expect(writeIndex(chat, 0, { record: RECORD, prompt: 'h:index' })).toBe(true);
+        expect(readIndex(chat[0]).status).toBe('valid');
+
+        // The same message, a different summary: the record describes text that is gone.
+        writeScene(chat[0], { text: 'Aster showed Wren a boat.', prompt: 'h:p', at: 'T2' });
+
+        expect(readIndex(chat[0]).status).toBe('stale');
+    });
+
+    it('goes stale when the message itself is edited, through the scene', () => {
+        const chat = summarised();
+        writeIndex(chat, 0, { record: RECORD, prompt: 'h:index' });
+
+        chat[0].mes = 'Aster said nothing at all and went back to the boat.';
+
+        expect(readScene(chat[0]).status).toBe('stale');
+        expect(readIndex(chat[0]).status).toBe('stale');
+    });
+
+    it('goes stale when the summary is gone entirely', () => {
+        const chat = summarised();
+        writeIndex(chat, 0, { record: RECORD, prompt: 'h:index' });
+        delete chat[0].extra.cairn.scene;
+
+        expect(readIndex(chat[0]).status).toBe('stale');
+    });
+});
+
+describe('writing an index record', () => {
+    const summarised = () => {
+        const chat = [{ name: 'Aster', mes: 'Aster said she would get her across before the feast day.', extra: {} }];
+        writeScene(chat[0], { text: 'Aster promised a crossing.', prompt: 'h:p', at: 'T' });
+        return chat;
+    };
+
+    it('stores the record, the summary hash and the prompt, and reads back valid', () => {
+        const chat = summarised();
+
+        expect(writeIndex(chat, 0, { record: RECORD, prompt: 'h:index', at: 'T2' })).toBe(true);
+
+        expect(chat[0].extra.cairn.index).toEqual({
+            record: { ...RECORD, who: ['Aster', 'Wren'] },
+            hash: hashString('Aster promised a crossing.'),
+            prompt: 'h:index',
+            at: 'T2',
+        });
+        expect(readIndex(chat[0])).toEqual({ status: 'valid', index: chat[0].extra.cairn.index });
+    });
+
+    it('refuses a message with no summary, since there is nothing to have indexed', () => {
+        const chat = [{ name: 'Aster', mes: 'Aster said nothing.', extra: {} }];
+
+        expect(writeIndex(chat, 0, { record: RECORD, prompt: 'h:index' })).toBe(false);
+        expect(chat[0].extra.cairn).toBeUndefined();
+    });
+
+    it('refuses a record the reader would call invalid', () => {
+        const chat = summarised();
+
+        expect(writeIndex(chat, 0, { record: { ...RECORD, what: '' }, prompt: 'h:i' })).toBe(false);
+        expect(writeIndex(chat, 0, { record: { ...RECORD, changed: undefined }, prompt: 'h:i' })).toBe(false);
+        expect(writeIndex(chat, 0, { record: null, prompt: 'h:i' })).toBe(false);
+        expect(writeIndex(chat, 0, { record: RECORD, prompt: undefined })).toBe(false);
+        expect(chat[0].extra.cairn.index).toBeUndefined();
+    });
+
+    it('refuses a missing message and a future store', () => {
+        const chat = summarised();
+        expect(writeIndex(chat, 9, { record: RECORD, prompt: 'h:i' })).toBe(false);
+        expect(writeIndex(undefined, 0, { record: RECORD, prompt: 'h:i' })).toBe(false);
+
+        chat[0].extra.cairn = { ...chat[0].extra.cairn, v: STORE_VERSION + 1 };
+        expect(writeIndex(chat, 0, { record: RECORD, prompt: 'h:i' })).toBe(false);
+    });
+
+    it('keeps the other tiers and copies the names out of the caller\'s array', () => {
+        const chat = storeV4Chat();
+        const who = ['Aster'];
+
+        expect(writeIndex(chat, 1, { record: { ...RECORD, who }, prompt: 'h:index', at: 'T' })).toBe(true);
+        who.push('Wren');
+
+        expect(chat[1].extra.cairn.index.record.who).toEqual(['Aster']);
+        expect(readScene(chat[1]).status).toBe('valid');
+        expect(readCanon(chat[1]).status).toBe('valid');
+    });
+
+    it('mutates the message in place and never clones the chat (DESIGN.md §9)', () => {
+        const chat = storeV4Chat();
+        const messages = [...chat];
+        const extras = chat.map((message) => message.extra);
+
+        expect(writeIndex(chat, 1, { record: RECORD, prompt: 'h:index', at: 'T' })).toBe(true);
 
         chat.forEach((message, i) => {
             expect(message).toBe(messages[i]);

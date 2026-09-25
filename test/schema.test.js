@@ -3,6 +3,9 @@ import {
     DEFAULT_SETTINGS, SETTINGS_VERSION, STORE_VERSION, applyMigrations, migrateSettings, migrateStore,
 } from '../src/store/schema.js';
 import { STORE_V1 } from './fixtures/store-v1.js';
+import { STORE_V2 } from './fixtures/store-v2.js';
+import { STORE_V3, STORE_V3_CANON } from './fixtures/store-v3.js';
+import { STORE_V4, STORE_V4_CANON } from './fixtures/store-v4.js';
 
 describe('migrateSettings', () => {
     it('returns defaults for a fresh install', () => {
@@ -139,5 +142,43 @@ describe('migrateStore', () => {
 
     it('refuses a migration that does not advance the version', () => {
         expect(() => migrateStore({ v: 1 }, { 1: (s) => ({ ...s }) }, 2)).toThrow(/did not advance the version/);
+    });
+});
+
+/**
+ * Every shape we have ever written still reads (CLAUDE.md §8.32). One case per
+ * released version, from its own fixture rather than from a hand-made object, so
+ * a fixture that drifts fails here too.
+ */
+describe('migrateStore — every stored shape we have shipped', () => {
+    it('carries v1, v2, v3 and v4 forward to the current version with nothing lost', () => {
+        for (const stored of [STORE_V1, STORE_V2, STORE_V3, STORE_V3_CANON, STORE_V4, STORE_V4_CANON]) {
+            const { status, store } = migrateStore(stored);
+
+            expect(status, `v${stored.v}`).toBe('ok');
+            expect(store, `v${stored.v}`).toEqual({ ...stored, v: STORE_VERSION });
+        }
+    });
+
+    it('leaves the index key absent below v4, so nothing is invented for it', () => {
+        // The record is re-derived from the summary it sits beside; a migration that
+        // filled it in would be guessing at the model's output (docs/decisions.md D-0070).
+        for (const stored of [STORE_V1, STORE_V2, STORE_V3, STORE_V3_CANON]) {
+            expect(migrateStore(stored).store.index).toBeUndefined();
+        }
+        expect(migrateStore(STORE_V4).store.index).toEqual(STORE_V4.index);
+    });
+
+    it('refuses a v5 store rather than overwriting what a newer Cairn wrote', () => {
+        expect(migrateStore({ ...STORE_V4, v: STORE_VERSION + 1 }))
+            .toEqual({ status: 'future', store: null });
+    });
+
+    it('has a migration registered for every version below the current one', () => {
+        // The mechanical half of §8.32: bumping STORE_VERSION without a migration
+        // makes every older chat unreadable, and this is what says so.
+        for (let version = 1; version < STORE_VERSION; version++) {
+            expect(migrateStore({ v: version }).status, `v${version}`).toBe('ok');
+        }
     });
 });

@@ -8,6 +8,56 @@ what we believed and why it changed.
 
 ---
 
+## D-0074 — The index record's shape: hashed to the summary, and degraded rather than dropped
+**2026-09-25.** P5 stage 2, items 4 to 6. Implements D-0070 and D-0067; the four choices below
+were made while building and are logged because each of them could plausibly have gone the other
+way, and the next session should not re-derive them (CLAUDE.md §6.26).
+
+**1. A record is hashed against the summary, not against `mes`.** The record is a reading of the
+summary, so the summary is what it depends on. An edited message invalidates the scene, which
+invalidates the record through it; a *resummarise* invalidates it too, which a hash of `mes`
+would have missed entirely — the record would have gone on describing prose that no longer
+existed. It also means a record can never outlive the summary it came from, so `pendingIndex`
+needs no extra bookkeeping to find the work: no valid summary, no valid record.
+
+**2. An unreadable kind degrades to `filler`; a missing `what` drops the record.** The kind is a
+prior the deriver may overrule (D-0070), so losing it costs a hint. The slots are the part that
+cannot be recovered without another call, so they are kept whenever they are readable. `filler`
+rather than a guess because it is the least privileged of the four: a mislabelled record can
+still be picked, and cannot be promoted by its label alone. Every degrade is counted, so what
+the panel reports is the applied change (CLAUDE.md §4.18).
+
+**3. A reply with no records is a rejection, unlike the canon pass.** `{"promote": null}` is a
+real answer to "what here is permanent" — the summaries held nothing durable. There is no real
+answer to "write one record for each of these fifteen summaries" that writes none, so an empty
+`records` is a broken reply rather than a finding. A *short* batch is different again: it is
+reported as what came back, and whether it is enough to write is the caller's call.
+
+**4. `rollback` is not a rebuild turn.** A branch or a swipe rewrites the block's head, so by
+D-0067's wording it looks like the place to batch discontinuous work. It is not: a rollback also
+rolls the *store* back, so the records a re-derivation would read are the ones that just went
+away, and the fold already gives the correct smaller set for free (D-0045). The head-change is
+paid either way; the work is not. `src/prompt/rebuild.js` is now the single definition, and
+test/rebuild.test.js fails if any other module composes the condition itself (CLAUDE.md §9.35) —
+which is the mistake this guards, because a second slightly-different rebuild condition is
+invisible in play.
+
+**What the record costs, stated honestly.** The slots are clauses, so a filled record renders to
+~68 characters, ~17 tokens by our estimator, and 159 of them ~2,700 — D-0070's one call. That is
+the *expected* cost. The caps put the ceiling at 463 characters, ~116 tokens, which is not the
+same number and does not pretend to be: the caps stop a pathological record, they do not make
+the average true. **Stage 0 is still what confirms it** (`docs/p5-plan.md` §5), and if a real
+record comes back at 40 tokens the one-call claim needs re-arguing before stage 3 is built.
+
+**What was confirmed against the real chats**, by length and count alone, no content read
+(CLAUDE.md §3.13): a summary is ~3 sentences, median ~544 characters, and names 4 to 5 distinct
+people or places, 8 at the most. So four name slots and a 100-character clause are the right
+order of size, and `MAX_WHO` matches canon's `MAX_ENTITIES` deliberately — they are the same
+people.
+
+**Reopens if:** stage 0's labelling pass shows a real record needs a fifth slot or a longer
+`what`, which is a store version and a migration, not a tweak.
+
 ## D-0073 — The lorebook cap is a Cairn setting that writes ST's, and it persists
 **2026-09-22.** P5 stage 1, item 3. Scopes D-0069 rather than superseding it: the cap, the
 ordering and the trim are still ST's, and Cairn still only decides the *when*. What changed is

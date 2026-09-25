@@ -255,6 +255,125 @@ export const badCanonOutputs = {
     empty: () => '',
 };
 
+/**
+ * Realistic replies to the index prompt, which asks for `{"records":[{n, kind, who, what,
+ * changed, because}]}`, one record per numbered summary (docs/decisions.md D-0070). Each
+ * takes the records the model *meant* to send. No Cairn index reply has been seen in play
+ * yet, so the shapes are the three catalogues above carried over, plus the ways a model
+ * asked for one record per number sends a different number of them. Every one has a case
+ * in test/index-strategy.test.js (CLAUDE.md §3.12).
+ */
+export const badIndexOutputs = {
+    /** A json fence, pretty-printed. */
+    fenced: (records) => '```json\n' + JSON.stringify({ records }, null, 2) + '\n```',
+
+    /** Preamble and sign-off around bare JSON. */
+    preambleAndSignOff: (records) =>
+        `Here are the records for all ${records.length} summaries:\n\n${JSON.stringify({ records })}\n\nLet me know if you'd like the kinds adjusted.`,
+
+    /** Reasoning model leaks its thinking into content. */
+    leakedReasoning: (records) =>
+        `<think>The first one is a promise, so major. The second is just the terminal.</think>\n${JSON.stringify({ records })}`,
+
+    /** The template opened the think block in the prompt, so only its close arrives. */
+    orphanThinkClose: (records) =>
+        `Summary 2 is scene-setting, so description rather than filler.\n</think>\n\n${JSON.stringify({ records })}`,
+
+    /** Ran out of tokens while still thinking. */
+    unterminatedReasoning: () => '<think>Fifteen summaries. The first is a departure, so cast, but the second',
+
+    /** Hit max_tokens mid-array, which is the likeliest failure on a full batch. */
+    truncated: (records) => {
+        const json = JSON.stringify({ records }, null, 2);
+        return json.slice(0, Math.floor(json.length * 0.6));
+    },
+
+    /** Content-policy refusal in place of output. */
+    refusal: () => 'I’m sorry, but I can’t index this content.',
+
+    /** Describes the summaries in prose instead of writing the records. */
+    prose: () => 'The first summary is the important one: Aster admits she knew the brother. The others are scene-setting.',
+
+    /** A bare array, the wrapper forgotten. */
+    bareArray: (records) => JSON.stringify(records),
+
+    /** The wrapper under a different name. */
+    wrongWrapper: (records) => JSON.stringify({ index: records }),
+
+    /** Says "nothing to index" the way the canon pass says "nothing to promote". */
+    nullRecords: () => '{"records": null}',
+
+    /** Answers about the first summary twice, differently, and never about the second. */
+    duplicateIndex: (records) => JSON.stringify({
+        records: [records[0], { ...records[1], n: records[0].n }],
+    }),
+
+    /** Numbers past the batch it was given, having counted the example's summaries too. */
+    outOfBatch: (records) => JSON.stringify({
+        records: records.map((record, i) => ({ ...record, n: records.length + i + 1 })),
+    }),
+
+    /** Records in a different order than they were asked about. */
+    shuffled: (records) => JSON.stringify({ records: [...records].reverse() }),
+
+    /** Drops `n` entirely and relies on the array's order. */
+    noIndex: (records) => JSON.stringify({ records: records.map(({ n: _n, ...rest }) => rest) }),
+
+    /** Answers about fewer summaries than it was given, the rest silently skipped. */
+    short: (records) => JSON.stringify({ records: records.slice(0, 1) }),
+
+    /** A kind of its own invention, beside the four it was given. */
+    unknownKind: (records) => JSON.stringify({
+        records: [{ ...records[0], kind: 'dialogue' }, ...records.slice(1)],
+    }),
+
+    /** The kind shouted, which is the same kind with different bytes. */
+    shoutedKind: (records) => JSON.stringify({
+        records: records.map((record) => ({ ...record, kind: record.kind.toUpperCase() })),
+    }),
+
+    /** Writes `null` into the slots it had nothing for, rather than leaving them empty. */
+    nullSlots: (records) => JSON.stringify({
+        records: records.map((record) => ({ ...record, changed: null, because: null })),
+    }),
+
+    /** Leaves the empty slots out altogether, which is the same statement. */
+    missingSlots: (records) => JSON.stringify({
+        records: records.map(({ changed: _c, because: _b, ...rest }) => rest),
+    }),
+
+    /** Writes the summary back into `what` instead of a clause. */
+    overlong: (records) => JSON.stringify({
+        records: [{
+            ...records[0],
+            what: 'Aster went quiet for a while and then admitted that she had known Wren\'s brother, that he had crewed the winter run with her the year before the flood took him, and that he had been better at it than she ever was.',
+        }, ...records.slice(1)],
+    }),
+
+    /** Tags every name in the summary, two past the cap. */
+    manyNames: (records) => JSON.stringify({
+        records: [{ ...records[0], who: ['Wren', 'Aster', 'the harbourmaster', 'Wren\'s brother', 'the ferry', 'the feast day'] }],
+    }),
+
+    /** `who` as a comma-separated string rather than a list. */
+    whoAsString: (records) => JSON.stringify({
+        records: [{ ...records[0], who: records[0].who.join(', ') }],
+    }),
+
+    /** Judges the summaries despite being told not to, and drops the ones it dismissed. */
+    judged: (records) => JSON.stringify({
+        records: records.filter((record) => record.kind === 'major' || record.kind === 'cast'),
+    }),
+
+    /** Puts the mood in `changed`, which is the field D-0043 keeps out of the memory. */
+    mood: (records) => JSON.stringify({
+        records: [{ ...records[0], changed: 'Wren is no longer sure she can trust Aster' }, ...records.slice(1)],
+    }),
+
+    /** Empty, which a stalled endpoint returns with a 200. */
+    empty: () => '',
+};
+
 /** Title-case the schema's keys, leaving character names and values alone. */
 function capitalise(patch) {
     const title = (key) => key[0].toUpperCase() + key.slice(1);

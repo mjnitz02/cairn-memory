@@ -294,7 +294,11 @@ one summary call, at a twenty-seventh of the frequency.
 - **`store/chat-store.js`:** `readIndex(message)` / `writeIndex(chat, j, record)` beside the
   scene, state and canon pairs, through the same `writeKey` envelope. `STORE_VERSION` 4 with a
   migration from 3, and a v3 fixture kept (CLAUDE.md §8.32).
-- **`memory/index-record.js` (new):** the record shape, its caps and its normaliser. Pure.
+- **`memory/index-record.js` (new):** the record shape, its caps, its normaliser, and the
+  rendering the deriver reads — fixed columns under one header, because labels on 159 lines cost
+  more than the slots they name. Pure.
+- **`prompt/rebuild.js` (new):** D-0067's one definition of the rebuild turn, so nothing
+  composes the condition itself. `rollback` is deliberately not one (D-0074).
 - **`memory/index-strategy.js` (new):** the batched classify-and-slot prompt and its parser,
   the same boundary `scene-strategy.js`, `state-strategy.js` and `canon-strategy.js` sit on.
   Reuses `model-reply.js`.
@@ -362,6 +366,8 @@ one summary call, at a twenty-seventh of the frequency.
 | Canon never recouples the see-saw | Property test over random caps and step sizes: `sceneCap ≥ 2 × stepTokens`, or canon is 0 |
 | Branch and swipe roll back | Truncating past a record's message removes it, with no rollback code called |
 | Store v4 | v1, v2 and v3 fixtures read; v4 round-trips; a future store is refused, not overwritten |
+| One definition of the rebuild turn | `isRebuild` is the only place the condition is composed; no other shipped module reads the eviction count and the step reason together |
+| A record cannot outlive its summary | A resummarise, an edit and a deleted scene each make `readIndex` stale (D-0074) |
 | The parser against mess (§3.12) | Fenced JSON, preamble, truncation mid-array, refusal, a slot over its cap, an unknown kind, `null` slots, a duplicate index |
 | Degrade | A failed index or pick writes nothing, the block is unchanged, one toast per streak (CLAUDE.md §4.17) |
 | Gates | No index or pick while the handover gate is shut, with no memory profile, in a group chat, or with the setting off |

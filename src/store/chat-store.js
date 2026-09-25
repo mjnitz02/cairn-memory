@@ -1,13 +1,14 @@
 /**
  * `message.extra.cairn` — read, validate, write (DESIGN.md §9, docs/decisions.md D-0037).
  *
- * Three tiers share the store. A scene lives on the message it summarises, a
- * state on the newest message it read (docs/decisions.md D-0045) and a canon batch on
- * the newest summary its pass read (docs/p4-plan.md decision 1), so deletions, branches
- * and swipes carry all three with no bookkeeping. What a scene and a state do not
- * survive is an edit, and that is caught on read: each counts only while the text it
- * was written from still hashes the same. A canon fact is not hashed — it says
- * something *happened*, and editing the message afterwards does not unmake it.
+ * Four tiers share the store. A scene lives on the message it summarises, an index
+ * record beside it (docs/decisions.md D-0070), a state on the newest message it read
+ * (D-0045) and a canon batch on the newest summary its pass read (docs/p4-plan.md
+ * decision 1), so deletions, branches and swipes carry all four with no bookkeeping.
+ * What a scene, an index record and a state do not survive is an edit, and that is
+ * caught on read: each counts only while the text it was written from still hashes the
+ * same. A canon fact is not hashed — it says something *happened*, and editing the
+ * message afterwards does not unmake it.
  *
  * Pure: messages in, a status out. The writers mutate the message they are given
  * and nothing else — never a copy (DESIGN.md §9).
@@ -219,6 +220,80 @@ function wellFormedFact(fact) {
         && typeof fact.text === 'string' && fact.text !== ''
         && Array.isArray(fact.entities)
         && fact.entities.every((entity) => typeof entity === 'string' && entity !== '');
+}
+
+/**
+ * The index record stored on `chat[index]`.
+ *
+ * **Hashed against the summary, not against `mes`.** The record is a reading of the
+ * summary, so the summary is what it depends on: an edited message invalidates the
+ * scene, which invalidates this, and a resummarise invalidates it too — which a hash of
+ * `mes` would have missed. A record therefore never outlives the summary it describes,
+ * and `status` is `stale` whenever that summary is gone, stale or was never written.
+ *
+ * @param {object} message
+ * @returns {{status: 'none'|'invalid'|'future'|'stale'|'valid', index: object|null}}
+ *          `index` is set only when `valid`.
+ */
+export function readIndex(message) {
+    const { status, store } = migrateStore(message?.extra?.[SLUG]);
+    if (status !== 'ok') return { status, index: null };
+
+    const record = store.index;
+    if (record === undefined) return { status: 'none', index: null };
+    const wellFormed = isObject(record)
+        && wellFormedRecord(record.record)
+        && typeof record.hash === 'string'
+        && typeof record.prompt === 'string'
+        && typeof record.at === 'string';
+    if (!wellFormed) return { status: 'invalid', index: null };
+
+    const scene = readScene(message);
+    if (scene.status !== 'valid') return { status: 'stale', index: null };
+    if (record.hash !== hashString(scene.scene.text)) return { status: 'stale', index: null };
+    return { status: 'valid', index: record };
+}
+
+/**
+ * Store an index record beside the summary it was derived from.
+ *
+ * Refuses a message with no valid summary: there is nothing to have indexed, and a
+ * record hashed against a summary that is not there could never read back as valid.
+ * The caller enforces the record's caps before calling (memory/index-record.js); this
+ * only refuses what would corrupt the store.
+ *
+ * @param {Array<object>} chat The live chat.
+ * @param {number} index The message the record belongs to.
+ * @param {{record: object, prompt: string, at?: string}} entry A record `validRecord` accepts.
+ * @returns {boolean} Whether anything was written.
+ */
+export function writeIndex(chat, index, { record, prompt, at = new Date().toISOString() }) {
+    if (!wellFormedRecord(record) || typeof prompt !== 'string') return false;
+    const message = chat?.[index];
+    const scene = readScene(message);
+    if (scene.status !== 'valid') return false;
+
+    return writeKey(message, 'index', {
+        record: { ...record, who: [...record.who] },
+        hash: hashString(scene.scene.text),
+        prompt,
+        at,
+    });
+}
+
+/**
+ * Structure only, as `wellFormedFact` is: the caps and the four legal kinds are the
+ * strategy's (memory/index-record.js `validRecord`), because enforcing them here would
+ * make store/ depend on memory/, and memory/canon.js already depends on store/.
+ */
+function wellFormedRecord(record) {
+    return isObject(record)
+        && typeof record.kind === 'string' && record.kind !== ''
+        && Array.isArray(record.who)
+        && record.who.every((name) => typeof name === 'string' && name !== '')
+        && typeof record.what === 'string' && record.what !== ''
+        && typeof record.changed === 'string'
+        && typeof record.because === 'string';
 }
 
 /** Set one tier's key, keeping the others' and upgrading the envelope to the current version. */

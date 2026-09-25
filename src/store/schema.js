@@ -12,7 +12,7 @@ import { error } from '../util/log.js';
 export const SETTINGS_VERSION = 1;
 
 /** Bump on any change to what we write into message.extra / chatMetadata. */
-export const STORE_VERSION = 3;
+export const STORE_VERSION = 4;
 
 /**
  * `extra.cairn` migrations, keyed by the version being left. They run on read and
@@ -26,6 +26,10 @@ export const STORE_MIGRATIONS = {
     1: (store) => ({ ...store, v: 2 }),
     // v3 adds `canon` (docs/p4-plan.md decision 1). Same shape: a v2 store has none.
     2: (store) => ({ ...store, v: 3 }),
+    // v4 adds `index` (docs/decisions.md D-0070). A v3 store has none, and a record is
+    // re-derived from the summary it sits beside, so there is nothing to backfill here:
+    // `pendingIndex` finds a summary without one and the queue writes it.
+    3: (store) => ({ ...store, v: 4 }),
 };
 
 /**

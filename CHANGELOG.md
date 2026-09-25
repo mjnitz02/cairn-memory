@@ -22,6 +22,11 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ### Changed
 
+- **Your stored memory moves to version 4.** Older chats are read and carried
+  forward exactly as they were — nothing is re-summarised and nothing is lost —
+  and a chat written by a newer Cairn than yours is left alone rather than
+  overwritten. The new version makes room for one compact record per summary, which
+  nothing writes yet.
 - **Example dialogue is dropped once summaries stand in for messages.** A card's
   example messages say how a character *would* speak in a situation that never
   happened, and they do not move as the character develops — thirty turns of
