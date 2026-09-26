@@ -1,99 +1,117 @@
 /**
- * The *compaction* cadence — when a pass is due, what it reads, and what its reply
- * becomes (DESIGN.md §8, docs/p4-plan.md decision 6).
+ * The derive cadence — when a canon pick is due, what it reads, and what its reply
+ * becomes; and which summaries are still waiting for an index record
+ * (docs/decisions.md D-0071, D-0070).
  *
- * A pass fires one step **before** the rebuild that drops its summaries, so it has a
- * whole see-saw step of wall-clock to finish and the block gets canon and the rebuild
- * in the same head-change (assembler, decision 3). Its input is exactly what that
- * rebuild will drop, simulated with the budgeter's own loop rather than guessed at.
+ * **The eviction trigger is gone.** Until P5 a pass fired one step before the rebuild
+ * that would drop its summaries, read exactly that evict-set, and promoted out of it.
+ * Every part of that was wrong for the job: eviction from the *prompt* says nothing
+ * about availability on *disk* (`readScenes` always returned the whole chat), and a
+ * window sampled by recency is almost entirely description and filler, so it cannot
+ * rank what matters (D-0062, D-0064). The pressure test, the evict-set simulation and
+ * the once-per-cycle `covers` test all went with it.
  *
- * Nothing is stored about what has run. Pressure is read from the block and the
- * once-per-cycle test from the batches already in the chat, so branches, swipes and
- * reloads need no bookkeeping — the same reason the canon set is a fold
- * (memory/canon.js, docs/decisions.md D-0045).
+ * What replaces them is the shape `pendingScenes` already uses for summaries: **work is
+ * due when something is missing.** A summary with no record is indexing work; an index
+ * with records the current pick never read is derivation work. Nothing is stored about
+ * what has run, so a branch, a swipe, an edit or a resummarise needs no bookkeeping.
  *
  * Pure: plain data in, plain data out. No ST, no DOM, no network.
  */
 import { newFacts } from '../memory/canon.js';
 
-/** Fewer than this and the call is not worth making (docs/p4-plan.md decision 6). */
-export const MIN_EVICT_SET = 3;
+/**
+ * Fewer records than this and there is no story to rank. Three is the same floor the
+ * old evict-set used, for the same reason: the call is not worth making, and a spine
+ * picked out of two scenes is those two scenes.
+ */
+export const MIN_INDEX_RECORDS = 3;
 
 /**
- * Whether a compaction pass is due, and what it would read.
+ * Whether a canon pick is due, and what it would read.
  *
- * **Pressure** is one step ahead of the overflow: `sceneTokens + stepTokens > sceneCap`
- * means the step after this one cannot fit, so the rebuild is the next step.
+ * Four things make one due, and each is a statement about the *stored* pick rather
+ * than about pressure:
  *
- * **The evict-set** is the budgeter's own drop-to-floor, run one step early. At the
- * rebuild the block will be a step heavier, so the loop here targets
- * `floor - stepTokens`: dropping to that now is dropping to the floor then, which is
- * what makes the two sets the same summaries rather than merely similar ones.
+ *   `no-canon`     nothing has ever been picked in this chat.
+ *   `new-records`  the index has grown past what the last pick read.
+ *   `lost-facts`   a fact's records are gone — edited, resummarised or branched away
+ *                  (memory/canon.js) — so the pick in force is missing a slot.
+ *   `slots-changed` the user moved the slot count, so the question itself changed.
  *
- * **Once per cycle, without a flag:** a pass is due only when the evict-set's newest
- * summary is past the newest one any batch in the chat has already read. Pressure
- * holding for ten turns therefore yields one pass, not ten.
+ * All four terminate. A pick that comes back short is *answered*, not under-filled:
+ * the batch records how many slots were asked for, so a story with four durable facts
+ * and ten slots is not re-derived every turn forever.
  *
- * @param {{scenes: Array<{index: number}>, coveredThrough: number|null,
- *          sceneCap: number, floor: number, stepTokens: number, room: number,
- *          tokensOf: (scenes: Array<object>) => number}} input
- *        `scenes` is the block as it stands, oldest first. `room` is how many facts
- *        canon has space for (memory/canon.js `canonRoom`).
- * @returns {{due: boolean, reason: string, evicting: Array<object>,
- *            covers: number[]|null, room: number}}
- *          `reason` is a stable string the log and the inspector record.
+ * @param {{records: Array<{index: number}>, canon?: {coveredThrough: number|null,
+ *          slots: number|null, dropped: number}, slots: number}} input
+ *        `records` is every valid index record in the chat, oldest first;
+ *        `canon` is the fold in force (`canonFor`).
+ * @returns {{due: boolean, reason: string, records: Array<object>, covers: number[]|null,
+ *            slots: number}} `reason` is a stable string the log and the inspector record.
  */
-export function pendingCompaction({
-    scenes = [], coveredThrough = null, sceneCap = 0, floor = 0, stepTokens = 0, room = 0, tokensOf,
-} = {}) {
-    const refuse = (reason) => ({ due: false, reason, evicting: [], covers: null, room });
+export function pendingPick({ records = [], canon = null, slots = 0 } = {}) {
+    const refuse = (reason) => ({ due: false, reason, records: [], covers: null, slots });
 
-    // No room, no call: the block keeps the facts it has, and making room is P5's.
-    if (!(room >= 1)) return refuse('canon-full');
-    if (scenes.length < MIN_EVICT_SET) return refuse('too-few');
-    if (!(sceneCap > 0)) return refuse('no-pressure');
+    if (!(slots >= 1)) return refuse('no-slots');
+    if (records.length < MIN_INDEX_RECORDS) return refuse('too-few');
 
-    const tokens = tokensOf(scenes);
-    if (tokens + stepTokens <= sceneCap) return refuse('no-pressure');
+    const covers = [records[0].index, records[records.length - 1].index];
+    const reason = pickReason(canon, covers[1], slots);
+    if (!reason) return refuse('covered');
 
-    // pipeline/budgeter.js `fit`, one step early. Never to nothing, for its reason.
-    const target = floor - stepTokens;
-    let kept = scenes;
-    let size = tokens;
-    while (kept.length > 1 && size > target) {
-        kept = kept.slice(1);
-        size = tokensOf(kept);
-    }
+    return { due: true, reason, records, covers, slots };
+}
 
-    const evicting = scenes.slice(0, scenes.length - kept.length);
-    if (evicting.length < MIN_EVICT_SET) return refuse('too-few');
-
-    const covers = [evicting[0].index, evicting[evicting.length - 1].index];
-    if (coveredThrough !== null && covers[1] <= coveredThrough) return refuse('already-covered');
-
-    return { due: true, reason: 'ready', evicting, covers, room };
+/** Why a pick is due, or null when the one in force still answers. */
+function pickReason(canon, newest, slots) {
+    if (!canon || canon.coveredThrough === null) return 'no-canon';
+    if (newest > canon.coveredThrough) return 'new-records';
+    if (canon.dropped > 0) return 'lost-facts';
+    if (canon.slots !== null && canon.slots !== slots) return 'slots-changed';
+    return null;
 }
 
 /**
  * What a reply becomes: the batch to store, and the counts to report.
  *
  * The counts are of the *applied* change, not the model's claimed output
- * (CLAUDE.md §4.18) — a repeat is refused here and counted as refused, and the caps
- * the parser enforced are already counted in `dropped`.
+ * (CLAUDE.md §4.18) — a repeat inside the pick is refused here and counted as refused,
+ * and the caps the parser enforced are already counted in `dropped`.
  *
- * @param {{promoted: Array<object>, dropped?: Array<object>, canon?: Array<{text: string}>,
- *          covers: number[], prompt: string, at: string}} input
- * @returns {{batch: {facts: Array<object>, covers: number[], prompt: string, at: string},
- *            promoted: number, duplicates: number, dropped: number}}
+ * **The rows are mapped to chat indexes here**, because the caller is the only thing
+ * that knows which records it sent and in what order. A fact whose every row falls
+ * outside that list loses its grounding, so it is dropped rather than stored uncited:
+ * an uncitable fact is a permanent one, which is what a pick exists not to be.
+ *
+ * @param {{picked: Array<object>, dropped?: Array<object>, records: Array<{index: number}>,
+ *          covers: number[], slots: number, prompt: string, at: string}} input
+ * @returns {{batch: {facts: Array<object>, covers: number[], slots: number,
+ *            prompt: string, at: string}, picked: number, duplicates: number,
+ *            dropped: number, uncited: number}}
  */
-export function applyPass({ promoted, dropped = [], canon = [], covers, prompt, at }) {
-    const { facts, duplicates } = newFacts(promoted, canon);
+export function applyPick({ picked, dropped = [], records = [], covers, slots, prompt, at }) {
+    const { facts, duplicates } = newFacts(picked);
+    const kept = [];
+    let uncited = 0;
+
+    for (const fact of facts) {
+        const from = fact.from
+            .map((row) => records[row - 1]?.index)
+            .filter((index) => Number.isInteger(index));
+        if (!from.length) {
+            uncited++;
+            continue;
+        }
+        kept.push({ ...fact, from });
+    }
 
     return {
-        batch: { facts, covers: [...covers], prompt, at },
-        promoted: facts.length,
+        batch: { facts: kept, covers: [...covers], slots, prompt, at },
+        picked: kept.length,
         duplicates,
         dropped: dropped.length,
+        uncited,
     };
 }
 
@@ -132,4 +150,26 @@ export function pendingIndex(chat, { readScene, readIndex }, { limit = Infinity 
     });
 
     return waiting;
+}
+
+/**
+ * Every valid index record in the chat, oldest first, with the message it sits on.
+ *
+ * This is the pick's whole input, and it is read from the *chat* rather than from the
+ * block — which is the single sentence D-0062's three gaps reduce to. A chat whose
+ * defining scenes were evicted from the prompt long ago still offers their records here.
+ *
+ * @param {Array<object>} chat ST's live message array. Read only.
+ * @param {{readIndex: (message: object) => {status: string, index: object|null}}} readers
+ * @returns {Array<{index: number, record: object}>} Oldest first.
+ */
+export function indexRecords(chat, { readIndex }) {
+    const records = [];
+
+    (chat ?? []).forEach((message, index) => {
+        const found = readIndex(message);
+        if (found.status === 'valid') records.push({ index, record: found.index.record });
+    });
+
+    return records;
 }

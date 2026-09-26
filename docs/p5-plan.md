@@ -400,7 +400,12 @@ moves — the tier takes its room from `sceneCap`, after `canonCap`, so canon's 
   the fold over *picked* records. The dedup, the normaliser and the per-message storage stay.
 - **`memory/canon-strategy.js`:** the prompt becomes a forced-budget pick over the index, not an
   open-ended "what became permanently true" over an evict-set. `MAX_FACTS_PER_PASS` and the
-  per-pass `room` plumbing go; the slot count replaces them.
+  per-pass `room` plumbing go; the slot count replaces them. Each fact cites the rows it came
+  from, which is what makes canon derivable (D-0079).
+- **`scripts/pick-gate.mjs` (new):** stage 3's gate, offline — renders the shipped pick prompt
+  over a corpus index and scores a reply with the shipped parser. Local only, like
+  `make verify-st`; the yardstick stays outside the repo and the verdict is a judgment read
+  against it (D-0080).
 - **`pipeline/compactor.js`:** `pendingCompaction`'s pressure test, evict-set simulation and
   once-per-cycle test are deleted. What remains is `pendingIndex` (which summaries lack a
   record) and `applyPick`.
@@ -557,9 +562,25 @@ the only stage that ships something the user can play on before the phase's clai
 summaries, into `~/workspaces/cairn-corpus`. Four-way labels, slot-filled records, a genre read.
 It produces the regression fixture, the few-shot examples and the calibration target at once.
 
-**0b.** While that runs, the three zero-generation checks D-0072 leaves open, against the same
-fixture: does the judgment flip at two different lags; are derived boundaries more stable than
-importance verdicts; does the `kind` field help the ranker at all versus slots alone.
+**Re-run 2026-09-26 in the v4 shape** (D-0081), because stage 2.5 added `background` and the prose
+`line` under it. `background` closes 0c's one real loss — Namtira goes from 0 to 12 mentions across
+the records — and a record now costs 51.0 tokens with `r` at 4.13 rather than 38.2 and 5.36.
+`COMPACT_RATIO` stays at 5.36 until 0d so the constant moves once, on the model that will run it;
+the error is in the safe direction.
+
+**0b. RUN 2026-09-26 (D-0082).** The three zero-generation checks D-0072 leaves open, against the
+same fixture. **The `kind` earns nothing** — 47% recall against the slots' 84%, no precision added,
+and gating on it leaves spine line 1 with none of its rows. **The verdict flips at ~27% of cited
+rows across a 40-row lag, and every flip is a supersession** an asking price superseded by the
+transaction — which re-picking absorbs for free, so accumulated strength stays unbuilt with a
+measurement behind it now rather than an absence. **Boundaries are more stable than importance
+(100% against 73%), and it is still not a reopen:** D-0072 wanted both conjuncts and the Tier 1
+half needs state records the corpus does not hold, and scenes were proposed as the selection unit,
+which stage 3 has since shown working without them.
+
+The finding worth carrying: the three rows holding the story's register have **neither `changed`
+nor `background`** filled, so the fact the genre read depends on has no structural anchor in the
+index at all.
 
 **0c.** The compact tier's four questions, on the same 85 summaries and in the same pass
 (D-0075). Free, because the pass is already reading every summary:
@@ -576,7 +597,12 @@ importance verdicts; does the `kind` field help the ranker at all versus slots a
 - **Does the chain read?** Forty-five full summaries behind ~42 compact ones, concatenated in
   order: is the join legible, or does the block read as two documents stapled together?
 
-**0d — the model that will actually run it. OPEN.** 0c's records were written by a top-tier
+**0d — the model that will actually run it. OPEN, and now the phase's remaining risk** (D-0080).
+**The harness is ready and needs nothing built** (D-0081): `calibrate-tier.mjs batches` renders the
+six index prompts, `assemble` reads the replies back through the shipped parser into a records file
+beside the reference's, and `measure` and `pick-gate.mjs` both take a records file by name. What it
+needs is an endpoint on that class of model, and `scripts/run-tier.mjs` drives one end to end
+(`docs/development.md`). 0c's records were written by a top-tier
 model (Anthropic-made), and that is the *reference*, not the target: in play the index and the
 line come from whatever the memory profile points at, which is the GLM / Kimi / DeepSeek class.
 Re-run the same fixture with one of those, write its `records.json` beside the first, re-run
@@ -659,7 +685,7 @@ and larger than it was; `memory_demoted` is non-zero only where `memory_rebuilt`
 block's head and only there — **a demotion must not add a second break**, and if it does, decision
 10 is wrong about where demotion is free.
 
-### Stage 3 — Selection. The phase's actual claim.
+### Stage 3 — Selection. BUILT 2026-09-25, and the gate passed (D-0079, D-0080).
 
 Items 7–9: `compactor.js` loses the pressure test, the evict-set simulation and the
 once-per-cycle test, and gains `pendingIndex` and `applyPick`; `canon.js` and
@@ -667,19 +693,45 @@ once-per-cycle test, and gains `pendingIndex` and `applyPick`; `canon.js` and
 and `assembler.js` carry the index job kind, the re-derivation on rebuild turns and the new log
 fields.
 
+**Built as planned, with five things settled in the doing** (D-0079): a fact stores the rows it
+was picked from, so it dies when they do and canon is derived rather than remembered; the fold
+reads the newest batch alone, which forced the assembler to fold twice so that D-0067's
+rebuild-only admission survives a replacement; the batch stores the slot count it was asked for,
+so a short answer is not mistaken for an unanswered question; an empty pick is a rejection where
+P4's empty promotion was an answer; and `canonSlots` is the one new setting, a count and not a
+budget. `canonRoom`, `MAX_FACTS_PER_PASS` and the per-pass `room` plumbing are gone.
+
 **This is the gate, and it is a fixture, not a run** (D-0061). Does the pick over the real index
 contain the spine, measured against the ~90-word yardstick and not against the labelling pass's
 own output? Then the genre verifier: its read of the canon against its read of real text.
 **If the pick over a correct index still misses the spine, the harness is wrong and P5 stops
 here** rather than proceeding on faith (CLAUDE.md §7.29).
 
-### Stage 4 — Surface.
+**Check — RUN 2026-09-25: 5 of 5 spine lines present, so the phase continues** (D-0080).
+`scripts/pick-gate.mjs` renders the shipped prompt over the corpus index and scores a reply with
+the shipped parser; the yardstick was frozen into the corpus before the index it reads was
+written. Two findings. **The first spine line was reachable only through `background` clauses on
+rows the labeller called `description`** — so the four-way kind gating the pick would have thrown
+the story's premise away, and D-0070's "sort key, never a gate" now has a fixture behind it. And
+**the genre read agrees with the real text on one fact of ten**: remove the line about what was
+done to Esin in captivity and the rest reads as a rescue adventure, which is D-0071 decision 9's
+reopen condition made concrete. What the gate does not establish is 0d's question — the records
+and the pick came from the same top-tier model, and the reference is not the target.
+
+### Stage 4 — Surface. BUILT 2026-09-26 (D-0083).
 
 Item 10: `inspector.js`, `canon-section.js`, `settings.html` — the index tally and its four-way
-split, the examples latch in words, the lore cap in the reserves breakdown, the canon slots.
+split, the examples latch in words, the lore cap in the reserves breakdown, the canon slots. The
+compact tier's fidelity row and the index queue section came with it.
 
 **Check:** the inspector says enough that stage 5's run can be read from the disk log alone,
 without a second pair of eyes on the chat while it plays.
+
+**Check — MET, and it found two holes** (D-0083). `memory_examples_stripped` and
+`memory_examples_latched` were never logged, so **stage 1's check could not have been run from the
+log at all**; and stage 3's rename left five `compaction_*` fields reading a key that no longer
+existed. Both are fixed, and the field list is now a test rather than a list in this document —
+a fixture supplying every key the queues report, asserting none of them logs null.
 
 ### Stage 5 — The run, then the close.
 

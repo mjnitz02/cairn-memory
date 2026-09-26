@@ -9,7 +9,31 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ## [Unreleased]
 
+### Changed
+
+- **Canon is now chosen from the whole story, not from what is about to be
+  forgotten.** Cairn used to ask, just before old summaries were dropped, whether
+  any of them said something permanent — which meant it only ever saw the handful
+  of scenes on their way out, and most of those are scenery. It now reads the
+  compact record of *every* summary in the chat at once and asks for exactly N
+  facts: the few the rest of the story cannot be understood without. Choosing a
+  fixed number is what stops a smaller model calling everything important.
+- **A canon fact is no longer permanent.** Each fact records which summaries it
+  came from, so re-summarising a message, editing it, or branching away removes the
+  facts that rested on it, and the next pick fills the slots again. Facts you have
+  already accumulated keep working and simply cannot be removed that way.
+- **New setting: Canon lines** (default 10). How many facts to keep at the head of
+  the block. The spine of a story does not grow as the story does, so a long chat
+  wants about the same number as a short one.
+
 ### Added
+
+- **The panel now shows the index and the two fidelities.** How many summaries have a
+  compact record and what kinds they were read as; how much of the block is held in
+  full against shortened, and how many were shortened this turn; how many canon slots
+  the pick filled; and whether example dialogue has been dropped yet. Anything that has
+  not happened yet shows nothing at all, so a chat that has never indexed looks exactly
+  as it did.
 
 - **The memory block now holds two fidelities, so old scenes fade instead of
   vanishing.** A fixed part of the block is kept for one-sentence versions of older

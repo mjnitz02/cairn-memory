@@ -8,6 +8,254 @@ what we believed and why it changed.
 
 ---
 
+## D-0083 — Stage 4 as built: the log's field list is a test, and the inspector's renderers are pure
+**2026-09-26.** P5 stage 4, the surface. Small in itself; two things found in the doing are worth
+the entry.
+
+**1. Two fields the run's own checks need were never in the log.** Stage 1's check is
+"`examples_stripped` goes false→true exactly once **and** `budget_card` falls on the same turn —
+both, or the reclaim did not happen", and `examples_stripped` was reported by the assembler,
+rendered nowhere and logged nowhere. Stage 3's rename of the canon tally from `promoted` to
+`picked` left five `compaction_*` fields reading a key that no longer existed, so they would have
+logged `null` through a whole run. Neither was visible because **no disk-log test asserted on a
+single canon or examples field.**
+
+So the field list is now a test (CLAUDE.md §9.35): a fixture supplying every key the two queues
+actually report, and an assertion that no `compaction_*` or `index_*` field comes out null. That is
+the check that would have caught the rename on the turn it was made, and it is cheaper than the
+run it would otherwise have spoiled. **The general lesson: a log field is not covered by the test
+that covers the thing it reports.**
+
+**2. The inspector's renderers are now exported, and it has a test for the first time.** It mixes
+a DOM mount with pure string-building, and the string-building carries the invariants in words —
+"6 shortened this turn *on a turn that was not rebuilding*" is how a demotion leak reads in play.
+`renderSnapshot` and `renderSummaries` are exported for the same reason `state-section.js` and
+`canon-section.js` were always separate: the pure part is the part worth checking, and the test
+environment has no DOM by design (vitest.config.js, CLAUDE.md §1.3).
+
+**What it shows.** A fidelity row (full against shortened, the tail's size, demotions with a
+warning when the turn was not a rebuild, and summaries dropped for want of a line); an index row
+(records against summaries, and the four-way split); canon's slots filled and facts that lost the
+summary behind them; the examples latch in words, only once it has flipped; the lore cap inside the
+reserves breakdown; and an index queue section between the summaries it reads and the pick it
+feeds. Everything that is zero before it does anything renders nothing at all, so a chat that has
+never indexed sees the panel it always saw.
+
+**Reopens if:** the run finds something it needed that neither the panel nor the log carried, which
+is the same failure this entry is about and the reason the field list became a test.
+
+## D-0082 — Stage 0b, run: the kind earns nothing, the verdict flips only by supersession, and scenes stay closed
+**2026-09-26.** The three zero-generation checks D-0072 left open, against the re-run labelling
+fixture. Offline, no SillyTavern generations. Full workings in
+`~/workspaces/cairn-corpus/p5-stage0/0b-findings.md`; none of it is in this repo (CLAUDE.md §3.13).
+
+**The confound, named once:** the index, both picks and both segmentations came from one model in
+one session, so each number is partly that model agreeing with itself. Check (a) *compares* two
+quantities produced under the same confound, so the comparison survives it; (b) and (c) rest on
+single numbers and are weaker for it.
+
+**(c) The `kind` does not help the ranker, and gating on it would lose the premise.** Measured as
+a predictor of the 19 rows the stage-3 pick cited: `kind` is `major`/`cast` gives 47% recall at 35%
+precision; `changed` or `background` filled gives **84% recall at 36% precision**; combining them
+moves neither number, because everything the kind flags the slots already flag. Filtering to
+`major`/`cast` leaves spine line 1 with **0 of its 3 rows**. So D-0070's "sort key, never a gate" is
+now measured rather than argued, and the kind's remaining value is as a cheap prior for a model
+that has not read the slots yet — not as a signal the ranker needs.
+
+**The finding underneath it, which matters more than the check.** Rows 17, 19 and 39 — the
+captivity rows, the only ones carrying the story's register (D-0080) — have **neither `changed` nor
+`background` filled**. The one fact the genre read depends on is the one fact with no structural
+anchor in the index; it is held up by `what` alone. That upgrades D-0080's concern from "a model
+might drop it" to "the index gives it nothing to hold onto", and it is the first place to look if
+0d's pick launders the story.
+
+**(b) The verdict flips at ~27% of cited rows across a 40-row lag — and every flip is a
+supersession.** The same index truncated at row 45 at matched selectivity cites 10 rows in 1–45;
+the full pick cites 9; 8 are shared. Dropped later: the 6,500-gold asking price (row 42) and a
+restatement of her captivity (row 27). Added later: row 19, a wording-level substitution inside the
+same fact. Row 42 is the clean case — at lag 45 the price is the largest thing in the story, and by
+lag 85 the army is destroyed and the contract has changed hands, so the number is one nobody needs.
+
+**So D-0072's first proposed mechanism stays unbuilt, now with a measurement rather than an
+absence.** That entry left accumulated strength alone because "nothing has shown the verdict
+actually flips". It does flip — but wins-minus-losses would have to *unlearn* row 42, and a ratchet
+is exactly the wrong shape for a supersession. The forced-budget re-pick already absorbs it for
+free: the later pick does not cite the superseded row, and the newest batch replaces the last
+(D-0079). **A flip that re-picking handles is not evidence for a scoring mechanism; it is evidence
+against one.**
+
+**(a) Boundaries are more stable than importance — and it is not a reopen.** Segmented at both
+lags, the boundaries inside rows 1–45 agree **6/6 (100%)** against importance's 73%, under the same
+confound. But D-0072 asks for *both* conjuncts, and the second — do boundaries line up with Tier 1
+state changes more often than chance — is unanswerable from this fixture, which holds summaries and
+their index and no state records.
+
+**The bar has also moved, which is the part to carry forward.** Scenes were proposed as the
+*selection unit*, and stage 3's gate has since reached 5 of 5 spine lines without them (D-0080). A
+more stable boundary is only worth the recursive-rollup hazard `DESIGN.md` §1–2 was founded to
+avoid if selection is failing, and it is not. **What would reopen scenes now is a capacity problem,
+and capacity is not the binding constraint** (D-0064) — so D-0072's set-aside stands on a firmer
+footing than when it was written, not a shakier one.
+
+**Reopens if:** the Tier 1 alignment is ever measured and comes back strong *and* selection starts
+failing on a chat where the index is correct. Both, not either.
+
+## D-0081 — The labelling pass, re-run in the v4 shape: `background` reaches what the record could not, and `r` falls to 4.13
+**2026-09-26.** The stage 0a/0c pass re-run over the same 85 real summaries, because the record's
+shape changed under it: stage 2.5 added the `background` slot and the prose `line` (D-0076, D-0078)
+and the 85 reference records predate both. Run with the shipped prompt through the shipped parser,
+batched 15 as the queue batches it. Written as `records-v4.json` beside the reference, which is
+untouched (CLAUDE.md §3.14).
+
+**1. `background` did exactly what it was added to do.** "Namtira" appears **0 times** in the 85
+reference records and **12 times** in the re-run's, and the promise is carried explicitly in two of
+them. The fact the pick built spine line 1 from is made of three `background` clauses (D-0080). The
+one real loss stage 0c measured is closed.
+
+**2. A record now costs 51.0 tokens, not 38.2 — and that is the slots doing more work.** The
+re-run fills `because` on 70 of 85 records against the reference's sparser hand, and adds
+`background` on 25. The whole 85-record index renders to 4,338 tokens, so 159 would be ~8,100: the
+pick's prompt measured 5,323 tokens over 85 records including the scaffolding. **One call still
+holds**, which was the claim D-0076 re-argued when 20 became 38; it is worth noting the number has
+now moved twice in the same direction and that the one-call claim is what to re-check, not the
+per-record cost.
+
+**3. `r` falls from 5.36 to 4.13, so the derived share would be 19.5% rather than the shipped
+15.7%.** The reference's 23.0-token line was a 21-sample written ad hoc before the slot existed;
+the re-run's 29.8-token line is all 85, written to the shipped prompt's actual instruction. The
+second number is better grounded — but **`COMPACT_RATIO` is deliberately left at 5.36 until 0d**,
+for two reasons. The constant should move once, on the model that will actually run it, not twice.
+And the error is in the safe direction: a *higher* `r` gives the compact tail a *smaller* share, so
+the tier is under-provisioned rather than over, and the full tier's rebuild spacing is never spent
+on lines that do not exist. Horizon at 15.7% is ~82 summaries against ~86 — a few summaries of
+history, not a correctness question.
+
+**4. The pass labelled `major` 24 times against the reference's 34** (hand count: 14). Better, and
+still high. Same prompt, same summaries, different session — which is itself the finding: the
+label is noisy between runs of the *same* model, let alone between tiers, and D-0082 then measured
+that it earns nothing anyway.
+
+**`scripts/calibrate-tier.mjs` grew `batches` and `assemble`** so the next re-run is mechanical
+rather than hand-batched: render the prompts, answer them, assemble through the shipped parser,
+measure. `assemble` refuses to overwrite an existing records file (§3.14). That is the harness 0d
+needs, and 0d needs nothing else built.
+
+**Reopens if:** 0d's `r` lands near the re-run's rather than the reference's, which would settle
+`COMPACT_RATIO` at something closer to 4 and move the share with it.
+
+## D-0080 — Stage 3's gate: the pick contains the spine, and the `background` slot is what made line 1 reachable
+**2026-09-25.** P5 stage 3's check (docs/p5-plan.md, "the phase's actual claim"), run as a
+fixture and not as a run (D-0061). Zero SillyTavern generations; one model call, made offline
+against the prompt this repo ships. Outputs in `~/workspaces/cairn-corpus/p5-stage0`
+(`pick-prompt-v4.md`, `pick-reply.json`, `pick-score-v4.md`, `pick-verdict-v4.md`), none of them
+in this repo (CLAUDE.md §3.13).
+
+**The result: 5 of 5 spine lines present, so P5 continues.** Each yardstick line is carried by
+one or two of the ten picked facts, and the three facts beyond the spine are all things a reader
+given only the five would miss. The pick cost 5,323 prompt tokens over 85 records and rendered to
+288 tokens of canon, against canon's post-reclaim room of ~1,591 — so the block is not the
+constraint and the slot count is.
+
+**The freeze held.** `yardstick.md` was written into the corpus before the index the pick reads
+was written, and it is Matt's own ~90-word telling, not the labelling pass's output
+(docs/p5-plan.md §5: the teacher must not also be the examiner).
+
+**1. Line 1 was reachable only through `background`, and only because the kind is not a gate.**
+D-0076 found "Namtira" ten times in the summaries and zero times in the 85 reference records and
+called it a stage-3 risk. With the `background` slot in the shape, the re-run pass carries it
+twelve times — and the fact the pick built from it cites three rows, **all three labelled
+`description`**. So the index's own label would have thrown the story's premise away if it
+filtered. D-0070's "sort key, never a gate" is load-bearing, not stylistic, and now has a fixture
+behind it (`test/assembler.test.js`).
+
+Across the whole pick the 22 cited rows are 11 `description` and 11 `major`, with no `filler` or
+`cast` row cited at all. That is a weaker result for the same claim than the Namtira case is a
+strong one, and it is the thing to watch in 0d: if a modest model's pick only ever cites `major`,
+the label is gating in practice even though nothing in the code lets it.
+
+**2. The genre read agrees — and rests on one fact of ten.** Asked of the canon alone and of a
+sample of real summaries, both come back as the same dark story rather than P4's bubbly
+adventure. But delete the one line about what was done to Esin in captivity and the remaining
+nine read as a rescue adventure with a happy ending. That line is also the one a model is most
+likely to drop, because the prompt tells it to leave out how anyone felt and those events sit
+close to that instruction. **This is D-0071 decision 9's reopen condition, stated concretely:**
+if a lower-tier pick over the same index leaves the captivity out and the genre read diverges,
+selection is not safely carrying the register and a tone field earns its place.
+
+**3. What the gate does not establish.** The records and the pick came from the same top-tier
+model in one session, and a model that wrote an index has an advantage over one that only reads
+it. The yardstick is independent and that is what makes this a gate at all — but the reference is
+not the target (D-0076), and **0d is what says whether a GLM/Kimi/DeepSeek-class model reaches
+the same five lines.** Stage 3 passing means the harness is not wrong; it does not yet mean the
+harness works where it has to run.
+
+**Reopens if:** 0d's pick misses a spine line the reference reached, which is a harness problem
+and not a model problem — the fix is in the prompt, not in the model routing.
+
+## D-0079 — Stage 3 as built: canon is a pick that cites its records, and the fold reads one batch
+**2026-09-25.** P5 stage 3, implementing D-0071 and D-0070. Five choices made while building,
+each of which could have gone another way, plus one latent bug the work surfaced.
+
+**1. A fact cites the records it was picked from, and dies when they all do.** D-0071 promised
+that a wrong fact "stops being permanent … removable by fixing the record it came from", and
+nothing in the plan said how. The answer is a `from` list on the stored fact: row numbers as the
+model cites them, mapped to chat indexes by the caller, checked against `readIndex` on every
+read. Delete the record, edit the message, resummarise or branch, and the fact goes with it —
+with no rollback code, the same shape as the rest of the store (D-0045). It is also cheap
+grounding: a model that must name the row invents less than one that need not, and a fact citing
+*no* row is refused outright, because an uncitable fact is a permanent one again.
+
+A fact survives while **any** one of its rows does, not while all do. A line that chains two rows
+is still grounded when one is edited away, and dropping it then would lose something true.
+
+**2. The fold reads one batch — the newest — rather than the union.** A pick supersedes by
+definition, so a union would be the bag D-0071 undid, and an older batch would go on asserting
+what the newer one deliberately left out. This is the change with the most reach: with a bag,
+"admit only at a rebuild" fell out of filtering one list by the admitted mark, and with a
+replacement it cannot, because the newest batch would admit itself by being the only one there
+is. So the assembler now folds **twice** — once at the mark for the block, once unfiltered for
+what a rebuild would admit — and D-0067's invariant is unchanged from the outside.
+
+**3. `slots` is stored on the batch, because a short answer is not an unanswered question.**
+"Re-derivation is due when the picked set would change" is not implementable as written: a
+four-fact reply to a ten-slot pick looks exactly like a pick with six slots still to fill, and
+would re-fire forever. Storing what was *asked* makes the four cases finite and terminating —
+nothing picked yet, the index grew, a fact lost its records, the user moved the slot count.
+
+**4. An empty pick is a rejection, where P4's empty promotion was an answer.** `{"promote":[]}`
+was a real reply to "is anything here permanent". There is no real reply to "choose the ten rows
+this story cannot be told without" that chooses none, when there are rows. This inverts D-0074
+item 3 for the same reason it was decided there: the question's shape decides, not the tier.
+
+**5. The slot count is a setting and the token cap is not.** `canonSlots` (default 10, 1–16) is
+the one knob, one plain sentence (CLAUDE.md §4.15). `canonCap` stays as the block's own ceiling,
+so the two kinds of "full" are separate: the slot count is the size of the question and the cap
+is what the block can afford to answer with. `canonFull` now means the cap bound it, which is the
+only one of the two that is a problem.
+
+**What was deleted:** `pendingCompaction`'s pressure test, evict-set simulation and once-per-cycle
+`covers` test; `canonRoom`, `COLD_FACT_TOKENS` and `MAX_FACTS_PER_PASS`; the per-pass `room`
+plumbing through the assembler, the job and the prompt. The derive half is smaller than what it
+replaced, as D-0071 said it would be.
+
+**The latent bug, worth paying for once (CLAUDE.md §6.27): a cycle that only appears outside the
+test runner.** Adding `canonSlots` to `DEFAULT_SETTINGS` made `store/schema.js` import
+`memory/canon.js`, which imported `store/chat-store.js`, which imports `store/schema.js`. Vitest
+resolved it; plain `node` threw `Cannot access 'DEFAULT_SLOTS' before initialization` on the first
+script that entered through a different module. The fix is the rule the neighbouring file already
+states: `canonFor` takes `readCanon` and `readIndex` as arguments, exactly as `pendingIndex` does,
+so `memory/canon.js` imports nothing from `store/` and is pure (CLAUDE.md §1.3). **The lesson is
+that the test runner is not a cycle detector**, and a module in `store/` that reaches into
+`memory/` is the shape to refuse.
+
+**Not in this stage:** the panel and inspector surface, which is stage 4. A run is still read from
+the disk log, which now also carries `canon_slots`, `canon_picked`, `canon_rederived`,
+`canon_lost_sources`, `canon_reason`, `index_records` and `index_kinds`.
+
+**Reopens if:** play shows canon churning — a pick re-derived every rebuild with the facts
+reshuffled rather than added to — which would mean a replacement fold needs a stability term the
+forced budget does not give it.
+
 ## D-0078 — Stage 2.5 as built: the tier's split freezes at the rebuild, and `chars` must move with `text`
 **2026-09-25.** P5 stage 2.5, implementing D-0075 and D-0076. Six choices made while building,
 each of which could have gone another way, plus one bug that is exactly the kind CLAUDE.md §6.27

@@ -48,6 +48,7 @@ function harness({
     maxPrompt = Math.ceil(cap / CAP_FRACTION),
     reserves = NO_RESERVES,
     settings = makeQvinkSettings(),
+    cairnSettings = null,
     qvink = true,
 } = {}) {
     const context = createContext({ chat: [], extensions: qvink ? [QVINK_EXTENSION] : [] });
@@ -58,6 +59,7 @@ function harness({
         budget,
         reserves,
         maxPromptTokens: async () => maxPrompt,
+        ...(cairnSettings ? { settings: () => cairnSettings } : {}),
     });
 
     return {
@@ -975,18 +977,23 @@ describe('canon at the head of the block', () => {
      * changes nothing, and the rebuild turn admits it. Canon moving on any other
      * turn would change bytes above every summary and break the whole block.
      */
-    it('admits a new batch only on a turn that was rebuilding anyway', async () => {
+    it('admits a new pick only on a turn that was rebuilding anyway', async () => {
         const run = harness({ cap: 6_000 });
         const plans = [];
         let written = false;
 
         for (let length = 31; length <= 200; length++) {
             run.context.chat = makeQvinkChat({ length, summarisedThrough: length - 11 });
-            // One batch from the start, and a second written mid-run, well before
-            // any rebuild is due.
+            // One pick from the start, and a re-derivation written mid-run, well
+            // before any rebuild is due. The second supersedes the first (D-0071),
+            // so what has to hold still is the whole canon and not an increment.
             run.context.chat[5].extra.cairn = cairnCanonStore(['Her brother is dead.'], [0, 5]);
             if (length >= 60) written = true;
-            if (written) run.context.chat[9].extra.cairn = cairnCanonStore(['Aster owns a green boat.'], [6, 9]);
+            if (written) {
+                run.context.chat[9].extra.cairn = cairnCanonStore(
+                    ['Her brother is dead.', 'Aster owns a green boat.'], [0, 9],
+                );
+            }
             plans.push({ length, ...(await run.plan()) });
         }
 
@@ -995,7 +1002,11 @@ describe('canon at the head of the block', () => {
         for (const plan of moved) {
             expect(plan.evicted > 0 || plan.stepReason === 'first-turn', `turn ${plan.length}`).toBe(true);
         }
-        // And it did land: the second batch is in the block by the end.
+        // `canonRederived` is the log field the run reads, and it says the same thing.
+        for (const plan of plans.filter((p) => p.canonRederived)) {
+            expect(plan.rebuilt, `turn ${plan.length}`).toBe(true);
+        }
+        // And it did land: the re-derivation is in the block by the end.
         expect(plans.at(-1).canonAdmitted).toBe(2);
     });
 
@@ -1061,26 +1072,138 @@ describe('canon at the head of the block', () => {
         expect(new Set(heads).size).toBe(1);
     });
 
-    it('admits everything on the first turn of a session, so a reload catches up', async () => {
+    it('admits the pick in force on the first turn of a session, so a reload catches up', async () => {
         const fresh = () => {
             const run = harness({ cap: 6_000 });
             run.context.chat = makeQvinkChat({ length: 60, summarisedThrough: 49 });
             run.context.chat[5].extra.cairn = cairnCanonStore(['One.'], [0, 5]);
-            run.context.chat[9].extra.cairn = cairnCanonStore(['Two.'], [6, 9]);
+            run.context.chat[9].extra.cairn = cairnCanonStore(['Two.', 'Three.'], [0, 9]);
             return run;
         };
+        const plan = await fresh().plan();
 
-        expect((await fresh().plan()).canonAdmitted).toBe(2);
+        // The newest pick, not the union of the two: an older batch would go on
+        // asserting what the newer one deliberately left out.
+        expect(plan.canonAdmitted).toBe(2);
+        expect(plan.canonPicked).toBe(2);
     });
 
     it('rolls a branch back with no rollback code', async () => {
         const run = harness({ cap: 6_000 });
-        withCanon(run, 60, [[5, ['One.'], [0, 5]], [49, ['Two.'], [6, 49]]]);
+        withCanon(run, 60, [[5, ['One.'], [0, 5]], [49, ['Two.', 'Three.'], [0, 49]]]);
         expect((await run.plan()).canonAdmitted).toBe(2);
 
-        // A branch takes the chat back past the second batch's message.
+        // A branch takes the chat back past the newer pick's message, and the one
+        // before it is in force again.
         run.context.chat = run.context.chat.slice(0, 40);
         expect((await run.plan()).canonAdmitted).toBe(1);
+    });
+
+    /**
+     * The single sentence D-0062's three gaps reduce to (docs/p5-plan.md): P4 read the
+     * summaries the *prompt* was about to drop, and eviction from the prompt has nothing
+     * to do with availability on disk. The pick reads the chat.
+     */
+    it('sends the pick every record in the chat, including ones the block evicted long ago', async () => {
+        const run = harness({ cap: 1_200 });
+        const chat = makeQvinkChat({ length: 120, summarisedThrough: 109 });
+        // Records on the oldest scenes and on the newest, with a small block. The
+        // oldest carry no compact line, so they are evicted outright rather than
+        // demoted into the tail — which is what makes them invisible to the prompt.
+        for (const index of [2, 4, 6]) {
+            chat[index].extra.cairn = cairnIndexStore(chat[index], readScenes(chat)[index].text, { line: '' });
+        }
+        for (const index of [100, 104, 108]) {
+            chat[index].extra.cairn = cairnIndexStore(chat[index], readScenes(chat)[index].text);
+        }
+        run.context.chat = chat;
+        const report = await run.plan();
+        const due = run.assembler.pendingPass;
+
+        expect(report.indexRecords).toBe(6);
+        expect(due.covers).toEqual([2, 108]);
+        expect(due.records.map((entry) => entry.index)).toEqual([2, 4, 6, 100, 104, 108]);
+        // And the block genuinely does not hold the oldest of them any more.
+        expect(report.oldest).toBeGreaterThan(6);
+    });
+
+    it('says no pick is due at all with canon switched off', async () => {
+        // The gate would refuse the call anyway; a log saying a pick is due when it can
+        // never run reads as a stuck queue.
+        const run = harness({ cap: 6_000, cairnSettings: { keepCanon: false } });
+        const chat = makeQvinkChat({ length: 60, summarisedThrough: 49 });
+        for (const index of [2, 4, 6]) {
+            chat[index].extra.cairn = cairnIndexStore(chat[index], readScenes(chat)[index].text);
+        }
+        run.context.chat = chat;
+        await run.plan();
+
+        expect(run.assembler.pendingPass).toMatchObject({ due: false, reason: 'no-slots' });
+    });
+
+    it('sends a filler-labelled record like any other, because the kind is not a gate', async () => {
+        // A local label is unstable under hindsight: a purchase is filler until it
+        // turns out to be where they settled (docs/decisions.md D-0070).
+        const run = harness({ cap: 6_000 });
+        const chat = makeQvinkChat({ length: 60, summarisedThrough: 49 });
+        const kinds = { 2: 'filler', 4: 'description', 6: 'major', 8: 'cast' };
+        for (const [index, kind] of Object.entries(kinds)) {
+            chat[index].extra.cairn = cairnIndexStore(chat[index], readScenes(chat)[index].text, { kind });
+        }
+        run.context.chat = chat;
+        const report = await run.plan();
+
+        expect(report.indexKinds).toEqual({ filler: 1, description: 1, major: 1, cast: 1 });
+        expect(run.assembler.pendingPass.records.map((entry) => entry.record.kind))
+            .toEqual(['filler', 'description', 'major', 'cast']);
+    });
+
+    it('stops asking once the pick has read the whole index, and asks again when it grows', async () => {
+        const run = harness({ cap: 6_000 });
+        const chat = makeQvinkChat({ length: 60, summarisedThrough: 49 });
+        for (const index of [2, 4, 6]) {
+            chat[index].extra.cairn = cairnIndexStore(chat[index], readScenes(chat)[index].text);
+        }
+        run.context.chat = chat;
+
+        expect(run.assembler.pendingPass ?? (await run.plan(), run.assembler.pendingPass))
+            .toMatchObject({ due: true, reason: 'no-canon' });
+
+        // The pick lands on the newest record it read.
+        chat[6].extra.cairn = {
+            ...chat[6].extra.cairn,
+            ...cairnCanonStore([{ text: 'Her brother is dead.', from: [2] }], [2, 6], { slots: 10 }),
+        };
+        await run.plan();
+        expect(run.assembler.pendingPass).toMatchObject({ due: false, reason: 'covered' });
+
+        // A new record past it, and the question is open again.
+        chat[8].extra.cairn = cairnIndexStore(chat[8], readScenes(chat)[8].text);
+        await run.plan();
+        expect(run.assembler.pendingPass).toMatchObject({ due: true, reason: 'new-records' });
+    });
+
+    it('asks again when a fact lost the record it rested on, and reports the loss', async () => {
+        const run = harness({ cap: 6_000 });
+        const chat = makeQvinkChat({ length: 60, summarisedThrough: 49 });
+        for (const index of [2, 4, 6, 8]) {
+            chat[index].extra.cairn = cairnIndexStore(chat[index], readScenes(chat)[index].text);
+        }
+        chat[8].extra.cairn = {
+            ...chat[8].extra.cairn,
+            ...cairnCanonStore([{ text: 'Her brother is dead.', from: [2] }], [2, 8], { slots: 10 }),
+        };
+        run.context.chat = chat;
+        await run.plan();
+        expect(run.assembler.pendingPass).toMatchObject({ due: false });
+
+        // The summary behind record 2 is rewritten, which makes its record stale and
+        // takes the fact with it (memory/canon.js).
+        chat[2].extra.cairn.scene.text = 'A different summary entirely.';
+        const report = await run.plan();
+
+        expect(report.canonLostSources).toBe(1);
+        expect(run.assembler.pendingPass).toMatchObject({ due: true, reason: 'lost-facts' });
     });
 
     it('never lets the whole block exceed the cap, canon included', async () => {

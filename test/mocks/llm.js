@@ -171,34 +171,36 @@ export const badStateOutputs = {
 };
 
 /**
- * Realistic replies to the canon prompt, which asks for `{"promote":[{fact, entities}]}`
- * (docs/p4-plan.md decision 7). Each takes the promotions the model *meant* to send. No
- * Cairn canon reply has been seen in play yet, so the shapes are the two catalogues
- * above carried over, plus the ways a model asked to promote nothing sends something.
- * Every one has a case in test/canon-strategy.test.js (CLAUDE.md §3.12).
+ * Realistic replies to the canon prompt, which asks for `{"canon":[{fact, entities, from}]}`
+ * — a forced-budget pick over the whole index (docs/decisions.md D-0071). Each takes the
+ * facts the model *meant* to send. No Cairn pick has been seen in play yet, so the shapes
+ * are the catalogues above carried over, plus the ways a forced budget goes wrong: a model
+ * that fills every slot whether or not it has the facts, one that cites nothing, and one
+ * that cites a row that was never in the index. Every one has a case in
+ * test/canon-strategy.test.js (CLAUDE.md §3.12).
  */
 export const badCanonOutputs = {
     /** A json fence, pretty-printed. */
-    fenced: (promote) => '```json\n' + JSON.stringify({ promote }, null, 2) + '\n```',
+    fenced: (canon) => '```json\n' + JSON.stringify({ canon }, null, 2) + '\n```',
 
     /** Preamble and sign-off around bare JSON. */
-    preambleAndSignOff: (promote) =>
-        `Looking at these summaries, here are the facts that will still hold:\n\n${JSON.stringify({ promote })}\n\nLet me know if you'd like fewer.`,
+    preambleAndSignOff: (canon) =>
+        `Reading the index end to end, these are the rows the story cannot be told without:\n\n${JSON.stringify({ canon })}\n\nLet me know if you'd like a tighter set.`,
 
     /** Reasoning model leaks its thinking into content. */
-    leakedReasoning: (promote) =>
-        `<think>The brother's death is permanent. The mood is not.</think>\n${JSON.stringify({ promote })}`,
+    leakedReasoning: (canon) =>
+        `<think>Row 1 is background but it is the whole premise. Row 3 is a wait.</think>\n${JSON.stringify({ canon })}`,
 
     /** The template opened the think block in the prompt, so only its close arrives. */
-    orphanThinkClose: (promote) =>
-        `The death is permanent; the weather belongs to the scene record.\n</think>\n\n${JSON.stringify({ promote })}`,
+    orphanThinkClose: (canon) =>
+        `Rows 1, 2 and 4 carry the spine; the rest is weather.\n</think>\n\n${JSON.stringify({ canon })}`,
 
     /** Ran out of tokens while still thinking. */
-    unterminatedReasoning: () => '<think>Three candidates here. The first one is clearly permanent, but the second',
+    unterminatedReasoning: () => '<think>Twelve candidate rows for ten slots. The origin has to go in, but',
 
     /** Hit max_tokens mid-array. ST reports no finish reason (custom-request.js:60). */
-    truncated: (promote) => {
-        const json = JSON.stringify({ promote }, null, 2);
+    truncated: (canon) => {
+        const json = JSON.stringify({ canon }, null, 2);
         return json.slice(0, Math.floor(json.length * 0.6));
     },
 
@@ -206,49 +208,61 @@ export const badCanonOutputs = {
     refusal: () => 'I’m sorry, but I can’t extract facts from this content.',
 
     /** Lists the facts in prose instead of writing the object. */
-    prose: () => 'The main lasting facts are that Wren\'s brother drowned, and that Aster promised her a crossing.',
+    prose: () => 'The rows that matter are 1, 2 and 4: the drowning, the winter run, and the crossing.',
 
-    /** Says "nothing to promote" in the clumsiest way available to it. */
-    nullPromote: () => '{"promote": null}',
+    /** Answers the question it was not asked: nothing here is permanent. */
+    nullCanon: () => '{"canon": null}',
 
-    /** Says it in the second clumsiest way: the key left out entirely. */
-    noPromoteKey: () => '{"facts": []}',
+    /** Picks nothing out of an index that plainly holds something. */
+    emptyPick: () => '{"canon": []}',
 
-    /** A bare array, the wrapper forgotten. */
-    bareArray: (promote) => JSON.stringify(promote),
+    /** A bare array, the wrapper forgotten — a shape we can still read. */
+    bareArray: (canon) => JSON.stringify(canon),
 
     /** Uses `text` where the prompt said `fact`. */
-    wrongKey: (promote) => JSON.stringify({ promote: promote.map(({ fact }) => ({ text: fact, entities: [] })) }),
+    wrongKey: (canon) => JSON.stringify({ canon: canon.map(({ fact, from }) => ({ text: fact, entities: [], from })) }),
 
     /** Facts as plain strings, the object dropped. */
-    plainStrings: (promote) => JSON.stringify({ promote: promote.map(({ fact }) => fact) }),
+    plainStrings: (canon) => JSON.stringify({ canon: canon.map(({ fact }) => fact) }),
 
     /** Writes a paragraph where one sentence goes. */
-    overlong: (promote) => JSON.stringify({
-        promote: [{
+    overlong: (canon) => JSON.stringify({
+        canon: [{
             fact: 'Wren\'s brother drowned in the spring flood the year before the story begins, during the crossing he had made every winter since he was a boy, and the harbour has not run a winter ferry since, which is the reason the board still reads DELAYED whenever the fog comes in off the water.',
             entities: ['Wren'],
-        }, ...promote.slice(1)],
+            from: [1],
+        }, ...canon.slice(1)],
     }),
 
     /** Tags the whole cast and then some: six entities, two past the cap. */
-    manyEntities: (promote) => JSON.stringify({
-        promote: [{ ...promote[0], entities: ['Wren', 'Aster', 'the flood', 'the harbour', 'the ferry', 'the feast day'] }],
+    manyEntities: (canon) => JSON.stringify({
+        canon: [{ ...canon[0], entities: ['Wren', 'Aster', 'the flood', 'the harbour', 'the ferry', 'the feast day'] }],
     }),
 
     /** An entity written as a sentence rather than a name. */
-    entitySentence: (promote) => JSON.stringify({
-        promote: [{ ...promote[0], entities: ['Wren\'s brother, who drowned in the spring flood last year'] }],
+    entitySentence: (canon) => JSON.stringify({
+        canon: [{ ...canon[0], entities: ['Wren\'s brother, who drowned in the spring flood last year'] }],
     }),
 
-    /** Ignores the room it was given and promotes everything it found. */
-    overRoom: () => JSON.stringify({
-        promote: Array.from({ length: 12 }, (_, i) => ({ fact: `Durable fact number ${i + 1}.`, entities: [] })),
+    /** Fills every slot it is given and then some: twelve facts for ten. */
+    overSlots: () => JSON.stringify({
+        canon: Array.from({ length: 12 }, (_, i) => ({ fact: `Durable fact number ${i + 1}.`, entities: [], from: [i + 1] })),
     }),
 
-    /** Promotes the mood the prompt told it to leave, beside a real fact. */
-    mood: (promote) => JSON.stringify({
-        promote: [promote[0], { fact: 'Aster was shaken by the question.', entities: ['Aster'] }],
+    /** Answers with a spine and no citations at all — the shape that cannot be re-derived. */
+    uncited: (canon) => JSON.stringify({ canon: canon.map(({ fact, entities }) => ({ fact, entities })) }),
+
+    /** Cites a row that was never in the index, and one that is not a number. */
+    badRows: (canon) => JSON.stringify({
+        canon: [{ ...canon[0], from: [999] }, { ...canon[1], from: ['the first one', 2] }],
+    }),
+
+    /** Chains half the story into one fact, citing five rows for it. */
+    manyRows: (canon) => JSON.stringify({ canon: [{ ...canon[0], from: [1, 2, 3, 4, 5] }] }),
+
+    /** Picks the mood the prompt told it to leave, beside a real fact. */
+    mood: (canon) => JSON.stringify({
+        canon: [canon[0], { fact: 'Aster was shaken by the question.', entities: ['Aster'], from: [2] }],
     }),
 
     /** Empty, which a stalled endpoint returns with a 200. */

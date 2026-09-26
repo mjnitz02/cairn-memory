@@ -4,8 +4,15 @@
  *
  * Two subcommands, because the middle step is a model and not a script:
  *
- *   extract  a chat file's real summaries → the corpus, numbered for a labelling pass
- *   measure  those summaries + the records written for them → `r`, the share, the horizon
+ *   extract   a chat file's real summaries → the corpus, numbered for a labelling pass
+ *   batches   those summaries → the index prompts a labelling pass answers, 15 at a time
+ *   assemble  a pass's replies → a records file, read by the parser this repo ships
+ *   measure   those summaries + the records written for them → `r`, the share, the horizon
+ *
+ * `measure` takes the records file to read, because a pass is re-run whenever the record's
+ * shape changes and **nothing already in the corpus may be overwritten** (CLAUDE.md §3.14).
+ * Its report and chain are named after that file, so each pass's outputs sit beside the last
+ * one's and the two can be diffed — which is what stage 0d does with a modest model's records.
  *
  * **Nothing it writes may land in this repo** (CLAUDE.md §3.13). The output directory
  * defaults into `~/workspaces/cairn-corpus` and a path inside the repo is refused, because
@@ -22,6 +29,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderRecord, renderIndex, validRecord } from '../src/memory/index-record.js';
+import { indexBatch, parseIndexReply, MAX_BATCH } from '../src/memory/index-strategy.js';
 import { estimateTokens } from '../src/util/tokens.js';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -90,11 +98,78 @@ function extract(file, given) {
     console.log(`  written to  ${dir}`);
 }
 
-function measure(given, { sceneCap = SCENE_CAP } = {}) {
+/**
+ * The labelling pass's prompts, batched exactly as the shipped queue batches them:
+ * `MAX_BATCH` summaries, numbered from 1 within the batch, no overlap (D-0078 choice 5).
+ *
+ * This is what makes stage 0d mechanical — answer each file, drop the replies beside
+ * them, `assemble`, `measure`. The prompt is `indexBatch.build`'s, not a copy of it.
+ */
+function batches(given) {
     const dir = outDir(given);
     const summaries = JSON.parse(readFileSync(path.join(dir, 'summaries.json'), 'utf8'));
-    const recordsFile = path.join(dir, 'records.json');
-    if (!existsSync(recordsFile)) throw new Error(`no records.json in ${dir} — the labelling pass writes it`);
+    const written = [];
+
+    for (let start = 0; start < summaries.length; start += MAX_BATCH) {
+        const batch = summaries.slice(start, start + MAX_BATCH);
+        const request = indexBatch.build({ summaries: batch.map((s) => ({ text: s.text })) });
+        const file = path.join(dir, `index-prompt-${String(written.length + 1).padStart(2, '0')}.md`);
+        writeFileSync(file, request.messages[0].content + '\n');
+        written.push({ file, from: batch[0].n, to: batch[batch.length - 1].n, tokens: estimateTokens(request.messages[0].content) });
+    }
+
+    console.log(`${written.length} batches over ${summaries.length} summaries, ${MAX_BATCH} at a time`);
+    for (const batch of written) {
+        console.log(`  ${path.basename(batch.file)}  summaries ${batch.from}\u2013${batch.to}, ~${batch.tokens}t`);
+    }
+    console.log(`  answer each into index-reply-NN.json beside it, then: assemble ${dir} <records-name.json>`);
+}
+
+/**
+ * The replies → a records file, read by the shipped parser so that what lands in the
+ * corpus is exactly what the queue would have stored. A batch numbers its records 1..N,
+ * so they are shifted back to the summary numbers here — the same mapping the caller
+ * owns in play (memory/index-strategy.js).
+ */
+function assemble(given, name = 'records.json') {
+    const dir = outDir(given);
+    if (existsSync(path.join(dir, name))) {
+        throw new Error(`${name} already exists in ${dir} — nothing in the corpus is overwritten (CLAUDE.md §3.14)`);
+    }
+    const summaries = JSON.parse(readFileSync(path.join(dir, 'summaries.json'), 'utf8'));
+    const out = [];
+    const problems = [];
+
+    for (let start = 0, n = 1; start < summaries.length; start += MAX_BATCH, n++) {
+        const batch = summaries.slice(start, start + MAX_BATCH);
+        const file = path.join(dir, `index-reply-${String(n).padStart(2, '0')}.json`);
+        if (!existsSync(file)) {
+            problems.push(`batch ${n} (summaries ${batch[0].n}\u2013${batch[batch.length - 1].n}): no reply`);
+            continue;
+        }
+        const parsed = parseIndexReply(readFileSync(file, 'utf8'), { count: batch.length });
+        if (!parsed.ok) {
+            problems.push(`batch ${n}: the parser rejected it (${parsed.reason})`);
+            continue;
+        }
+        for (const drop of parsed.dropped) problems.push(`batch ${n}: dropped ${drop.slot} (${drop.reason})`);
+        for (const { n: within, ...record } of parsed.records) out.push({ n: batch[within - 1].n, record });
+    }
+
+    out.sort((a, b) => a.n - b.n);
+    const invalid = out.filter((entry) => !validRecord(entry.record));
+    writeFileSync(path.join(dir, name), JSON.stringify(out, null, 2) + '\n');
+
+    console.log(`${out.length} of ${summaries.length} summaries have records, ${invalid.length} invalid`);
+    for (const problem of problems) console.log(`  ${problem}`);
+    console.log(`  written to ${path.join(dir, name)}`);
+}
+
+function measure(given, name = 'records.json', { sceneCap = SCENE_CAP } = {}) {
+    const dir = outDir(given);
+    const summaries = JSON.parse(readFileSync(path.join(dir, 'summaries.json'), 'utf8'));
+    const recordsFile = path.join(dir, name);
+    if (!existsSync(recordsFile)) throw new Error(`no ${name} in ${dir} — the labelling pass writes it`);
     const records = JSON.parse(readFileSync(recordsFile, 'utf8'));
 
     const byN = new Map(records.map((r) => [r.n, r]));
@@ -113,14 +188,20 @@ function measure(given, { sceneCap = SCENE_CAP } = {}) {
         };
     });
 
+    // The compact tier's real cost. `record.line` is where a pass writes it now that the
+    // slot exists (D-0076); `prose` is the 0c reference pass, which predates the slot.
+    const lineOf = (x) => (typeof x.record?.line === 'string' && x.record.line !== '' ? x.record.line
+        : (typeof x.prose === 'string' && x.prose !== '' ? x.prose : null));
+    const prose = records.filter((x) => lineOf(x)).map((x) => ({ n: x.n, tokens: estimateTokens(lineOf(x)) }));
+
     const full = rows.map((r) => r.fullTokens);
-    const compact = rows.map((r) => r.compactTokens);
+    const record = rows.map((r) => r.compactTokens);
+    // The share follows the artifact the block actually holds, which is the prose line
+    // (D-0076). The rendered record is still measured, as the alternative it beat.
+    const lined = prose.length === rows.length;
+    const compact = lined ? prose.map((p) => p.tokens) : record;
     const r = mean(full) / mean(compact);
     const share = 1 / (1 + r);
-
-    // Prose compactions, where the labelling pass wrote them, are option A's cost.
-    const prose = records.filter((x) => typeof x.prose === 'string' && x.prose !== '')
-        .map((x) => ({ n: x.n, tokens: estimateTokens(x.prose) }));
 
     const kinds = {};
     for (const row of rows) kinds[row.kind] = (kinds[row.kind] ?? 0) + 1;
@@ -147,12 +228,13 @@ function measure(given, { sceneCap = SCENE_CAP } = {}) {
         `| | mean | median | min | max | total |`,
         `|---|---|---|---|---|---|`,
         `| full summary | ${mean(full).toFixed(1)} | ${median(full)} | ${Math.min(...full)} | ${Math.max(...full)} | ${sum(full)} |`,
-        `| rendered record | ${mean(compact).toFixed(1)} | ${median(compact)} | ${Math.min(...compact)} | ${Math.max(...compact)} | ${sum(compact)} |`,
+        `| rendered record | ${mean(record).toFixed(1)} | ${median(record)} | ${Math.min(...record)} | ${Math.max(...record)} | ${sum(record)} |`,
         prose.length
-            ? `| prose compaction (n=${prose.length}) | ${mean(prose.map((p) => p.tokens)).toFixed(1)} | ${median(prose.map((p) => p.tokens))} | ${Math.min(...prose.map((p) => p.tokens))} | ${Math.max(...prose.map((p) => p.tokens))} | — |`
-            : `| prose compaction | — | — | — | — | — |`,
+            ? `| prose line (n=${prose.length}) | ${mean(prose.map((p) => p.tokens)).toFixed(1)} | ${median(prose.map((p) => p.tokens))} | ${Math.min(...prose.map((p) => p.tokens))} | ${Math.max(...prose.map((p) => p.tokens))} | ${sum(prose.map((p) => p.tokens))} |`
+            : `| prose line | — | — | — | — | — |`,
         ``,
-        `**r = ${r.toFixed(2)}**, so the derived share is **1/(1+r) = ${(share * 100).toFixed(1)}%**.`,
+        `**r = ${r.toFixed(2)}** against the ${lined ? 'prose line' : 'rendered record'}, so the derived`,
+        `share is **1/(1+r) = ${(share * 100).toFixed(1)}%**.`,
         ``,
         `The whole index renders to **${estimateTokens(renderIndex(rows.map((row) => byN.get(row.n).record)))} tokens**`,
         `for ${rows.length} records — D-0070's one-call claim (per-record cost is the stage 0 gate:`,
@@ -175,7 +257,9 @@ function measure(given, { sceneCap = SCENE_CAP } = {}) {
         ``,
     ].join('\n');
 
-    writeFileSync(path.join(dir, 'report.md'), report + '\n');
+    const stem = name.replace(/\.json$/, '').replace(/^records-?/, '');
+    const named = (kind) => path.join(dir, stem ? `${kind}-${stem}.md` : `${kind}.md`);
+    writeFileSync(named('report'), report + '\n');
 
     // The chain: the newest `fullHeld` summaries in full, the `compactHeld` before them compact.
     const at = horizon(share);
@@ -186,20 +270,20 @@ function measure(given, { sceneCap = SCENE_CAP } = {}) {
         ``,
         `${head.length} compact, then ${tail.length} full. Does the join read, or is it two documents?`,
         ``,
-        ...head.map((row) => row.rendered),
+        ...head.map((row) => lineOf(byN.get(row.n)) ?? row.rendered),
         ``,
         ...tail.map((row) => summaries.find((s) => s.n === row.n).text),
         ``,
     ].join('\n');
-    writeFileSync(path.join(dir, 'chain.md'), chain);
+    writeFileSync(named('chain'), chain);
 
     console.log(`r = ${r.toFixed(2)}, share = ${(share * 100).toFixed(1)}%, ` +
         `horizon ${base} → ${horizon(share).held}`);
-    console.log(`  full ${mean(full).toFixed(1)}t mean, record ${mean(compact).toFixed(1)}t mean` +
+    console.log(`  full ${mean(full).toFixed(1)}t mean, record ${mean(record).toFixed(1)}t mean` +
         (prose.length ? `, prose ${mean(prose.map((p) => p.tokens)).toFixed(1)}t mean (n=${prose.length})` : ''));
     if (missing.length) console.log(`  unlabelled: ${missing.map((s) => s.n).join(', ')}`);
     if (invalid.length) console.log(`  invalid records: ${invalid.map((x) => x.n).join(', ')}`);
-    console.log(`  written to ${dir}/report.md and ${dir}/chain.md`);
+    console.log(`  written to ${named('report')} and ${named('chain')}`);
 }
 
 const sum = (xs) => xs.reduce((a, b) => a + b, 0);
@@ -215,10 +299,15 @@ try {
     if (command === 'extract') {
         if (!rest[0]) throw new Error('usage: calibrate-tier.mjs extract <chat.jsonl> [outDir]');
         extract(rest[0], rest[1]);
+    } else if (command === 'batches') {
+        batches(rest[0]);
+    } else if (command === 'assemble') {
+        assemble(rest[0], rest[1]);
     } else if (command === 'measure') {
-        measure(rest[0]);
+        measure(rest[0], rest[1]);
     } else {
-        console.error('usage: calibrate-tier.mjs extract <chat.jsonl> [outDir] | measure [outDir]');
+        console.error('usage: calibrate-tier.mjs extract <chat.jsonl> [outDir] | batches [outDir]'
+            + ' | assemble [outDir] [records.json] | measure [outDir] [records.json]');
         process.exit(2);
     }
 } catch (err) {

@@ -132,6 +132,20 @@ keep the reference pass, write the candidate's beside it, and diff the two repor
 models that matter are the ones a memory profile actually points at — the GLM / Kimi /
 DeepSeek class — not the one that wrote the reference.
 
+[`scripts/run-tier.mjs`](../scripts/run-tier.mjs) does that end to end against any
+OpenAI-compatible API (nano-gpt by default): the six index batches, `assemble`,
+`measure`, then the canon pick and `pick-gate.mjs score`, into a fresh
+`p5-stage0/0d/<model>/run-N/` each time.
+
+```sh
+echo 'NANOGPT_API_KEY=...' > .env                    # gitignored; the script loads it
+node scripts/run-tier.mjs <model...> --smoke         # one batch each, parsed — does the model answer at all
+node scripts/run-tier.mjs <model...> --runs 3        # three full passes each, for the spread
+```
+
+`NANOGPT_BASE_URL` points it elsewhere, and one model failing does not stop the rest. Every call's usage and raw reply is kept in the
+run's `calls.jsonl`. The verdict against `yardstick.md` is still a read, not a number.
+
 ## Driving a long run
 
 A phase gate wants tens of unattended turns.

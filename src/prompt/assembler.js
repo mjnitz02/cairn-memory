@@ -33,10 +33,10 @@
  */
 import { pendingScenes, qvinkExcluding, qvinkInjecting, readScenes } from '../memory/scenes.js';
 import { compactLine } from '../memory/index-record.js';
-import { readIndex } from '../store/chat-store.js';
-import { admitCanon, canonFor, canonRoom } from '../memory/canon.js';
+import { readCanon, readIndex } from '../store/chat-store.js';
+import { admitCanon, canonFor, slotsFor } from '../memory/canon.js';
 import { canonCap, createBudget, deriveCap, recoupled, tierSplit } from '../pipeline/budgeter.js';
-import { pendingCompaction } from '../pipeline/compactor.js';
+import { indexRecords, pendingPick } from '../pipeline/compactor.js';
 import { createSeeSaw } from '../pipeline/scheduler.js';
 import { createExamplesLatch, examplesSuperseded } from '../memory/examples.js';
 import { assessHandover } from './handover.js';
@@ -246,15 +246,25 @@ export function createAssembler(getContext, {
             : 0;
 
         const keepCanon = settings?.().keepCanon !== false;
-        const canonFold = keepCanon ? canonFor(chat) : { facts: [], batches: 0, coveredThrough: null };
-        const allFacts = withChars(canonFold.facts);
+        const slots = slotsFor(settings?.().canonSlots);
+        // Two folds, because a pick supersedes rather than accumulates (D-0071). The
+        // *current* one is the newest batch in the chat and is what a rebuild admits;
+        // the *held* one is the newest batch at the mark, so a pick written between
+        // rebuilds leaves the block byte-identical until one (D-0059, D-0067). With a
+        // bag this fell out of filtering one list; with a replacement it cannot, because
+        // the newest batch would otherwise admit itself by being the only one there is.
+        const empty = { facts: [], index: null, slots: null, covers: null, coveredThrough: null, batches: 0, dropped: 0 };
+        const readers = { readCanon, readIndex };
+        const currentCanon = keepCanon ? canonFor(chat, readers) : empty;
+        const heldCanon = keepCanon ? canonFor(chat, readers, { through: admittedThrough }) : empty;
+        const allFacts = withChars(currentCanon.facts);
         const canonBudget = canonCap({ cap, stepTokens });
         // Last turn's admitted set, since the fit is what says whether this turn may
         // move the mark. Held at the last rebuild's cap: the live cap is reported, but
         // a cap that moves every turn may not rewrite the head on an ordinary one.
         const heldCap = admittedCap ?? canonBudget.cap;
         let canon = admitCanon({
-            facts: allFacts.filter((fact) => fact.index <= admittedThrough),
+            facts: withChars(heldCanon.facts),
             cap: heldCap,
             tokensOf: canonTokensOf,
         });
@@ -264,7 +274,12 @@ export function createAssembler(getContext, {
         // there is nothing to keep in step. `available` is what those lines would actually
         // cost: with none written the whole scene budget stays with full summaries rather
         // than a sixth of it being held for a tail that cannot be filled.
-        const compactOf = (scene) => compactLine(readIndex(chat[scene.index]).index?.record);
+        // Every valid record in the chat, read once: the block's compact lines come out
+        // of the same list the pick ranks, which is the whole of decision 10's
+        // contribution to the derive half (D-0075).
+        const records = indexRecords(chat, { readIndex });
+        const recordAt = new Map(records.map((entry) => [entry.index, entry.record]));
+        const compactOf = (scene) => compactLine(recordAt.get(scene.index));
         const lines = covered.map(compactOf).filter(Boolean);
         const available = lines.length ? tokensOf(withChars(lines.map((text) => ({ text })))) : 0;
         const splitFor = (sceneCap) => heldCompactCap ?? tierSplit({ sceneCap, available }).compactCap;
@@ -291,8 +306,11 @@ export function createAssembler(getContext, {
             // tiers' caps hold still and no summary can demote on an ordinary turn.
             heldCompactCap = tierSplit({ sceneCap: Math.max(0, cap - canon.tokens), available }).compactCap;
         }
+        // A rebuild admits whatever pick is current, which is how canon changes on a
+        // rebuild turn and only there (D-0067). `rederived` says it actually moved.
+        const rederived = rebuilt && currentCanon.index !== null && currentCanon.index !== heldCanon.index;
         if (rebuilt && allFacts.length) {
-            admittedThrough = Math.max(admittedThrough, allFacts[allFacts.length - 1].index);
+            admittedThrough = Math.max(admittedThrough, currentCanon.index);
             const admitted = admitCanon({ facts: allFacts, cap: canonBudget.cap, tokensOf: canonTokensOf });
             if (admitted.tokens !== canon.tokens) {
                 canon = admitted;
@@ -323,24 +341,20 @@ export function createAssembler(getContext, {
 
         const stuck = recoupled({ fullCap: fit.fullCap, floor: fit.floor, stepTokens });
 
-        // Whether a compaction pass is due, worked out here because every number it
-        // needs is this turn's budget (pipeline/compactor.js). The summarizer reads it
-        // through a getter and runs it after the reply lands; it carries the chat's
-        // own words, so it goes to the job and never to the report.
-        const room = canonRoom({ facts: allFacts, cap: canonBudget.cap, tokensOf: canonTokensOf });
-        const due = pendingCompaction({
-            scenes: fit.kept,
-            coveredThrough: canonFold.coveredThrough,
-            sceneCap: fit.sceneCap,
-            floor: fit.floor,
-            stepTokens,
-            room: room.facts,
-            tokensOf,
-        });
+        // Whether a canon pick is due. Nothing about this turn's budget goes into it
+        // any more (pipeline/compactor.js): a pick is due when the index has moved past
+        // what the last one read, not when the prompt is under pressure — which is the
+        // single change D-0062's three gaps reduce to. The summarizer reads it through a
+        // getter and runs it after the reply lands; it carries the chat's own records,
+        // so it goes to the job and never to the report.
+        // With canon switched off there are no slots to fill, so nothing is ever due —
+        // the gate would refuse the call anyway (pipeline/gates.js), and a log saying a
+        // pick is due when it can never run reads as a stuck queue.
+        const due = pendingPick({ records, canon: currentCanon, slots: keepCanon ? slots : 0 });
         pendingPass = {
             ...due,
             writing: gate.writing,
-            canon: allFacts.map((fact) => ({ text: fact.text })),
+            records: due.records.map((entry) => ({ ...entry, message: chat[entry.index] })),
             message: due.due ? chat[due.covers[1]] : null,
         };
 
@@ -407,15 +421,36 @@ export function createAssembler(getContext, {
             // `first-turn`. Any other turn where it moves is decision 3 failing.
             canonFacts: allFacts.length,
             canonAdmitted: canon.facts.length,
+            // The pick (docs/decisions.md D-0071). `canonSlots` is what is asked for,
+            // `canonPicked` what the pick in force actually filled, and `canonRederived`
+            // the check the run reads: it may be true only on a turn where `rebuilt` is,
+            // and any other turn where canon's text moves is decision 1 failing.
+            canonSlots: slots,
+            canonPicked: currentCanon.facts.length,
+            canonRederived: rederived,
+            // Facts whose every cited record is gone — an edit, a resummarise or a
+            // branch. Non-zero makes the next pick due (`pendingPick`), so it should
+            // clear itself rather than persist.
+            canonLostSources: currentCanon.dropped,
+            canonReason: due.reason,
             canonTokens: canon.tokens,
             canonCap: canonBudget.cap,
             // What the block was actually fitted to. Equal to `canonCap` on a rebuild;
             // between rebuilds it is the cap that rebuild froze (D-0059).
             canonCapApplied: admittedCap ?? heldCap,
             canonLimitedBy: canonBudget.limitedBy,
-            canonFull: room.full,
+            // The *cap*, not the slot count, is what left facts out. With a pick the
+            // slot count is the size of the question and the cap is the block's answer
+            // to it, so these are two different kinds of full and only this one is a
+            // problem (docs/decisions.md D-0052).
+            canonFull: canon.facts.length < allFacts.length,
             canonSpilled: allFacts.length - canon.facts.length,
             canonThrough: Number.isFinite(admittedThrough) ? admittedThrough : null,
+            // The index the pick reads, and the four-way split over it. `indexKinds` is
+            // the over-labelling check: a pass with no forced budget says `major` far
+            // too often (D-0076), and the pick is what has to survive that.
+            indexRecords: records.length,
+            indexKinds: kindTally(records),
             sceneCap: fit.sceneCap,
             // Where the cap came from, so a log says whether the ceiling or the
             // chat is what bound it (docs/decisions.md D-0052).
@@ -502,6 +537,13 @@ export function createAssembler(getContext, {
             return pendingPass;
         },
     };
+}
+
+/** The four-way split over the index, for the log and the inspector (D-0064). */
+function kindTally(records) {
+    const kinds = {};
+    for (const { record } of records) kinds[record.kind] = (kinds[record.kind] ?? 0) + 1;
+    return kinds;
 }
 
 /** Canon facts sized the way scenes are, so `blockChars` can price a candidate list. */

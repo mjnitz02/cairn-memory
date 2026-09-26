@@ -12,12 +12,13 @@
 import { readCanon } from '../store/chat-store.js';
 
 /**
- * The facts each batch promoted, as a plain list, keyed by the message the batch is
- * stored on. A batch that promoted nothing has nothing to show — it is a record that
- * the range was read, not something the reader needs.
+ * The facts each pick wrote, as a plain list, keyed by the message the batch is stored
+ * on. A batch with no facts has nothing to show.
  *
- * Unlike the fold (memory/canon.js) this does not dedup: it shows what that pass
- * wrote, which is what the reader is checking.
+ * Unlike the fold (memory/canon.js) this shows every batch and resolves nothing: it is
+ * what that pick *wrote*, which is what the reader is checking, where the fold is the
+ * newest pick with its dead facts already dropped. Seeing a superseded batch under an
+ * older message is correct — it is the answer that was given then.
  *
  * @param {Array<object>} chat
  * @returns {Map<number, string>}

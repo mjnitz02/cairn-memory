@@ -22,14 +22,22 @@ export function cairnStore(message, text, { prompt = 'h:00000000000001', at = '2
  * @param {Array<string|{text: string, entities?: string[]}>} facts
  * @param {number[]} covers The summaries the pass read, `[oldest, newest]`.
  */
-export function cairnCanonStore(facts, covers, { prompt = 'h:00000000000003', at = '2026-09-17T09:00:00.000Z' } = {}) {
+export function cairnCanonStore(facts, covers, { prompt = 'h:00000000000003', at = '2026-09-17T09:00:00.000Z', slots } = {}) {
     return {
         v: 3,
         canon: {
+            // A bare string is a fact with no citation — the shape written before canon
+            // became a pick, which still reads (test/fixtures/store-v4-uncited.js). Pass
+            // `from` to exercise the invalidation the pick added (docs/decisions.md D-0071).
             facts: facts.map((fact) => (typeof fact === 'string'
                 ? { text: fact, entities: [] }
-                : { text: fact.text, entities: [...(fact.entities ?? [])] })),
+                : {
+                    text: fact.text,
+                    entities: [...(fact.entities ?? [])],
+                    ...(fact.from ? { from: [...fact.from] } : {}),
+                })),
             covers: [...covers],
+            ...(Number.isInteger(slots) ? { slots } : {}),
             prompt,
             at,
         },

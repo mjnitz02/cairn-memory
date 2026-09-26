@@ -2,18 +2,35 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_ATTEMPTS, createSummarizer } from '../src/pipeline/summarizer.js';
 import { CANON_PROMPT } from '../src/memory/canon-strategy.js';
 import { canonFor } from '../src/memory/canon.js';
-import { readCanon } from '../src/store/chat-store.js';
+import { readCanon, readIndex } from '../src/store/chat-store.js';
 import { resetToasts } from '../src/util/log.js';
 import { badCanonOutputs, createRequestService, deferred } from './mocks/llm.js';
-import { createContext, makeChat } from './mocks/sillytavern.js';
+import { cairnIndexStore } from './mocks/cairn.js';
+import { createContext, makeChat as rawChat } from './mocks/sillytavern.js';
+
+/** The store's readers, which `canonFor` takes rather than imports (memory/canon.js). */
+const READERS = { readCanon, readIndex };
 
 /**
- * The queue's compaction job (docs/p4-plan.md decisions 6 to 9): last of the three
- * kinds, one pass per cycle, and a failure that changes nothing at all.
+ * A chat whose messages carry index records, because a pick's facts cite them and a
+ * fact whose records are gone is dropped on read (memory/canon.js). Without them the
+ * fold would report an empty canon however well the pick went.
+ */
+function makeChat(length) {
+    const chat = rawChat(length);
+    chat.forEach((message, index) => {
+        message.extra.cairn = cairnIndexStore(message, `Matter ${index} was settled before the tide turned.`);
+    });
+    return chat;
+}
+
+/**
+ * The queue's canon job (docs/decisions.md D-0071): last of the four kinds, one pick
+ * at a time, and a failure that changes nothing at all.
  *
- * The budget lives in the assembler, so the pending pass comes in through `memory`
+ * The pending pick is worked out in the assembler, so it comes in through `memory`
  * exactly as index.js wires it. These tests stand that getter in directly, which is
- * also how they say what a pass is *given* rather than how it is worked out —
+ * also how they say what a pick is *given* rather than how it is worked out —
  * test/compactor.test.js covers the working-out.
  */
 
@@ -22,31 +39,39 @@ const ROLEPLAY = { id: 'roleplay-profile', name: 'Local (roleplay)' };
 const CLOCK = Date.parse('2026-09-17T09:00:00.000Z');
 
 const MEANT = [
-    { fact: 'Wren\'s brother drowned in the spring flood.', entities: ['Wren'] },
-    { fact: 'Aster promised to get Wren across the water before the feast day.', entities: ['Aster', 'Wren'] },
+    { fact: 'Wren\'s brother drowned in the spring flood.', entities: ['Wren'], from: [1] },
+    { fact: 'Aster promised to get Wren across the water before the feast day.', entities: ['Aster', 'Wren'], from: [4] },
 ];
 
-const reply = (promote = MEANT) => JSON.stringify({ promote });
+const reply = (canon = MEANT) => JSON.stringify({ canon });
 
-/** Summaries as the assembler hands them over: the scenes the next rebuild drops. */
-const evicting = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => ({
+/** The index as the assembler hands it over: every valid record, oldest first. */
+const indexed = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => ({
     index: from + i,
-    text: `Wren and Aster settled matter ${from + i} before the tide turned, and agreed to speak of it again at dawn.`,
+    record: {
+        kind: i % 2 ? 'major' : 'filler',
+        who: ['Wren', 'Aster'],
+        what: `Wren and Aster settled matter ${from + i} before the tide turned`,
+        changed: '',
+        because: '',
+        background: '',
+        line: `Matter ${from + i} was settled before the tide turned.`,
+    },
 }));
 
 /**
- * A pending pass the way `assembler.pendingPass` reports one. `message` is the live
- * message the batch lands on — the newest summary the pass read.
+ * A pending pick the way `assembler.pendingPass` reports one. `message` is the live
+ * message the batch lands on — the newest record the pick read — and each record
+ * carries its own message, because the rows are mapped back by identity.
  */
-function pass(chat, { covers = [0, 3], canon = [], room = 8, due = true, writing = true } = {}) {
+function pass(chat, { covers = [0, 3], slots = 8, due = true, writing = true } = {}) {
     return {
         due,
-        reason: due ? 'ready' : 'no-pressure',
+        reason: due ? 'no-canon' : 'covered',
         writing,
         covers,
-        evicting: evicting(covers[0], covers[1]),
-        canon,
-        room,
+        records: indexed(covers[0], covers[1]).map((entry) => ({ ...entry, message: chat[entry.index] })),
+        slots,
         message: chat[covers[1]],
     };
 }
@@ -68,8 +93,10 @@ function harness({ responses = [], chat, settings = {}, context: contextOptions 
         clock,
         // The assembler's once-per-cycle test in miniature: a pass stops being due
         // once a batch in the chat has read that far (memory/canon.js `coveredThrough`).
+        // `pendingPick` in miniature: a pick stops being due once a batch in the chat
+        // has read that far (pipeline/compactor.js).
         memory: memory ?? (() => {
-            const covered = canonFor(live).coveredThrough;
+            const covered = canonFor(live, READERS).coveredThrough;
             return pass(live, { due: covered === null || covered < 3 });
         }),
     });
@@ -92,8 +119,8 @@ afterEach(() => {
     vi.unstubAllGlobals();
 });
 
-describe('running a compaction pass', () => {
-    it('writes the batch on the newest summary it read, and saves the chat', async () => {
+describe('running a canon pick', () => {
+    it('writes the batch on the newest record it read, and saves the chat', async () => {
         const run = harness({ responses: [reply()] });
         run.summarizer.start();
         await run.summarizer.idle();
@@ -102,11 +129,13 @@ describe('running a compaction pass', () => {
         expect(readCanon(run.chat[3])).toEqual({
             status: 'valid',
             canon: {
+                // The rows the model cited, mapped back to the messages they came from.
                 facts: [
-                    { text: MEANT[0].fact, entities: ['Wren'] },
-                    { text: MEANT[1].fact, entities: ['Aster', 'Wren'] },
+                    { text: MEANT[0].fact, entities: ['Wren'], from: [0] },
+                    { text: MEANT[1].fact, entities: ['Aster', 'Wren'], from: [3] },
                 ],
                 covers: [0, 3],
+                slots: 8,
                 prompt: expect.any(String),
                 at: new Date(CLOCK).toISOString(),
             },
@@ -114,12 +143,12 @@ describe('running a compaction pass', () => {
         expect(run.context.saved.chat).toBeGreaterThan(0);
     });
 
-    it('sends the summaries being dropped, the canon as it stands, and the room', async () => {
+    it('sends the whole index and the slot count it was given', async () => {
         const chat = makeChat(12);
         const run = harness({
             chat,
-            responses: [reply()],
-            memory: () => pass(chat, { covers: [2, 6], canon: [{ text: 'Wren grew up on the harbour.' }], room: 4 }),
+            responses: [reply([{ ...MEANT[0], from: [1] }])],
+            memory: () => pass(chat, { covers: [2, 6], slots: 4 }),
         });
         run.summarizer.start();
         await run.summarizer.idle();
@@ -127,38 +156,57 @@ describe('running a compaction pass', () => {
         const sent = run.service.calls.find(isCanonCall).prompt[0].content;
         expect(sent).toContain('matter 2 before the tide turned');
         expect(sent).toContain('matter 6 before the tide turned');
-        expect(sent).toContain('Wren grew up on the harbour.');
-        expect(sent).toContain('At most 4 facts this time.');
+        expect(sent).toContain('Choose exactly 4 facts');
     });
 
     it('records the applied change, not the model\'s claim', async () => {
         const chat = makeChat(12);
         const run = harness({
             chat,
-            // Three promotions: one already in canon, one over its cap, one new.
+            // Four facts: one repeated inside the pick, one over its cap, one citing a
+            // row that was never sent, one good.
             responses: [JSON.stringify({
-                promote: [
-                    { fact: 'Wren grew up on the harbour.', entities: [] },
-                    { fact: `A fact far too long. ${'x'.repeat(200)}`, entities: [] },
-                    MEANT[0],
+                canon: [
+                    { fact: 'Wren grew up on the harbour.', entities: [], from: [1] },
+                    { fact: 'wren grew up on the harbour', entities: [], from: [2] },
+                    { fact: `A fact far too long. ${'x'.repeat(200)}`, entities: [], from: [3] },
+                    { ...MEANT[0], from: [4] },
                 ],
             })],
-            memory: () => pass(chat, { canon: [{ text: 'Wren grew up on the harbour.' }] }),
+            memory: () => pass(chat),
         });
         run.summarizer.start();
         await run.summarizer.idle();
 
-        expect(readCanon(chat[3]).canon.facts).toEqual([{ text: MEANT[0].fact, entities: ['Wren'] }]);
-        expect(run.summarizer.status.canon).toMatchObject({ promoted: 1, duplicates: 1, refused: 1 });
+        expect(readCanon(chat[3]).canon.facts).toEqual([
+            { text: 'Wren grew up on the harbour.', entities: [], from: [0] },
+            { text: MEANT[0].fact, entities: ['Wren'], from: [3] },
+        ]);
+        expect(run.summarizer.status.canon).toMatchObject({ picked: 2, duplicates: 1, refused: 1 });
     });
 
-    it('writes an empty batch when nothing was durable, so the range is not asked about again', async () => {
-        const run = harness({ responses: ['{"promote":[]}'] });
+    it('replaces the pick in force rather than adding to it', async () => {
+        // A pick supersedes (D-0071): the fold reads the newest batch alone, so a
+        // second pick that leaves a fact out actually leaves it out.
+        const chat = makeChat(12);
+        const run = harness({ chat, responses: [reply(), reply([MEANT[1]])], memory: () => pass(chat) });
         run.summarizer.start();
         await run.summarizer.idle();
 
-        expect(readCanon(run.chat[3]).canon).toMatchObject({ facts: [], covers: [0, 3] });
-        expect(canonFor(run.chat).coveredThrough).toBe(3);
+        expect(canonFor(chat, READERS).facts).toHaveLength(2);
+
+        await run.summarizer.drain();
+
+        expect(canonFor(chat, READERS).facts.map((fact) => fact.text)).toEqual([MEANT[1].fact]);
+    });
+
+    it('writes nothing when the pick picked nothing, because that is not an answer', async () => {
+        const run = harness({ responses: ['{"canon":[]}'] });
+        run.summarizer.start();
+        await run.summarizer.idle();
+
+        expect(readCanon(run.chat[3])).toEqual({ status: 'none', canon: null });
+        expect(run.summarizer.status.canon.streak).toBe(1);
     });
 
     it('goes last, behind the state the next prompt carries', async () => {
@@ -174,20 +222,20 @@ describe('running a compaction pass', () => {
         expect(isCanonCall(run.service.calls[1])).toBe(true);
     });
 
-    it('makes one call however many times the queue drains while the pass stays due', async () => {
+    it('makes one call however many times the queue drains while the pick stays due', async () => {
         const run = harness({ responses: [reply()] });
         run.summarizer.start();
         await run.summarizer.idle();
         await run.summarizer.drain();
         await run.summarizer.drain();
 
-        // The second and third drains find the same covers, now already written, and
-        // the assembler's own once-per-cycle test would refuse it anyway.
+        // The second and third drains find the index already covered, so `pendingPick`
+        // says nothing is due — no flag, and nothing stored about what has run.
         expect(run.service.calls.filter(isCanonCall)).toHaveLength(1);
     });
 });
 
-describe('when no pass is made at all', () => {
+describe('when no pick is made at all', () => {
     const noCall = async (options) => {
         const run = harness({ responses: [], ...options });
         run.summarizer.start();
@@ -196,7 +244,7 @@ describe('when no pass is made at all', () => {
         return run;
     };
 
-    it('does nothing when the assembler says no pass is due', async () => {
+    it('does nothing when the assembler says no pick is due', async () => {
         const chat = makeChat(12);
         await noCall({ chat, memory: () => pass(chat, { due: false }) });
     });
@@ -235,7 +283,7 @@ describe('when no pass is made at all', () => {
     });
 });
 
-describe('when a pass fails', () => {
+describe('when a pick fails', () => {
     const failing = async (response) => {
         const run = harness({ responses: [response] });
         run.summarizer.start();
@@ -243,12 +291,12 @@ describe('when a pass fails', () => {
         return run;
     };
 
-    it('writes nothing and leaves the summaries to be dropped as they are today', async () => {
-        for (const shape of ['refusal', 'truncated', 'prose', 'empty']) {
+    it('writes nothing, so the block keeps the canon it has', async () => {
+        for (const shape of ['refusal', 'truncated', 'prose', 'empty', 'uncited']) {
             const run = await failing(badCanonOutputs[shape](MEANT));
 
             expect(readCanon(run.chat[3]), shape).toEqual({ status: 'none', canon: null });
-            expect(canonFor(run.chat).facts, shape).toEqual([]);
+            expect(canonFor(run.chat, READERS).facts, shape).toEqual([]);
         }
     });
 
@@ -282,7 +330,7 @@ describe('when a pass fails', () => {
     });
 });
 
-describe('when the chat moves while a pass is out', () => {
+describe('when the chat moves while a pick is out', () => {
     it('discards the reply when its message is gone', async () => {
         const settle = deferred();
         const chat = makeChat(12);
@@ -294,7 +342,7 @@ describe('when the chat moves while a pass is out', () => {
         settle.resolve(reply());
         await run.summarizer.idle();
 
-        expect(canonFor(run.context.chat).facts).toEqual([]);
+        expect(canonFor(run.context.chat, READERS).facts).toEqual([]);
         expect(readCanon(chat[3]).status).toBe('none');
     });
 

@@ -441,11 +441,15 @@ D-0035).
 Recursive summarisation produces holes because it destroys the source before
 extracting what must survive. Extraction goes first here, always.
 
-A rebuild drops the oldest summaries out of the prompt. One see-saw step *before*
-that rebuild, Cairn asks the memory model which of those summaries said something
-that will still be true long after the scene ended — a death, a kinship, a promise
-made, a place learned, something permanently broken or given — and keeps those
-one-liners as **canon** at the head of the block:
+Cairn keeps a short **canon** at the head of the block: the few facts the rest of
+the story cannot be understood without.
+
+It is a **pick over the index**, not a promotion out of what is about to be evicted.
+Once every summary in the chat carries a compact record, Cairn sends the whole index
+— the story at about a fifth of the tokens, with its structure made explicit — and
+asks for *exactly* N facts. A fixed budget is the calibration: asked whether a thing
+is permanent, a small model says yes to everything; asked to choose ten rows out of
+a hundred and fifty, it has to rank them.
 
 ```
 [Established facts]:
@@ -460,13 +464,33 @@ one-liners as **canon** at the head of the block:
 
 **A chat with no canon renders exactly the bytes it did before**, section and all.
 
-The pass fires a step early on purpose. Canon sits above every summary, so adding
-a fact changes the block's head — the expensive break. A rebuild changes the head
-anyway, so the assembler holds a new batch back until the turn eviction fires and
-the two head-changes cost one break instead of two. Between rebuilds the canon
-text is byte-identical. The pass also gets a whole step of wall-clock, which is why
-it is the lowest-priority memory call: behind the world state, which the very next
-prompt carries, and behind the summaries, one of which can hold the step.
+**Why the whole index and not the evicted summaries.** Eviction from the prompt has
+nothing to do with what is available on disk: the chat file holds every summary,
+including ones that scrolled out of the block long before Cairn was installed. A pass
+that reads only what is about to be dropped is a local window ranking global
+importance, and most of any window sampled by recency is description and scenery. The
+earlier design did exactly that, and the canon it produced read like a different,
+lighter story than the one being played. Reading the index end to end is what fixed it.
+
+**A wrong fact is no longer permanent.** Each fact cites the records it was picked
+from, so canon is *derived* rather than remembered: fix a summary, edit a message or
+branch away from a scene and the facts resting on it go with it, and the next pick
+fills the slots again over the index as it now stands. Nothing has to be rolled back,
+because nothing was ever stored except the answer.
+
+**Canon changes only at a rebuild.** Canon sits above every summary, so changing it
+rewrites the block's head — the expensive break. A rebuild rewrites the head anyway,
+so a pick written between rebuilds is held back until the turn eviction fires, and
+the two head-changes cost one break instead of two. Between rebuilds the canon text is
+byte-identical. The pick itself is the lowest-priority memory call: behind the world
+state, which the very next prompt carries, behind the summaries, one of which can hold
+the see-saw step, and behind the index records the pick reads.
+
+**How many lines is the one knob, and it is a count rather than a budget.** The spine
+of a story does not grow as the story does — someone arriving or leaving, something
+permanently won or lost, are necessarily rare — so a three-hundred-message chat wants
+about the same eight to twelve lines a short one does. Leftover room falls back to
+summaries rather than being held.
 
 **Canon's room is derived, not a setting.** It takes at most a fifth of the block,
 and never more than the block has left after reserving two see-saw steps for the
@@ -486,31 +510,40 @@ share mid-cycle, bounded by what it held at that rebuild; the log carries both
 numbers as `memory_canon_cap` and `memory_canon_cap_applied`
 (`docs/decisions.md` D-0059).
 
-**A fact cannot be taken back.** A summary and a state are caches of text and go
-stale when it is edited; a fact says something *happened*, so no edit unmakes it,
-and P4 ships no lever to remove one. The prompt is written to err towards keeping
-fewer, the parser drops a fact over its cap rather than shortening it, a repeat is
-refused, and every promotion is shown in the chat under the message it was written
-on. What the panel reports is what was actually written, never what the model
-claimed.
+**The label on a record never decides what may be picked.** Each record carries a
+four-way kind — someone arriving or leaving, something large happening, description,
+filler — and the pick reads it as a hint it may overrule. A local label is not stable
+under hindsight: a purchase is filler until it turns out to be where they settled. On
+the chat this was measured against, the line the whole story rests on — where these two
+grew up and what they promised each other — was reachable only through rows the labeller
+had called *description*. Filtering on the kind would have thrown the premise away.
 
-Two of the three operations `DESIGN.md` §8 declares are built: **promote**, and
-**drop**, which the budgeter already did. **Merge** waits for evidence that the
-block still loses things worth keeping after promotion. Making room once canon is
-full — merging its lines, or moving the oldest to episodes — is P5's, and until
-then a full canon simply stops promoting and says so.
+**What the parser guarantees, and what it cannot.** A fact over its cap is dropped
+rather than shortened, a repeat is refused, a fact citing no row at all is refused —
+an uncitable fact would be a permanent one again — and every pick is shown in the chat
+under the message it was written on. What the panel reports is what was actually
+written, never what the model claimed. What no parser can check is whether the chosen
+facts are the *right* ones; that is read against the story itself.
+
+Two of the three operations `DESIGN.md` §8 declares are built: **pick**, which replaced
+promotion, and **drop**, which the budgeter already did. **Merge** is moot for a fixed
+slot count — the pick re-ranks rather than accumulating — and what it was for, making
+room once canon is full, is now a question the next pick answers on its own.
 
 ## Storage and branching
 
 Per-message data lives in `message.extra`, which branches and swipes correctly for
-free. All three tiers use it: a summary on the message it summarises, a world state
-on the newest message it read, and a canon batch on the newest summary its pass read.
+free. Every tier uses it: a summary on the message it summarises, its compact record
+beside it, a world state on the newest message it read, and a canon pick on the newest
+record it read.
 
-Nothing records which of them is current. The newest valid state wins, and the canon
-set is a fold over the chat, both read fresh every turn — so a branch, a swipe or a
-deletion rolls the memory back by taking the messages with it, and there is no
-checkpoint to keep in step and no rollback code to get wrong. A canon batch lands on
-a message behind the raw window by construction, where swipes never reach.
+Nothing records which of them is current. The newest valid state wins, the newest pick
+wins, and both are read fresh every turn — so a branch, a swipe or a deletion rolls the
+memory back by taking the messages with it, and there is no checkpoint to keep in step
+and no rollback code to get wrong. A pick lands on a message behind the raw window by
+construction, where swipes never reach. A record is hashed against the summary it was
+read from rather than the message, so re-summarising a message invalidates its record
+too — and the facts that cited it with it.
 
 **Cairn keeps nothing in `chatMetadata`.** The design once put canon there with
 checkpoints keyed to message index; per-message storage removed the need

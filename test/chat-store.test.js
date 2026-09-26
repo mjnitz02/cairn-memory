@@ -9,6 +9,7 @@ import { STORE_V1, STORE_V1_MES, storeV1Message } from './fixtures/store-v1.js';
 import { STORE_V2, STORE_V2_MES, storeV2Chat } from './fixtures/store-v2.js';
 import { STORE_V3, STORE_V3_CANON, storeV3Chat } from './fixtures/store-v3.js';
 import { STORE_V4, STORE_V4_CANON, storeV4Chat } from './fixtures/store-v4.js';
+import { STORE_V4_CANON_UNCITED } from './fixtures/store-v4-uncited.js';
 import { makeQvinkChat } from './mocks/qvink.js';
 
 const IGNORE = Symbol.for('ignore');
@@ -124,7 +125,8 @@ describe('the v4 store fixture', () => {
             record: structuredClone(canonIndex.record), prompt: canonIndex.prompt, at: canonIndex.at,
         });
         writeCanon(chat, 1, {
-            facts: structuredClone(canon.facts), covers: [...canon.covers], prompt: canon.prompt, at: canon.at,
+            facts: structuredClone(canon.facts), covers: [...canon.covers], slots: canon.slots,
+            prompt: canon.prompt, at: canon.at,
         });
         writeScene(chat[3], { text: scene.text, prompt: scene.prompt, at: scene.at });
         writeIndex(chat, 3, { record: structuredClone(index.record), prompt: index.prompt, at: index.at });
@@ -525,17 +527,32 @@ describe('writing a canon batch', () => {
 
     it('copies the facts it is given, so a later edit to the caller\'s array cannot reach the store', () => {
         const chat = storeV3Chat();
-        const facts = [{ text: 'A durable fact.', entities: ['Wren'] }];
+        const facts = [{ text: 'A durable fact.', entities: ['Wren'], from: [1] }];
         const covers = [0, 1];
-        writeCanon(chat, 1, { facts, covers, prompt: 'h:1', at: 'T' });
+        writeCanon(chat, 1, { facts, covers, slots: 3, prompt: 'h:1', at: 'T' });
 
         facts.push({ text: 'Added afterwards.', entities: [] });
         facts[0].entities.push('Aster');
+        facts[0].from.push(3);
         covers[1] = 99;
 
         expect(readCanon(chat[1]).canon).toEqual({
-            facts: [{ text: 'A durable fact.', entities: ['Wren'] }], covers: [0, 1], prompt: 'h:1', at: 'T',
+            facts: [{ text: 'A durable fact.', entities: ['Wren'], from: [1] }],
+            covers: [0, 1], slots: 3, prompt: 'h:1', at: 'T',
         });
+    });
+
+    it('reads a batch written before a fact cited anything, and writes no empty slots key', () => {
+        // Both fields are optional inside v4 (test/fixtures/store-v4-uncited.js): a
+        // batch from before the pick is a readable batch, not an invalid one.
+        const chat = storeV3Chat();
+        chat[1].extra.cairn = { v: 4, ...structuredClone({ canon: STORE_V4_CANON_UNCITED }) };
+
+        expect(readCanon(chat[1])).toEqual({ status: 'valid', canon: STORE_V4_CANON_UNCITED });
+
+        const fresh = storeV3Chat();
+        writeCanon(fresh, 1, { facts: [{ text: 'A fact.', entities: [], from: [1] }], covers: [0, 1], prompt: 'h:1', at: 'T' });
+        expect(readCanon(fresh[1]).canon).not.toHaveProperty('slots');
     });
 
     it('refuses what would corrupt the store, writing nothing', () => {

@@ -185,41 +185,59 @@ export function readCanon(message) {
 }
 
 /**
- * Store a canon batch on the newest summary its pass read. That message is behind
- * the raw window by construction, so a batch lands where swipes never reach.
+ * Store a canon batch on the newest indexed summary the pick read. That message is
+ * behind the raw window by construction, so a batch lands where swipes never reach.
  *
  * The caller enforces the per-fact caps before calling (memory/canon-strategy.js);
  * this only refuses what would corrupt the store.
  *
+ * `slots` is what the pick was *asked* for, and it is stored rather than derived
+ * because a short answer has to be distinguishable from an unanswered question — a
+ * four-fact reply to a ten-slot pick is a spine, not work still to do
+ * (pipeline/compactor.js `pendingPick`).
+ *
  * @param {Array<object>} chat The live chat.
- * @param {number} index The newest message the pass read.
- * @param {{facts: Array<{text: string, entities: string[]}>, covers: number[],
- *          prompt: string, at?: string}} canon
+ * @param {number} index The newest message the pick read.
+ * @param {{facts: Array<{text: string, entities: string[], from: number[]}>,
+ *          covers: number[], slots?: number, prompt: string, at?: string}} canon
  * @returns {boolean} Whether anything was written.
  */
-export function writeCanon(chat, index, { facts, covers, prompt, at = new Date().toISOString() }) {
+export function writeCanon(chat, index, { facts, covers, slots, prompt, at = new Date().toISOString() }) {
     if (!Array.isArray(facts) || !facts.every(wellFormedFact) || typeof prompt !== 'string') return false;
     if (!Array.isArray(covers) || covers.length !== 2 || !covers.every(Number.isInteger) || covers[0] > covers[1]) return false;
     if (typeof chat?.[index]?.mes !== 'string') return false;
 
     return writeKey(chat[index], 'canon', {
-        facts: facts.map((fact) => ({ text: fact.text, entities: [...fact.entities] })),
+        facts: facts.map((fact) => ({
+            text: fact.text,
+            entities: [...fact.entities],
+            from: [...(fact.from ?? [])],
+        })),
         covers: [...covers],
+        ...(Number.isInteger(slots) ? { slots } : {}),
         prompt,
         at,
     });
 }
 
 /**
- * `entities` is stored and never read in P4: `store/entity-index.js` is a named
- * interface boundary (DESIGN.md §11), the model gives the tags in the same reply,
- * and adding the field later would cost a store version and a migration.
+ * `from` is the messages whose index records the fact was picked from, and it is the
+ * one field here that is read back: a fact outlives a source only while one of them is
+ * still valid (memory/canon.js). It is **optional**, because a batch written before the
+ * pick existed has no citations and is still a readable batch — it simply cannot be
+ * invalidated by a record going away.
+ *
+ * `entities` is stored and never read: `store/entity-index.js` is a named interface
+ * boundary (DESIGN.md §11), the model gives the tags in the same reply, and adding the
+ * field later would cost a store version and a migration.
  */
 function wellFormedFact(fact) {
     return isObject(fact)
         && typeof fact.text === 'string' && fact.text !== ''
         && Array.isArray(fact.entities)
-        && fact.entities.every((entity) => typeof entity === 'string' && entity !== '');
+        && fact.entities.every((entity) => typeof entity === 'string' && entity !== '')
+        && (fact.from === undefined
+            || (Array.isArray(fact.from) && fact.from.every(Number.isInteger)));
 }
 
 /**

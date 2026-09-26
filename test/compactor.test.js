@@ -1,170 +1,165 @@
 import { describe, expect, it } from 'vitest';
-import { MIN_EVICT_SET, applyPass, pendingCompaction } from '../src/pipeline/compactor.js';
-import { createBudget } from '../src/pipeline/budgeter.js';
+import { MIN_INDEX_RECORDS, applyPick, indexRecords, pendingPick } from '../src/pipeline/compactor.js';
+import { readIndex } from '../src/store/chat-store.js';
+import { cairnIndexStore } from './mocks/cairn.js';
+import { makeQvinkChat } from './mocks/qvink.js';
 
-/** Each summary costs 10 tokens; nothing here depends on the real tokenizer. */
-const scenes = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => ({ index: from + i }));
-const tokensOf = (list) => list.length * 10;
+/** An index of `count` records over messages 0, 1, 2 … — the pick's whole input. */
+const records = (count, from = 0) =>
+    Array.from({ length: count }, (_, i) => ({ index: from + i, record: { kind: 'filler' } }));
 
-/** A block under pressure: 30 summaries at 300 tokens against a 320-token cap. */
-const pressured = {
-    scenes: scenes(0, 29), sceneCap: 320, floor: 160, stepTokens: 100, room: 8, tokensOf,
-};
+/** The fold in force: what `canonFor` returns. */
+const canon = (fields = {}) => ({ coveredThrough: 9, slots: 10, dropped: 0, ...fields });
 
-describe('when a compaction pass is due', () => {
-    it('is due one step before the block overflows, not when it already has', () => {
-        // 300 + 100 > 320: the step after this one cannot fit.
-        expect(pendingCompaction(pressured)).toMatchObject({ due: true, reason: 'ready' });
-
-        // A cap the next step still fits under leaves nothing to do.
-        expect(pendingCompaction({ ...pressured, sceneCap: 500 }))
-            .toMatchObject({ due: false, reason: 'no-pressure' });
+describe('when a canon pick is due', () => {
+    it('is due when nothing has ever been picked in this chat', () => {
+        expect(pendingPick({ records: records(20), canon: null, slots: 10 }))
+            .toMatchObject({ due: true, reason: 'no-canon', covers: [0, 19] });
+        expect(pendingPick({ records: records(20), canon: canon({ coveredThrough: null }), slots: 10 }))
+            .toMatchObject({ due: true, reason: 'no-canon' });
     });
 
-    it('is not due when canon has no room left, so no call is made at all', () => {
-        expect(pendingCompaction({ ...pressured, room: 0 }))
-            .toMatchObject({ due: false, reason: 'canon-full', evicting: [], covers: null });
+    it('is due when the index has grown past what the last pick read', () => {
+        expect(pendingPick({ records: records(20), canon: canon({ coveredThrough: 19 }), slots: 10 }))
+            .toMatchObject({ due: false, reason: 'covered' });
+        expect(pendingPick({ records: records(21), canon: canon({ coveredThrough: 19 }), slots: 10 }))
+            .toMatchObject({ due: true, reason: 'new-records', covers: [0, 20] });
     });
 
-    it('is not due when too few summaries would be dropped to be worth a call', () => {
-        // A floor close under the block: two summaries go, which is below the minimum.
-        expect(pendingCompaction({ ...pressured, sceneCap: 310, floor: 305, stepTokens: 20 }))
-            .toMatchObject({ due: false, reason: 'too-few' });
-        expect(pendingCompaction({ ...pressured, scenes: scenes(0, 1) }))
-            .toMatchObject({ due: false, reason: 'too-few' });
-        expect(MIN_EVICT_SET).toBe(3);
+    it('is due when a fact lost the records it rested on', () => {
+        // An edit, a resummarise or a branch took a record away, so the pick in force
+        // is missing a slot and the answer is out of date (memory/canon.js).
+        expect(pendingPick({ records: records(20), canon: canon({ coveredThrough: 19, dropped: 1 }), slots: 10 }))
+            .toMatchObject({ due: true, reason: 'lost-facts' });
     });
 
-    it('is not due for a range a pass has already answered for', () => {
-        const due = pendingCompaction(pressured);
-
-        expect(pendingCompaction({ ...pressured, coveredThrough: due.covers[1] }))
-            .toMatchObject({ due: false, reason: 'already-covered' });
-        // One summary short of it, and the newer ground makes it due again.
-        expect(pendingCompaction({ ...pressured, coveredThrough: due.covers[1] - 1 }))
-            .toMatchObject({ due: true });
+    it('is due when the slot count moved, because the question itself changed', () => {
+        expect(pendingPick({ records: records(20), canon: canon({ coveredThrough: 19, slots: 6 }), slots: 10 }))
+            .toMatchObject({ due: true, reason: 'slots-changed' });
     });
 
-    it('is not due on a chat with no block at all', () => {
-        expect(pendingCompaction({ ...pressured, scenes: [] })).toMatchObject({ due: false, reason: 'too-few' });
-        expect(pendingCompaction()).toMatchObject({ due: false, reason: 'canon-full' });
+    it('treats a short answer as answered, so it is not asked again every turn', () => {
+        // Four facts against ten slots is a spine, not work still to do. Without the
+        // stored `slots` this would be indistinguishable from an unanswered question.
+        const answered = canon({ coveredThrough: 19, slots: 10 });
+
+        for (let turn = 0; turn < 20; turn++) {
+            expect(pendingPick({ records: records(20), canon: answered, slots: 10 }))
+                .toMatchObject({ due: false, reason: 'covered' });
+        }
     });
 
-    /**
-     * Pressure holds for the whole step before the rebuild. Without the
-     * once-per-cycle test that would be a call every turn (docs/p4-plan.md decision 6).
-     */
-    it('yields one pass however long the pressure holds', () => {
-        let coveredThrough = null;
-        let passes = 0;
+    it('is not due with too few records to rank, or with no slots to fill', () => {
+        expect(pendingPick({ records: records(MIN_INDEX_RECORDS - 1), canon: null, slots: 10 }))
+            .toMatchObject({ due: false, reason: 'too-few', records: [], covers: null });
+        expect(pendingPick({ records: records(20), canon: null, slots: 0 }))
+            .toMatchObject({ due: false, reason: 'no-slots' });
+        expect(pendingPick()).toMatchObject({ due: false, reason: 'no-slots' });
+        expect(MIN_INDEX_RECORDS).toBe(3);
+    });
 
-        for (let turn = 0; turn < 10; turn++) {
-            const due = pendingCompaction({ ...pressured, coveredThrough });
-            if (due.due) {
-                passes++;
-                coveredThrough = due.covers[1];
-            }
+    it('carries the whole index, because the pick ranks all of it', () => {
+        // Not the newest ones, and not the ones the block still holds: the pick reads
+        // the chat, which is the single sentence D-0062's three gaps reduce to.
+        const due = pendingPick({ records: records(200), canon: null, slots: 10 });
+
+        expect(due.records).toHaveLength(200);
+        expect(due.covers).toEqual([0, 199]);
+    });
+});
+
+describe('the index the pick reads', () => {
+    it('is every valid record in the chat, oldest first, with its message', () => {
+        const chat = makeQvinkChat({ length: 12 });
+        for (const index of [2, 5, 9]) {
+            chat[index].extra.cairn = cairnIndexStore(chat[index], `Summary ${index}.`, { what: `Thing ${index}` });
         }
 
-        expect(passes).toBe(1);
+        expect(indexRecords(chat, { readIndex }).map((entry) => entry.index)).toEqual([2, 5, 9]);
+        expect(indexRecords(chat, { readIndex })[1].record.what).toBe('Thing 5');
+    });
+
+    it('leaves out a record whose summary was resummarised away', () => {
+        const chat = makeQvinkChat({ length: 12 });
+        chat[2].extra.cairn = cairnIndexStore(chat[2], 'Summary 2.');
+        chat[5].extra.cairn = cairnIndexStore(chat[5], 'Summary 5.');
+        chat[5].extra.cairn.scene.text = 'A different summary entirely.';
+
+        expect(indexRecords(chat, { readIndex }).map((entry) => entry.index)).toEqual([2]);
+    });
+
+    it('is empty for a chat with no records at all', () => {
+        expect(indexRecords(makeQvinkChat({ length: 8 }), { readIndex })).toEqual([]);
+        expect(indexRecords(null, { readIndex })).toEqual([]);
     });
 });
 
-describe('what a pass reads', () => {
-    it('reads the oldest summaries, in order, and says which they are', () => {
-        const due = pendingCompaction(pressured);
+describe('what a pick becomes', () => {
+    const sent = [{ index: 4 }, { index: 7 }, { index: 11 }];
 
-        expect(due.evicting.map((scene) => scene.index)).toEqual(
-            Array.from({ length: due.evicting.length }, (_, i) => i),
-        );
-        expect(due.covers).toEqual([0, due.evicting.length - 1]);
+    it('maps the rows the model cited back to the messages they came from', () => {
+        const applied = applyPick({
+            picked: [
+                { text: 'Her brother is dead.', entities: ['Wren'], from: [1] },
+                { text: 'He burned the army to buy her freedom.', entities: [], from: [2, 3] },
+            ],
+            records: sent,
+            covers: [4, 11],
+            slots: 10,
+            prompt: 'h:1',
+            at: 'T',
+        });
+
+        expect(applied.batch.facts).toEqual([
+            { text: 'Her brother is dead.', entities: ['Wren'], from: [4] },
+            { text: 'He burned the army to buy her freedom.', entities: [], from: [7, 11] },
+        ]);
+        expect(applied).toMatchObject({ picked: 2, duplicates: 0, dropped: 0, uncited: 0 });
+        expect(applied.batch).toMatchObject({ covers: [4, 11], slots: 10, prompt: 'h:1', at: 'T' });
     });
 
-    /**
-     * The invariant §4 names: the simulation must be the set the budgeter really
-     * drops. Run the real budgeter forward a step and compare, rather than
-     * re-deriving the answer from the same arithmetic.
-     */
-    it('reads exactly what the next rebuild drops', () => {
-        const budget = createBudget();
-        const sceneCap = 320;
-        const floor = Math.floor(sceneCap * 0.5);
-        const block = scenes(0, 29);
-        const stepTokens = 100;
+    it('refuses a fact whose every row fell outside the index it was sent', () => {
+        // An uncitable fact is a permanent one, which is what a pick exists not to be.
+        const applied = applyPick({
+            picked: [{ text: 'Invented.', entities: [], from: [99] }],
+            records: sent, covers: [4, 11], slots: 10, prompt: 'h:1', at: 'T',
+        });
 
-        const due = pendingCompaction({ scenes: block, sceneCap, floor, stepTokens, room: 8, tokensOf });
-        expect(due.due).toBe(true);
-
-        // The next step arrives: ten more summaries, and now the block is over.
-        const stepped = scenes(0, 39);
-        const fit = budget.fit({ scenes: stepped, sceneCap, tokensOf });
-        const dropped = stepped.slice(0, fit.evicted).map((scene) => scene.index);
-
-        expect(due.evicting.map((scene) => scene.index)).toEqual(dropped);
+        expect(applied).toMatchObject({ picked: 0, uncited: 1 });
+        expect(applied.batch.facts).toEqual([]);
     });
-
-    it('never reads the whole block, so the rebuild always has something to keep', () => {
-        const due = pendingCompaction({ ...pressured, floor: 0, stepTokens: 1_000 });
-
-        expect(due.evicting.length).toBe(pressured.scenes.length - 1);
-    });
-});
-
-describe('what a reply becomes', () => {
-    const covers = [4, 17];
 
     it('counts the facts it actually wrote, not the ones the model claimed', () => {
-        const applied = applyPass({
-            promoted: [
-                { text: 'Her brother is dead.', entities: ['Wren'] },
-                { text: 'her brother is dead!', entities: [] },
-                { text: 'They kissed at the lighthouse.', entities: [] },
+        const applied = applyPick({
+            picked: [
+                { text: 'Her brother is dead.', entities: [], from: [1] },
+                { text: 'her brother is dead!', entities: [], from: [2] },
             ],
-            dropped: [{ reason: 'fact-too-long' }, { reason: 'over-room' }],
-            canon: [{ text: 'Wren grew up on the harbour.' }],
-            covers,
-            prompt: 'h:1',
-            at: 'T',
+            dropped: [{ reason: 'fact-too-long' }, { reason: 'over-slots' }],
+            records: sent, covers: [4, 11], slots: 10, prompt: 'h:1', at: 'T',
         });
 
-        expect(applied).toEqual({
-            batch: {
-                facts: [
-                    { text: 'Her brother is dead.', entities: ['Wren'] },
-                    { text: 'They kissed at the lighthouse.', entities: [] },
-                ],
-                covers: [4, 17],
-                prompt: 'h:1',
-                at: 'T',
-            },
-            promoted: 2,
-            duplicates: 1,
-            dropped: 2,
-        });
+        expect(applied).toMatchObject({ picked: 1, duplicates: 1, dropped: 2 });
     });
 
-    it('makes an empty batch when nothing survived, which still records the range read', () => {
-        const applied = applyPass({
-            promoted: [{ text: 'Wren grew up on the harbour.' }],
-            canon: [{ text: 'Wren grew up on the harbour.' }],
-            covers,
-            prompt: 'h:1',
-            at: 'T',
-        });
+    it('writes the same batch twice from the same reply, so a re-derivation is stable', () => {
+        // Canon is derivable rather than remembered (memory/canon.js): nothing about
+        // when or how often it ran may show up in what is stored.
+        const reply = {
+            picked: [{ text: 'Her brother is dead.', entities: ['Wren'], from: [1, 3] }],
+            records: sent, covers: [4, 11], slots: 10, prompt: 'h:1', at: 'T',
+        };
 
-        expect(applied).toEqual({
-            batch: { facts: [], covers: [4, 17], prompt: 'h:1', at: 'T' },
-            promoted: 0,
-            duplicates: 1,
-            dropped: 0,
-        });
+        expect(applyPick(reply)).toEqual(applyPick(reply));
     });
 
     it('copies the range, so the caller\'s array cannot reach the store', () => {
-        const mutable = [4, 17];
-        const applied = applyPass({ promoted: [], canon: [], covers: mutable, prompt: 'h:1', at: 'T' });
+        const mutable = [4, 11];
+        const applied = applyPick({
+            picked: [], records: sent, covers: mutable, slots: 10, prompt: 'h:1', at: 'T',
+        });
         mutable[1] = 99;
 
-        expect(applied.batch.covers).toEqual([4, 17]);
+        expect(applied.batch.covers).toEqual([4, 11]);
     });
 });

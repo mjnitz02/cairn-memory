@@ -183,14 +183,33 @@ function memoryFields(memory) {
         // batches here, and nothing discontinuous may happen anywhere else.
         memory_rebuilt: memory.rebuilt ?? null,
         memory_over_cap: memory.overCap,
+        // The examples latch (docs/decisions.md D-0068). The reclaim's own check, and it
+        // needs both fields: `memory_examples_stripped` must go false->true exactly once
+        // and never back, and `budget_card` must fall by the card's example tokens on the
+        // same turn `memory_examples_latched` is true. Both, or the reclaim vanished into
+        // the margin with nothing to see.
+        memory_examples_stripped: memory.examplesStripped ?? null,
+        memory_examples_latched: memory.examplesLatched ?? null,
         // The cap in use: the smaller of the fixed share and what the chat leaves
         // (docs/decisions.md D-0038, D-0052).
         memory_cap: memory.cap,
-        // Canon at the block's head (docs/p4-plan.md §3). `memory_canon_admitted` is the
-        // check the run reads: it may change only on a turn where `memory_evicted > 0`
-        // or `memory_step_reason` is `first-turn`.
+        // Canon at the block's head (docs/p4-plan.md §3, docs/decisions.md D-0071).
+        // `memory_canon_admitted` is the check the run reads: it may change only on a
+        // turn where `memory_evicted > 0` or `memory_step_reason` is `first-turn`, and
+        // `memory_canon_rederived` says the same thing in one field.
         memory_canon_facts: memory.canonFacts ?? null,
         memory_canon_admitted: memory.canonAdmitted ?? null,
+        // The pick: how many facts were asked for, how many the pick in force filled,
+        // and whether this turn admitted a new one.
+        memory_canon_slots: memory.canonSlots ?? null,
+        memory_canon_picked: memory.canonPicked ?? null,
+        memory_canon_rederived: memory.canonRederived ?? null,
+        // Facts whose every cited record is gone — an edit, a resummarise or a branch.
+        // Non-zero makes the next pick due, so it should clear itself rather than persist.
+        memory_canon_lost_sources: memory.canonLostSources ?? null,
+        // Why a pick is or is not due: no-canon, new-records, lost-facts, slots-changed,
+        // covered, too-few, no-slots (pipeline/compactor.js).
+        memory_canon_reason: memory.canonReason ?? null,
         memory_canon_tokens: memory.canonTokens ?? null,
         memory_canon_cap: memory.canonCap ?? null,
         // What the block was fitted to, which between rebuilds is the cap the last
@@ -202,6 +221,12 @@ function memoryFields(memory) {
         // Facts the chat holds that the cap left out of this block.
         memory_canon_spilled: memory.canonSpilled ?? null,
         memory_canon_through: memory.canonThrough ?? null,
+        // The index the pick reads, and its four-way split. An extraction with no forced
+        // budget over-labels `major` (docs/decisions.md D-0076), and the pick is what has
+        // to survive that — a run where every cited row is `major` is the label gating in
+        // practice (D-0080).
+        memory_index_records: memory.indexRecords ?? null,
+        memory_index_kinds: memory.indexKinds ?? null,
         // The cap less what canon took: what the summaries are actually fitted to.
         memory_scene_cap: memory.sceneCap ?? null,
         // The block's two fidelities (docs/decisions.md D-0075). The checks a run reads:
@@ -307,15 +332,20 @@ function compactionFields(status) {
         // ready, off, not-writing, no-profile, group-chat, no-chat or profile-missing.
         compaction_gate: status.gate ?? null,
         compaction_in_flight: status.inFlight != null,
-        // The range a due pass would read, or null when none is due.
+        // Why a pick is or is not due (pipeline/compactor.js): no-canon, new-records,
+        // lost-facts, slots-changed, covered, too-few or no-slots. `covered` on every
+        // turn after the first pick is the steady state.
+        compaction_reason: status.reason ?? null,
+        // The index a due pick would read, or null when none is due.
         compaction_pending: status.pending?.covers ?? null,
-        compaction_pending_summaries: status.pending?.summaries ?? null,
+        compaction_pending_records: status.pending?.records ?? null,
+        compaction_pending_slots: status.pending?.slots ?? null,
         compaction_given_up: status.givenUp ?? null,
-        // No room left, so no call is made at all (decision 6). P5's evidence.
-        compaction_full: status.full ?? null,
         compaction_passes: status.calls ?? null,
-        compaction_written: status.written ?? null,
-        compaction_promoted: status.promoted ?? null,
+        // The applied change, never the model's claim (CLAUDE.md §4.18): facts written,
+        // facts the pick repeated itself on, and what the parser or the citation check
+        // refused.
+        compaction_picked: status.picked ?? null,
         compaction_duplicates: status.duplicates ?? null,
         compaction_dropped_fields: status.refused ?? null,
         compaction_failed: status.failures ?? null,

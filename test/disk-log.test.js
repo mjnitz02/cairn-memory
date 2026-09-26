@@ -489,3 +489,91 @@ describe('disk log — P6 the cap and its reserves', () => {
         expect(await line({})).toMatchObject({ memory_planned: false, budget_reported: false });
     });
 });
+
+/**
+ * Each phase's check names the log fields it is read from (docs/p5-plan.md §3). A check
+ * whose field is missing is a check nobody can run, and the gap is invisible until the
+ * run — so the field list is a test (CLAUDE.md §9.35).
+ */
+describe('the fields a run is read from', () => {
+    const memory = {
+        writing: true, included: 43, cap: 6_000, sceneCap: 6_362, tokens: 2_400,
+        evicted: 6, rebuilt: true, stepReason: 'step',
+        // Stage 1 — the reclaim (docs/decisions.md D-0068).
+        examplesStripped: true, examplesLatched: true,
+        // Stage 2.5 — the compact tier (D-0075).
+        blockFull: 43, blockCompact: 39, demoted: 6, compactMissing: 0, compactCap: 998,
+        // Stage 3 — the pick (D-0071).
+        canonFacts: 10, canonAdmitted: 10, canonSlots: 10, canonPicked: 10,
+        canonRederived: true, canonLostSources: 0, canonReason: 'covered',
+        indexRecords: 85, indexKinds: { description: 38, major: 24, filler: 21, cast: 2 },
+        budget: { card: 1_200, lore: 800, window: 2_000, state: 100, margin: 64, limitedBy: 'room' },
+    };
+    // Every key the two queues actually report, so a renamed one shows up as a null
+    // below rather than as a quiet gap in the log — which is what `status.promoted`
+    // becoming `status.picked` did (docs/decisions.md D-0079).
+    const summaries = {
+        canon: {
+            gate: 'ready', reason: 'covered', inFlight: null, pending: null, givenUp: false,
+            calls: 2, picked: 10, duplicates: 1, refused: 0, failures: 0, lastReason: 'none',
+            ms: 9_000, lastMs: 4_400, tokensIn: 10_600, tokensOut: 800,
+        },
+        index: {
+            gate: 'ready', inFlight: null, pending: null, waiting: 0, givenUp: false,
+            calls: 6, records: 85, dropped: 0, missed: 0, failures: 0, lastReason: 'none',
+            ms: 26_000, lastMs: 4_100, tokensIn: 18_000, tokensOut: 6_400,
+        },
+    };
+
+    const line = async () => {
+        const log = createDiskLog({ delayMs: 0 });
+        log.setEnabled(true);
+        log.append(snapshot({ memory, summaries }), getContext);
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        return JSON.parse(writtenLines().at(-1));
+    };
+
+    it('carries the reclaim\'s two fields, which have to agree or it did not happen', async () => {
+        const entry = await line();
+
+        expect(entry.memory_examples_stripped).toBe(true);
+        expect(entry.memory_examples_latched).toBe(true);
+        expect(entry.budget_card).toBe(1_200);
+    });
+
+    it('carries the compact tier\'s fields, including the demotion invariant', async () => {
+        const entry = await line();
+
+        expect(entry.memory_block_full).toBe(43);
+        expect(entry.memory_block_compact).toBe(39);
+        expect(entry.memory_demoted).toBe(6);
+        // A demotion may only land on a rebuild turn, so both have to be readable.
+        expect(entry.memory_rebuilt).toBe(true);
+        expect(entry.memory_compact_missing).toBe(0);
+    });
+
+    it('carries the pick\'s fields, in the pick\'s own vocabulary', async () => {
+        const entry = await line();
+
+        expect(entry.memory_canon_slots).toBe(10);
+        expect(entry.memory_canon_picked).toBe(10);
+        expect(entry.memory_canon_rederived).toBe(true);
+        expect(entry.memory_canon_lost_sources).toBe(0);
+        expect(entry.memory_canon_reason).toBe('covered');
+        expect(entry.memory_index_records).toBe(85);
+        expect(entry.memory_index_kinds).toEqual({ description: 38, major: 24, filler: 21, cast: 2 });
+        expect(entry.compaction_picked).toBe(10);
+        expect(entry.compaction_reason).toBe('covered');
+        expect(entry.index_records).toBe(85);
+    });
+
+    it('leaves no field the queues report as null when they have reported it', async () => {
+        // A null where a queue gave a number means the log is reading a key that moved.
+        const entry = await line();
+        const named = Object.entries(entry)
+            .filter(([key]) => key.startsWith('compaction_') || key.startsWith('index_'))
+            .filter(([key, value]) => value === null && !key.includes('pending') && !key.includes('last'));
+
+        expect(named.map(([key]) => key)).toEqual([]);
+    });
+});

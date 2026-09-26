@@ -5,6 +5,7 @@
  * migration, and gains a fixture of the old shape in the test suite. We never
  * orphan someone's accumulated memory.
  */
+import { DEFAULT_SLOTS } from '../memory/canon.js';
 import { DEFAULT_LORE_CAP } from '../prompt/lore-cap.js';
 import { error } from '../util/log.js';
 
@@ -98,11 +99,17 @@ export const DEFAULT_SETTINGS = Object.freeze({
      */
     worldState: true,
     /**
-     * Promote the permanent facts out of summaries before they are dropped, and keep
-     * them at the head of the block (docs/p4-plan.md decision 10). Inert until a memory
-     * profile is chosen, and held while qvink is still writing the block.
+     * Pick the story's spine out of the index and keep it at the head of the block
+     * (docs/decisions.md D-0071). Inert until a memory profile is chosen, and held
+     * while qvink is still writing the block.
      */
     keepCanon: true,
+    /**
+     * How many facts that pick fills. A count rather than a token cap: the spine does
+     * not grow with the chat, so a long chat wants the same eight to twelve lines a
+     * short one does, and leftover tokens fall back to summaries (D-0071).
+     */
+    canonSlots: DEFAULT_SLOTS,
     /**
      * The most tokens the lorebook may take in the prompt (docs/decisions.md D-0069).
      * Written into ST's own `world_info_budget_cap`, which ships at 0 — no cap —

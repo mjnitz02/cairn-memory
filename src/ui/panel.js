@@ -34,6 +34,7 @@ export async function renderSettingsPanel(context, handlers = {}) {
     bindCheckbox(context, 'ownMemoryBlock', (value) => handlers.onOwnMemoryBlockChange?.(value));
     bindCheckbox(context, 'worldState', (value) => handlers.onWorldStateChange?.(value));
     bindCheckbox(context, 'keepCanon', (value) => handlers.onKeepCanonChange?.(value));
+    bindNumber(context, 'canonSlots', (value) => handlers.onCanonSlotsChange?.(value));
     bindCheckbox(context, 'debugLogging', (value) => setDebugEnabled(value));
 
     populateProfiles(context, settings.memoryProfileId);

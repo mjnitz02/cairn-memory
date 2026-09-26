@@ -5,6 +5,12 @@
  * stays behind as the old shape. v4 adds `index` beside `scene`, `state` and `canon`
  * (docs/decisions.md D-0070).
  *
+ * **The canon batch gained `from` and `slots` inside v4** (D-0071), and the version
+ * deliberately did not move with them: both are optional on read, so a batch written
+ * before the pick existed still reads as valid and simply cannot be invalidated by a
+ * record going away (store/chat-store.js `wellFormedFact`). `store-v4-uncited.js` is
+ * that older shape, kept as its own fixture rather than as a version.
+ *
  * **The text is v3's, deliberately.** Keeping the same four messages and the same
  * summaries makes the difference between the two fixtures exactly the one new key, which
  * is what a migration test wants to see. The envelopes follow store-v1.js through
@@ -59,17 +65,24 @@ export const STORE_V4_CANON = Object.freeze({
             Object.freeze({
                 text: 'Wren\'s brother drowned in the spring flood.',
                 entities: Object.freeze(['Wren', 'the spring flood']),
+                // The message whose index record the fact was picked from. It is what
+                // makes the fact removable: lose the record and the fact goes with it.
+                from: Object.freeze([1]),
             }),
             Object.freeze({
                 text: 'Aster crewed the winter run with Wren\'s brother the year before the flood.',
                 entities: Object.freeze(['Aster', 'Wren']),
+                from: Object.freeze([1]),
             }),
             Object.freeze({
                 text: 'Aster promised to get Wren across the water before the feast day.',
                 entities: Object.freeze(['Aster', 'Wren', 'the feast day']),
+                from: Object.freeze([1, 3]),
             }),
         ]),
         covers: Object.freeze([0, 1]),
+        /** What the pick was asked for, so a short answer is distinguishable from none. */
+        slots: 3,
         prompt: 'h:3e91f4a0c7b218',
         at: '2026-09-17T09:12:04.000Z',
     }),
