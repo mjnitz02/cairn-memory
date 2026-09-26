@@ -67,6 +67,12 @@ function harness({ responses = [], chat, settings = {}, context: contextOptions 
         settings: () => ({ memoryProfileId: MEMORY.id, ...settings }),
         clock,
         onUpdate,
+        // The block is qvink's in these tests, which shuts the index gate the way
+        // `worldState: false` shuts the state's: a record nothing would read is not
+        // written (pipeline/gates.js, docs/decisions.md D-0075). The index batch has its
+        // own tests in test/index-queue.test.js.
+        memory: () => ({ writing: false }),
+
         ...(stateStrategy ? { stateStrategy } : {}),
     });
     return { context, service, summarizer };

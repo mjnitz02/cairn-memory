@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-    DEFAULT_KIND, INDEX_HEADER, KINDS, KIND_MEANINGS, MAX_SLOT_CHARS, MAX_WHO, MAX_WHO_CHARS,
-    kindRank, normaliseRecord, renderIndex, renderRecord, validRecord,
+    DEFAULT_KIND, INDEX_HEADER, KINDS, KIND_MEANINGS, MAX_LINE_CHARS, MAX_SLOT_CHARS, MAX_WHO,
+    MAX_WHO_CHARS, compactLine, kindRank, normaliseRecord, renderIndex, renderRecord, validRecord,
 } from '../src/memory/index-record.js';
 import { estimateTokens } from '../src/util/tokens.js';
 
@@ -11,6 +11,8 @@ const MEANT = {
     what: 'Aster promised to get Wren across before the feast day',
     changed: 'Wren has a crossing promised',
     because: 'the ferry was posted delayed',
+    background: 'Aster and Wren were raised in the same terminal town',
+    line: 'Aster promised to get Wren across before the feast day, the ferry having been posted delayed.',
 };
 
 const filled = (over = {}) => normaliseRecord({ ...MEANT, ...over }).record;
@@ -54,7 +56,13 @@ describe('normalising a record', () => {
         });
 
         expect(record).toEqual({
-            kind: 'major', who: ['Aster', 'Wren'], what: 'Aster promised a crossing', changed: '', because: '',
+            kind: 'major',
+            who: ['Aster', 'Wren'],
+            what: 'Aster promised a crossing',
+            changed: '',
+            because: '',
+            background: '',
+            line: '',
         });
         expect(dropped).toEqual([]);
     });
@@ -95,8 +103,8 @@ describe('normalising a record', () => {
     });
 
     it('treats null and missing slots as empty, not as broken', () => {
-        expect(normaliseRecord({ ...MEANT, changed: null, because: undefined }).record)
-            .toEqual({ ...MEANT, changed: '', because: '' });
+        expect(normaliseRecord({ ...MEANT, changed: null, because: undefined, background: null, line: undefined }).record)
+            .toEqual({ ...MEANT, changed: '', because: '', background: '', line: '' });
         expect(normaliseRecord({ ...MEANT, changed: null }).dropped).toEqual([]);
     });
 
@@ -135,13 +143,37 @@ describe('rendering the index', () => {
     it('writes fixed columns with no labels, so the header pays for them once', () => {
         expect(renderRecord(filled(), 12))
             .toBe('12 | major | Aster, Wren | Aster promised to get Wren across before the feast day'
-                + ' | Wren has a crossing promised | the ferry was posted delayed');
-        expect(INDEX_HEADER).toBe('n | kind | who | what | changed | because');
+                + ' | Wren has a crossing promised | the ferry was posted delayed'
+                + ' | Aster and Wren were raised in the same terminal town');
+        expect(INDEX_HEADER).toBe('n | kind | who | what | changed | because | background');
     });
 
     it('leaves an unfilled slot as an empty column', () => {
-        expect(renderRecord(filled({ changed: '', because: '' }), 3))
-            .toBe('3 | major | Aster, Wren | Aster promised to get Wren across before the feast day |  | ');
+        expect(renderRecord(filled({ changed: '', because: '', background: '' }), 3))
+            .toBe('3 | major | Aster, Wren | Aster promised to get Wren across before the feast day |  |  | ');
+    });
+
+    it('never renders the line, whatever it holds (docs/decisions.md D-0076)', () => {
+        // A leaked line costs the deriver ~3,600 tokens of prose it has no use for.
+        const long = filled({ line: 'x'.repeat(MAX_LINE_CHARS) });
+        expect(renderRecord(long, 4)).toBe(renderRecord(filled({ line: '' }), 4));
+        expect(renderIndex([long])).not.toContain('xxx');
+    });
+
+    it('gives the block the line, or null when there is none', () => {
+        expect(compactLine(filled())).toBe(MEANT.line);
+        expect(compactLine(filled({ line: '' }))).toBe(null);
+        expect(compactLine(filled({ line: '   ' }))).toBe(null);
+        // A record written before the line existed reads as no line, not as broken.
+        expect(compactLine({ kind: 'filler', who: [], what: 'Wren waited' })).toBe(null);
+        expect(compactLine(null)).toBe(null);
+    });
+
+    it('drops an over-long line and keeps the record (D-0075)', () => {
+        const { record, dropped } = normaliseRecord({ ...MEANT, line: 'x'.repeat(MAX_LINE_CHARS + 1) });
+        expect(record.line).toBe('');
+        expect(record.what).toBe(MEANT.what);
+        expect(dropped).toEqual([{ slot: 'line', reason: 'too-long' }]);
     });
 
     it('numbers the whole index from 1, header first', () => {
@@ -154,10 +186,10 @@ describe('rendering the index', () => {
         expect(renderIndex([])).toBe('');
     });
 
-    it('costs about what D-0070 says, and has a ceiling that is not that number', () => {
-        // The claim the plan rests on is the *typical* record, and stage 0 is what
-        // confirms it against real summaries (docs/p5-plan.md §5). What this file can
-        // guarantee is the ceiling, so the ceiling is the thing asserted.
+    it('costs what stage 0c measured, with a ceiling that is not that number', () => {
+        // 38.2 tokens mean over the 85 real summaries, median 33 (docs/decisions.md
+        // D-0076). A thin record is well under it; what this file can *guarantee* is the
+        // ceiling, so the ceiling is what is asserted.
         const typical = normaliseRecord({ kind: 'filler', who: ['Wren'], what: 'Wren waited out the delay in the terminal' }).record;
         expect(estimateTokens(renderRecord(typical, 12))).toBeLessThan(25);
 
@@ -167,9 +199,13 @@ describe('rendering the index', () => {
             what: 'w'.repeat(MAX_SLOT_CHARS),
             changed: 'c'.repeat(MAX_SLOT_CHARS),
             because: 'b'.repeat(MAX_SLOT_CHARS),
+            background: 'g'.repeat(MAX_SLOT_CHARS),
+            line: 'l'.repeat(MAX_LINE_CHARS),
         };
         expect(validRecord(worst)).toBe(true);
-        expect(renderRecord(worst, 159).length).toBeLessThanOrEqual(470);
-        expect(estimateTokens(renderRecord(worst, 159))).toBeLessThan(120);
+        expect(renderRecord(worst, 159).length).toBeLessThanOrEqual(580);
+        expect(estimateTokens(renderRecord(worst, 159))).toBeLessThan(150);
+        // The line has its own ceiling and the deriver never pays it.
+        expect(estimateTokens(worst.line)).toBeLessThan(45);
     });
 });

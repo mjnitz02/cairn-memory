@@ -8,7 +8,7 @@ import { createReserves, heaviestRun } from '../src/prompt/reserves.js';
 import { collectedKeys, createContext, extension_prompt_types } from './mocks/sillytavern.js';
 import { makeBook, makeWorldInfoModule } from './mocks/world-info.js';
 import { makeQvinkChat, makeQvinkSettings, makeSummary } from './mocks/qvink.js';
-import { cairnCanonStore, cairnStore, cairnSummary, makeMixedChat } from './mocks/cairn.js';
+import { cairnCanonStore, cairnIndexStore, cairnStore, cairnSummary, makeMixedChat } from './mocks/cairn.js';
 import { pendingScenes } from '../src/memory/scenes.js';
 import { hashString } from '../src/util/hash.js';
 import { mulberry32 } from './helpers/random.js';
@@ -1174,5 +1174,104 @@ describe('the rebuild turn', () => {
         // Or the equivalence above holds over a run with only one kind of turn in it.
         expect(reports.some((report) => report.rebuilt)).toBe(true);
         expect(reports.some((report) => !report.rebuilt)).toBe(true);
+    });
+});
+
+/**
+ * The block's two fidelities (docs/decisions.md D-0075, D-0076). Distant summaries are
+ * demoted to the one-sentence line on their index record instead of being evicted, so the
+ * held horizon roughly doubles. The invariants that matter are that a demotion lands only
+ * on a turn that was already rewriting the block's head, and that the tail's share is
+ * never held back from full summaries when there are no lines to put in it.
+ */
+describe('the compact tier', () => {
+    /** The same chat, with a record — and optionally a line — on every Cairn summary. */
+    function withRecords(chat, { lines = true, from = 0 } = {}) {
+        chat.forEach((message, index) => {
+            const text = message.extra?.cairn?.scene?.text;
+            if (!text) return;
+            const line = lines && index >= from ? `Wren settled matter ${index} before the tide turned.` : '';
+            message.extra.cairn = cairnIndexStore(message, text, { line });
+        });
+        return chat;
+    }
+
+    /** One run over a growing chat, every summary Cairn's. `prepare` adds the records. */
+    async function run(prepare, { cap = 3_000, from = 31, to = 120 } = {}) {
+        const harnessed = harness({ cap });
+        const plans = [];
+        for (let length = from; length <= to; length++) {
+            harnessed.context.chat = prepare(makeMixedChat({
+                length, qvinkThrough: -1, cairnThrough: length - 11,
+            }));
+            plans.push(await harnessed.plan());
+        }
+        return plans;
+    }
+
+    it('keeps the whole scene budget for full summaries while no line exists', async () => {
+        // The failure this guards: a sixth of the budget reserved for a tail that cannot be
+        // filled, which is D-0068's card-and-examples disagreement in a second place.
+        const plans = await run((chat) => withRecords(chat, { lines: false }));
+        const last = plans.at(-1);
+
+        expect(last.blockCompact).toBe(0);
+        expect(last.compactCap).toBe(0);
+        expect(last.fullCap).toBe(last.sceneCap);
+        expect(plans.every((plan) => plan.demoted === 0)).toBe(true);
+    });
+
+    it('demotes instead of evicting, and holds more summaries for it', async () => {
+        const without = await run((chat) => withRecords(chat, { lines: false }));
+        const with_ = await run((chat) => withRecords(chat));
+
+        expect(with_.at(-1).blockCompact).toBeGreaterThan(0);
+        expect(with_.at(-1).blockFull).toBeGreaterThan(0);
+        expect(with_.at(-1).included).toBe(with_.at(-1).blockFull + with_.at(-1).blockCompact);
+        // The whole point of the tier, stated as a number.
+        expect(with_.at(-1).included).toBeGreaterThan(without.at(-1).included);
+        // And the oldest summary the block speaks for is older than it was.
+        expect(with_.at(-1).oldest).toBeLessThan(without.at(-1).oldest);
+    });
+
+    it('demotes only on a turn that was already rewriting the head', async () => {
+        // The tier's one real hazard: a split that moved mid-cycle would demote on an
+        // ordinary turn, which rewrites the block's head and breaks the prefix for nothing.
+        const plans = await run((chat) => withRecords(chat));
+
+        expect(plans.some((plan) => plan.demoted > 0)).toBe(true);
+        for (const plan of plans) {
+            if (plan.demoted > 0) expect(plan.rebuilt).toBe(true);
+        }
+    });
+
+    it('renders one document, compact lines first', async () => {
+        const harnessed = harness({ cap: 3_000 });
+        harnessed.context.chat = withRecords(makeMixedChat({ length: 120, qvinkThrough: -1, cairnThrough: 109 }));
+        // Two turns: the first one's rebuild is what demotes.
+        await harnessed.plan();
+        const plan = await harnessed.plan();
+
+        const { text } = await harnessed.write();
+        const firstLine = text.indexOf('before the tide turned.');
+        const firstFull = text.indexOf('Cairn ');
+        expect(plan.blockCompact).toBeGreaterThan(0);
+        expect(firstLine).toBeGreaterThanOrEqual(0);
+        expect(firstFull).toBeGreaterThan(firstLine);
+    });
+
+    it('evicts a summary with no line exactly as it does today, and counts it', async () => {
+        // Half the chat indexed, the older half not: the tail cannot hold what has no line,
+        // so those summaries evict as they do today and the count says why. Once the block
+        // has moved past the unindexed span the count falls back to zero on its own, which
+        // is why this reads the whole run rather than its last turn.
+        const plans = await run((chat) => withRecords(chat, { from: 60 }));
+        const missed = plans.filter((plan) => plan.compactMissing > 0);
+
+        expect(missed.length).toBeGreaterThan(0);
+        for (const plan of missed) expect(plan.included).toBe(plan.blockFull + plan.blockCompact);
+        // And the tier still works for the half that does have lines.
+        expect(plans.at(-1).blockCompact).toBeGreaterThan(0);
+        expect(plans.at(-1).compactMissing).toBe(0);
     });
 });

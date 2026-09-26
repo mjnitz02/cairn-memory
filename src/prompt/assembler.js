@@ -32,8 +32,10 @@
  * nothing learned last turn can bend this one (docs/decisions.md D-0033, D-0052).
  */
 import { pendingScenes, qvinkExcluding, qvinkInjecting, readScenes } from '../memory/scenes.js';
+import { compactLine } from '../memory/index-record.js';
+import { readIndex } from '../store/chat-store.js';
 import { admitCanon, canonFor, canonRoom } from '../memory/canon.js';
-import { canonCap, createBudget, deriveCap, recoupled } from '../pipeline/budgeter.js';
+import { canonCap, createBudget, deriveCap, recoupled, tierSplit } from '../pipeline/budgeter.js';
 import { pendingCompaction } from '../pipeline/compactor.js';
 import { createSeeSaw } from '../pipeline/scheduler.js';
 import { createExamplesLatch, examplesSuperseded } from '../memory/examples.js';
@@ -162,6 +164,14 @@ export function createAssembler(getContext, {
      * (docs/decisions.md D-0059).
      */
     let admittedCap = null;
+    /**
+     * The compact tier's room, frozen at the last rebuild for the same reason
+     * `admittedCap` is (docs/decisions.md D-0059, D-0075). The split moves as index
+     * records are written, and a split that moved mid-cycle would demote a summary on an
+     * ordinary turn — the one thing the tier must never do, because a demotion rewrites
+     * the block's head.
+     */
+    let heldCompactCap = null;
     /** This turn's compaction pass, for the summarizer. Never reaches the log. */
     let pendingPass = null;
 
@@ -249,9 +259,21 @@ export function createAssembler(getContext, {
             tokensOf: canonTokensOf,
         });
 
+        // The compact tier (docs/decisions.md D-0075). A summary's line comes from the
+        // index record beside it, so it branches and rolls back with everything else and
+        // there is nothing to keep in step. `available` is what those lines would actually
+        // cost: with none written the whole scene budget stays with full summaries rather
+        // than a sixth of it being held for a tail that cannot be filled.
+        const compactOf = (scene) => compactLine(readIndex(chat[scene.index]).index?.record);
+        const lines = covered.map(compactOf).filter(Boolean);
+        const available = lines.length ? tokensOf(withChars(lines.map((text) => ({ text })))) : 0;
+        const splitFor = (sceneCap) => heldCompactCap ?? tierSplit({ sceneCap, available }).compactCap;
+
         let fit = budget.fit({
             scenes: covered,
             sceneCap: Math.max(0, cap - canon.tokens),
+            compactCap: splitFor(Math.max(0, cap - canon.tokens)),
+            compactOf,
             tokensOf,
             rebuild: step.reason === FIRST_TURN,
         });
@@ -260,21 +282,32 @@ export function createAssembler(getContext, {
         // new batch costs nothing extra. Admitting it shrinks the scene budget, so
         // the summaries are fitted again — to the floor of the budget they actually
         // have, not the one they had before canon grew.
-        const rebuilt = isRebuild({ evicted: fit.evicted, stepReason: step.reason });
+        const rebuilt = isRebuild({ evicted: fit.evicted, demoted: fit.demoted, stepReason: step.reason });
         let evicted = fit.evicted;
-        if (rebuilt) admittedCap = canonBudget.cap;
+        let demoted = fit.demoted;
+        if (rebuilt) {
+            admittedCap = canonBudget.cap;
+            // The split is re-derived here and nowhere else, so between rebuilds the two
+            // tiers' caps hold still and no summary can demote on an ordinary turn.
+            heldCompactCap = tierSplit({ sceneCap: Math.max(0, cap - canon.tokens), available }).compactCap;
+        }
         if (rebuilt && allFacts.length) {
             admittedThrough = Math.max(admittedThrough, allFacts[allFacts.length - 1].index);
             const admitted = admitCanon({ facts: allFacts, cap: canonBudget.cap, tokensOf: canonTokensOf });
             if (admitted.tokens !== canon.tokens) {
                 canon = admitted;
+                const sceneCap = Math.max(0, cap - canon.tokens);
+                heldCompactCap = tierSplit({ sceneCap, available }).compactCap;
                 fit = budget.fit({
                     scenes: covered,
-                    sceneCap: Math.max(0, cap - canon.tokens),
+                    sceneCap,
+                    compactCap: heldCompactCap,
+                    compactOf,
                     tokensOf,
                     rebuild: true,
                 });
                 evicted += fit.evicted;
+                demoted += fit.demoted;
             }
         }
 
@@ -288,7 +321,7 @@ export function createAssembler(getContext, {
         const change = comparePrompts(previousBlock, text);
         previousBlock = text;
 
-        const stuck = recoupled({ sceneCap: fit.sceneCap, floor: fit.floor, stepTokens });
+        const stuck = recoupled({ fullCap: fit.fullCap, floor: fit.floor, stepTokens });
 
         // Whether a compaction pass is due, worked out here because every number it
         // needs is this turn's budget (pipeline/compactor.js). The summarizer reads it
@@ -318,11 +351,11 @@ export function createAssembler(getContext, {
             debug(`Memory block: cap ${previousCap ?? '—'} → ${cap} tokens, limited by ${budgeted.limitedBy}.`);
             previousCap = cap;
         }
-        if (evicted) {
-            debug(`Memory block: evicted ${evicted} scene(s) to the floor (${fit.tokens}/${fit.sceneCap} scene tokens).`);
+        if (evicted || demoted) {
+            debug(`Memory block: ${demoted} demoted, ${evicted} evicted to the floor (${fit.tokens}/${fit.sceneCap} scene tokens, ${fit.full} full + ${fit.compact} compact).`);
         }
         if (stuck) {
-            debug(`Memory block: ${fit.sceneCap - fit.floor} tokens of slack cannot hold a ${stepTokens}-token step; every step will rebuild.`);
+            debug(`Memory block: ${fit.fullCap - fit.floor} tokens of slack cannot hold a ${stepTokens}-token step; every step will rebuild.`);
         }
 
         latest = {
@@ -355,6 +388,18 @@ export function createAssembler(getContext, {
             oldest: fit.kept[0]?.index ?? null,
             newest: fit.kept[fit.kept.length - 1]?.index ?? null,
             evicted,
+            // The compact tier (docs/decisions.md D-0075). `demoted` may be non-zero only
+            // on a turn where `rebuilt` is true — a demotion rewrites the block's head, so
+            // one on an ordinary turn is the held split leaking. `compactMissing` counts
+            // summaries evicted only for want of a line, which is a lag in the index queue
+            // and never a correctness problem.
+            blockFull: fit.full,
+            blockCompact: fit.compact,
+            demoted,
+            compactMissing: fit.unlined,
+            compactCap: fit.compactCap,
+            fullCap: fit.fullCap,
+            compactBoundary: fit.boundary,
             overCap: fit.over,
             cap,
             // Canon (docs/p4-plan.md §3). `canonAdmitted` is the check the run reads: it
@@ -391,7 +436,7 @@ export function createAssembler(getContext, {
                 state: budgeted.parts?.state ?? null,
             },
             floor: fit.floor,
-            slack: Math.max(0, fit.sceneCap - fit.floor),
+            slack: Math.max(0, fit.fullCap - fit.floor),
             stepTokens,
             recoupled: stuck,
             maxPromptTokens: maxPrompt,

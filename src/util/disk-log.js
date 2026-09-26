@@ -144,6 +144,7 @@ function toEntry(snapshot) {
         ...summaryFields(snapshot.summaries),
         ...stateFields(snapshot.state, snapshot.summaries?.state),
         ...compactionFields(snapshot.summaries?.canon),
+        ...indexFields(snapshot.summaries?.index),
     };
 }
 
@@ -203,6 +204,19 @@ function memoryFields(memory) {
         memory_canon_through: memory.canonThrough ?? null,
         // The cap less what canon took: what the summaries are actually fitted to.
         memory_scene_cap: memory.sceneCap ?? null,
+        // The block's two fidelities (docs/decisions.md D-0075). The checks a run reads:
+        // `memory_demoted` may be non-zero only where `memory_rebuilt` is true, and
+        // `memory_block_full + memory_block_compact` is `memory_included`.
+        // `memory_compact_missing` counts summaries evicted only for want of a line —
+        // the index queue lagging, never a correctness problem — and
+        // `memory_compact_cap` is 0 until lines exist to fill the tail.
+        memory_block_full: memory.blockFull ?? null,
+        memory_block_compact: memory.blockCompact ?? null,
+        memory_demoted: memory.demoted ?? null,
+        memory_compact_missing: memory.compactMissing ?? null,
+        memory_compact_cap: memory.compactCap ?? null,
+        memory_full_cap: memory.fullCap ?? null,
+        memory_compact_boundary: memory.compactBoundary ?? null,
         memory_floor: memory.floor,
         // What one see-saw step costs. It drives `canonCap`'s guard, so without it a
         // moving canon cap cannot be explained from the log alone.
@@ -310,6 +324,39 @@ function compactionFields(status) {
         compaction_last_ms: status.lastMs ?? null,
         compaction_tokens_in: status.tokensIn ?? null,
         compaction_tokens_out: status.tokensOut ?? null,
+    };
+}
+
+/**
+ * The index queue as the prompt went out (docs/decisions.md D-0075). Counts are running
+ * totals for the chat and every one of them is of the *applied* change: records actually
+ * written, slots the parser dropped, and numbers the model never answered. Never a
+ * record's text.
+ */
+function indexFields(status) {
+    if (!status) return { index_reported: false };
+
+    return {
+        index_reported: true,
+        // ready, not-writing, no-profile, group-chat, no-chat or profile-missing.
+        index_gate: status.gate ?? null,
+        index_in_flight: status.inFlight != null,
+        // Summaries with no record: the tier's lag, and 0 once a chat is caught up.
+        index_waiting: status.waiting ?? null,
+        index_pending_from: status.pending?.from ?? null,
+        index_pending_to: status.pending?.to ?? null,
+        index_pending_summaries: status.pending?.summaries ?? null,
+        index_given_up: status.givenUp ?? null,
+        index_batches: status.calls ?? null,
+        index_records: status.records ?? null,
+        index_dropped_slots: status.dropped ?? null,
+        index_unanswered: status.missed ?? null,
+        index_failed: status.failures ?? null,
+        index_last_reason: status.lastReason ?? null,
+        index_ms: status.ms ?? null,
+        index_last_ms: status.lastMs ?? null,
+        index_tokens_in: status.tokensIn ?? null,
+        index_tokens_out: status.tokensOut ?? null,
     };
 }
 

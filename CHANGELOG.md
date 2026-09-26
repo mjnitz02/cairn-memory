@@ -11,6 +11,23 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ### Added
 
+- **The memory block now holds two fidelities, so old scenes fade instead of
+  vanishing.** A fixed part of the block is kept for one-sentence versions of older
+  summaries: when a summary no longer fits in full it is shortened rather than
+  dropped, and only when the compact tail is also full does anything leave the block
+  at all. On the chat this was measured against it roughly doubles how much of the
+  story the block carries — about 86 summaries where it held 51 — for the same
+  tokens. The short version comes from the compact record Cairn writes beside each
+  summary, so the longer memory costs no extra call to your memory model. Until
+  those records exist, full summaries keep the whole block, and a summary with no
+  record behind it is dropped exactly as it was before.
+- **Cairn reads each summary into a compact record.** One small record per summary,
+  written on the same message, holding who it was about, what happened, what
+  lastingly changed, why, anything the summary says was already true, and the
+  one-sentence version the block uses. It rides the same queue as summaries, in
+  batches, after them, and a failed batch changes nothing at all. These records are
+  what the next release derives long-term canon from.
+
 - **Lorebook cap.** A new setting, in tokens, for the most of the prompt your
   lorebook may take. SillyTavern has always had this cap and ships it at 0 — no
   cap — so only its 25% budget binds, and on a large book that is more than the
@@ -25,8 +42,9 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 - **Your stored memory moves to version 4.** Older chats are read and carried
   forward exactly as they were — nothing is re-summarised and nothing is lost —
   and a chat written by a newer Cairn than yours is left alone rather than
-  overwritten. The new version makes room for one compact record per summary, which
-  nothing writes yet.
+  overwritten. The new version holds one compact record per summary. A record is
+  tied to the summary it was read from, so re-summarising a message or editing it
+  clears the record too, and it is written again from the new summary.
 - **Example dialogue is dropped once summaries stand in for messages.** A card's
   example messages say how a character *would* speak in a situation that never
   happened, and they do not move as the character develops — thirty turns of

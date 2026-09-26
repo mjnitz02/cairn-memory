@@ -1,11 +1,12 @@
 /**
  * The summarizer — the only file that calls a model (docs/decisions.md D-0037).
  *
- * It owns the queue, the transport, and what a failure does. The three kinds of memory
+ * It owns the queue, the transport, and what a failure does. The four kinds of memory
  * work take their turn in it: the state update first because the very next prompt
  * carries it (D-0044), then summaries because a missing one holds the step (D-0037),
- * then a compaction pass, which has a whole see-saw step of slack (docs/p4-plan.md
- * decision 7). What a prompt says and how a reply is read belong to the strategies
+ * then the index batch, whose records the compact tier needs before the next rebuild
+ * (D-0075), then a compaction pass, which has a whole see-saw step of slack
+ * (docs/p4-plan.md decision 7). What a prompt says and how a reply is read belong to the strategies
  * (memory/*-strategy.js); what one job of a kind *is* belongs to its own file
  * (state-job.js, canon-job.js), and the summary job is inline because it is the
  * queue's own unit of work.
@@ -21,8 +22,9 @@ import { readScene, summarisable, writeScene } from '../store/chat-store.js';
 import { hashString } from '../util/hash.js';
 import { countTokens } from '../util/tokens.js';
 import { debug, error, toast, toastOnce, warn } from '../util/log.js';
-import { assessCompaction, assessStateUpdates, assessSummarizing } from './gates.js';
+import { assessCompaction, assessIndexing, assessStateUpdates, assessSummarizing } from './gates.js';
 import { createCanonJob } from './canon-job.js';
+import { createIndexJob } from './index-job.js';
 import { createStateJob } from './state-job.js';
 import { MAX_ATTEMPTS, createTally } from './tally.js';
 
@@ -39,13 +41,15 @@ const PROMPT_FALLBACK = 'Cairn\'s summary prompt has no {{message}}, so the defa
  *              worldState?: boolean, keepCanon?: boolean},
  *          strategy?: object, stateStrategy?: object, canonStrategy?: object,
  *          clock?: () => number, onUpdate?: () => void, memory?: () => object|null}} options
- *        `strategy` is the summary strategy. `onUpdate` fires when a request goes out
+ *        `strategy` is the summary strategy; `indexStrategy` is the index batch's.
+ *        `onUpdate` fires when a request goes out
  *        or settles, so the panel can follow work that happens between generations.
  *        `memory` returns the assembler's pending compaction pass for the turn just
  *        planned — the budget lives there, so this file never re-derives it.
  */
 export function createSummarizer(getContext, {
-    settings, strategy = perMessage, stateStrategy, canonStrategy, clock = Date.now, onUpdate, memory,
+    settings, strategy = perMessage, stateStrategy, canonStrategy, indexStrategy,
+    clock = Date.now, onUpdate, memory,
 } = {}) {
     const summaries = createTally();
     /** The chat the tallies count for. A reload of the same chat keeps them. */
@@ -53,6 +57,7 @@ export function createSummarizer(getContext, {
     let summaryGate = null;
     let stateGate = { reason: null, tracker: null };
     let canonGate = { reason: null };
+    let indexGate = { reason: null };
     let running = false;
     let controller = null;
     let active = null;
@@ -69,6 +74,7 @@ export function createSummarizer(getContext, {
     const canon = createCanonJob({
         ...machinery, pending: memory, ...(canonStrategy ? { strategy: canonStrategy } : {}),
     });
+    const indexer = createIndexJob({ ...machinery, ...(indexStrategy ? { strategy: indexStrategy } : {}) });
 
     /** Start a run, or fold this trigger into the one under way. Never rejects. */
     function drain() {
@@ -101,19 +107,24 @@ export function createSummarizer(getContext, {
     async function run() {
         let stateTried = false;
         let canonTried = false;
+        let indexTried = false;
         while (running) {
             const context = getContext();
             const config = settings?.() ?? {};
+            const writing = memory?.()?.writing;
             const gates = {
                 summary: assessSummarizing(context, config),
                 state: assessStateUpdates(context, config),
-                canon: assessCompaction(context, config, { writing: memory?.()?.writing }),
+                canon: assessCompaction(context, config, { writing }),
+                index: assessIndexing(context, config, { writing }),
             };
             if (gates.summary.reason !== summaryGate || gates.state.reason !== stateGate.reason
-                || gates.state.tracker !== stateGate.tracker || gates.canon.reason !== canonGate.reason) {
+                || gates.state.tracker !== stateGate.tracker || gates.canon.reason !== canonGate.reason
+                || gates.index.reason !== indexGate.reason) {
                 summaryGate = gates.summary.reason;
                 stateGate = { reason: gates.state.reason, tracker: gates.state.tracker };
                 canonGate = { reason: gates.canon.reason };
+                indexGate = { reason: gates.index.reason };
                 notify();
             }
             // The summary gate checks what every kind needs first, so its reason covers all three.
@@ -149,6 +160,19 @@ export function createSummarizer(getContext, {
                 notify();
                 if (!landed) return;
                 continue;
+            }
+
+            // The index next, and only once the summaries are all written: a record is a
+            // reading of a summary, so an unwritten summary is work that comes first.
+            if (!indexTried) {
+                indexTried = true;
+                const batch = gates.index.ready ? indexer.pending() : null;
+                // Whatever becomes of it, a compaction pass still gets its turn.
+                if (batch && !indexer.givenUp(chatId, batch)) {
+                    await indexer.run(context, config, batch);
+                    notify();
+                    continue;
+                }
             }
 
             // Last, and only once the summaries are all written: a pass reads them.
@@ -413,6 +437,7 @@ export function createSummarizer(getContext, {
                 ...summaries.stats, gate: summaryGate, streak: summaries.streak, inFlight: summaries.inFlight,
                 pending: null, failed: [], givenUp: [], promptDefault: null,
                 state: state.status(stateGate), canon: canon.status(canonGate),
+                index: indexer.status(indexGate),
             };
             try {
                 // The default is what goes out when the prompt is unedited *or* unusable.

@@ -68,7 +68,8 @@ real chat logs, character cards, personas or names land in it — anywhere. But 
 fixture whose structure was invented only proves the test agrees with our guess,
 so the shape is confirmed against real captured chats first and the fixture says
 which real shape it mirrors. The corpus lives outside the repo at
-`~/workspaces/cairn-corpus` and nothing in this repo writes to it.
+`~/workspaces/cairn-corpus`. Nothing in this repo modifies or deletes what is there;
+a calibration pass may add derived files under a directory of its own (below).
 
 ## Adding a SillyTavern dependency
 
@@ -107,6 +108,29 @@ jq -r '[.api, .stability_percent, .prompt_tokens, .writers] | @tsv' \
 
 The file is rewritten in full on each write (ST's endpoint replaces files rather
 than appending) and reset when the chat changes.
+
+## Calibrating against real summaries
+
+Some numbers can only come from real chats, and their answers must not land in this
+public repo. [`scripts/calibrate-tier.mjs`](../scripts/calibrate-tier.mjs) is the
+harness for that, in two steps because the middle one is a model:
+
+```sh
+node scripts/calibrate-tier.mjs extract "<chat>.jsonl"   # → corpus/p5-stage0/summaries.{json,md}
+#   a model reads summaries.md and writes records.json beside it
+node scripts/calibrate-tier.mjs measure                  # → report.md and chain.md
+```
+
+It opens the chat read-only, writes only under `~/workspaces/cairn-corpus/p5-stage0`,
+and **refuses any output path inside the repo**. It imports the shipped `renderRecord`
+and `estimateTokens`, so the cost it reports is the cost the block would pay. P5 stage
+0c is what it was written for (`docs/decisions.md` D-0076); `measure` re-runs whenever
+the record shape or the summary prompt changes.
+
+**Comparing models** is the same two steps with a different writer of `records.json`:
+keep the reference pass, write the candidate's beside it, and diff the two reports. The
+models that matter are the ones a memory profile actually points at — the GLM / Kimi /
+DeepSeek class — not the one that wrote the reference.
 
 ## Driving a long run
 

@@ -17,6 +17,8 @@ const MEANT = [
         what: 'Aster admitted she had crewed with Wren\'s brother',
         changed: 'Aster knew Wren\'s brother',
         because: 'Wren asked her outright',
+        background: 'Wren\'s brother drowned in the spring flood',
+        line: 'Aster admitted she had crewed the winter run with Wren\'s drowned brother.',
     },
     {
         n: 2,
@@ -25,6 +27,8 @@ const MEANT = [
         what: 'Aster and Wren waited in the ferry terminal',
         changed: '',
         because: 'the last crossing was posted delayed',
+        background: '',
+        line: 'Aster and Wren waited in the ferry terminal with the crossing posted delayed.',
     },
     {
         n: 3,
@@ -33,6 +37,8 @@ const MEANT = [
         what: 'Wren read the chalk board over the ticket window',
         changed: '',
         because: '',
+        background: '',
+        line: 'Wren read DELAYED off the chalk board over the ticket window.',
     },
 ];
 

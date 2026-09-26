@@ -24,8 +24,11 @@ export const FIRST_TURN = 'first-turn';
 /**
  * Whether this turn rewrites the block's head.
  *
- * Eviction is one half: dropping a summary moves every byte after it. A cold
- * first turn is the other — there is no previous block to be continuous with.
+ * Eviction is one half: dropping a summary moves every byte after it. **A demotion
+ * is the same half** — replacing a summary's prose with its compact line rewrites
+ * exactly those bytes, so it is a head-change by the same argument, and batching
+ * discontinuous work to a turn that has one is the whole of D-0067 (D-0075). A cold
+ * first turn is the other half: there is no previous block to be continuous with.
  *
  * **`rollback` is deliberately not a rebuild.** A branch or a swipe pulls the
  * threshold back (scheduler.js's `rollback`), which does rewrite the head, but it
@@ -34,9 +37,10 @@ export const FIRST_TURN = 'first-turn';
  * the fold already gives for free (D-0045). The head-change is paid either way;
  * the discontinuous work is not.
  *
- * @param {{evicted?: number, stepReason?: string}} turn
+ * @param {{evicted?: number, demoted?: number, stepReason?: string}} turn
  * @returns {boolean}
  */
-export function isRebuild({ evicted = 0, stepReason = '' } = {}) {
-    return (Number.isFinite(evicted) && evicted > 0) || stepReason === FIRST_TURN;
+export function isRebuild({ evicted = 0, demoted = 0, stepReason = '' } = {}) {
+    const moved = (Number.isFinite(evicted) ? evicted : 0) + (Number.isFinite(demoted) ? demoted : 0);
+    return moved > 0 || stepReason === FIRST_TURN;
 }

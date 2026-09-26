@@ -3,10 +3,19 @@
  * (docs/decisions.md D-0070, D-0064).
  *
  * One record per summary, written beside it on the message it summarises, so it
- * branches, swipes and deletes for free. It is not a second summary: the summary is
- * prose for the roleplay model, and this is structure for the deriver. A summary can
- * only carry structure implicitly, and a short one has nowhere to put it — which is
- * why condensing them broke arcs (D-0039) and why the structure moved here instead.
+ * branches, swipes and deletes for free. It carries two things for two readers, which
+ * is why there is one record and not two artefacts (D-0076):
+ *
+ *   the **slots** — structure for the deriver, which needs 159 summaries comparable;
+ *   the **`line`** — one sentence of prose for the block's compact tier, which needs
+ *   distant history readable rather than comparable.
+ *
+ * `renderRecord` renders the slots and deliberately not the line: the deriver reads
+ * ~6,100 tokens of index and a leaked line would add ~3,600 of prose it has no use for.
+ * The block reads the line and never the slots, because `kind` and a column of names
+ * are structure it cannot use. Condensing a *recent* summary still breaks its arc
+ * (D-0039); the line is for summaries far enough back that the block holds nothing
+ * today.
  *
  * **The kind is a sort key, never a gate** (D-0070). A local label is not stable
  * under hindsight: a purchase is filler until it turns out to be where they settled.
@@ -14,13 +23,15 @@
  * filters on it, and `KINDS` is ordered by rank only so a ranker has a prior to start
  * from.
  *
- * **What the caps buy, stated honestly.** The slots are clauses, not sentences, so a
- * filled record renders to ~68 characters — ~17 tokens, and 159 of them ~2,700, one
- * call (D-0070). That is the *expected* cost and not the ceiling: every slot at its cap
- * is 463 characters, ~116 tokens. The caps stop a pathological record; they do not make
- * the ~20-token claim true on their own. `renderRecord` is what lets the real number be
- * measured rather than assumed, and measuring it is stage 0's check — the last
- * unmeasured number in docs/p5-plan.md.
+ * **What a record costs, measured.** 38.2 tokens mean over the 85 real summaries, median
+ * 33, range 25 to 68 (docs/decisions.md D-0076) — not the ~17 D-0070 estimated. So 159
+ * records is ~6,100 tokens, still the one call D-0070 wanted. Of those 38, the slots are
+ * 29.4 and 10.5 is machinery: `kind`, the column of names, the separators. That split is
+ * why the block's compact tier is a prose line and not this rendering (D-0075, D-0076) —
+ * the block can use none of the machinery. The caps are a ceiling, not the cost: every
+ * slot at its cap is 463 characters, ~116 tokens, and they exist to stop a pathological
+ * record. `background` adds to that where it is filled, which the prompt asks for only
+ * when the summary states something that was already true.
  *
  * Pure: plain data in, new plain data out. Inputs are never mutated.
  */
@@ -58,11 +69,26 @@ export const MAX_WHO_CHARS = 32;
  */
 export const MAX_SLOT_CHARS = 100;
 
-/** The slots, in render order. `what` is required; the other two are usually empty. */
-export const SLOTS = Object.freeze(['what', 'changed', 'because']);
+/**
+ * The slots, in render order. `what` is required; the other three are usually empty.
+ *
+ * `background` is the answer to stage 0c's one real loss (D-0076): the yardstick's first
+ * fact — where these two grew up and what they promised each other — appears ten times
+ * across the 85 real summaries and never once in their records, because it is always a
+ * background clause and a 100-character `what` spends itself on the foreground event. The
+ * pick can only ever see what the index carries, so a fifth of the spine was unreachable.
+ */
+export const SLOTS = Object.freeze(['what', 'changed', 'because', 'background']);
 
 /** The column header the rendered index carries once, so each record can be pure content. */
-export const INDEX_HEADER = 'n | kind | who | what | changed | because';
+export const INDEX_HEADER = 'n | kind | who | what | changed | because | background';
+
+/**
+ * The compact line's cap. Measured at 23.0 tokens mean over the 85 real summaries, range
+ * 18–28 (D-0076), so 160 characters is about one and a half times what a real line needs
+ * and a hard stop on a line that tried to be a paragraph.
+ */
+export const MAX_LINE_CHARS = 160;
 
 const FIELD_SEPARATOR = ' | ';
 
@@ -80,7 +106,8 @@ export function validRecord(value) {
         return false;
     }
     if (typeof value.what !== 'string' || value.what === '' || value.what.length > MAX_SLOT_CHARS) return false;
-    return ['changed', 'because'].every((slot) =>
+    if (typeof value.line !== 'string' || value.line.length > MAX_LINE_CHARS) return false;
+    return ['changed', 'because', 'background'].every((slot) =>
         typeof value[slot] === 'string' && value[slot].length <= MAX_SLOT_CHARS);
 }
 
@@ -122,12 +149,18 @@ export function normaliseRecord(raw) {
         dropped.push({ slot: 'who', reason: 'not-a-list' });
     }
 
-    const record = { kind, who, what, changed: '', because: '' };
-    for (const slot of ['changed', 'because']) {
+    const record = { kind, who, what, changed: '', because: '', background: '', line: '' };
+    for (const slot of ['changed', 'because', 'background']) {
         const value = text(raw[slot]);
         if (value.length > MAX_SLOT_CHARS) dropped.push({ slot, reason: 'too-long' });
         else record[slot] = value;
     }
+
+    // An over-long or missing line costs the compact tier this one summary — it evicts
+    // as it does today (docs/decisions.md D-0075) — and costs the deriver nothing.
+    const line = text(raw.line);
+    if (line.length > MAX_LINE_CHARS) dropped.push({ slot: 'line', reason: 'too-long' });
+    else record.line = line;
 
     return { record, dropped };
 }
@@ -154,7 +187,22 @@ export function renderRecord(record, n) {
         record.what,
         record.changed,
         record.because,
+        record.background ?? '',
     ].join(FIELD_SEPARATOR);
+}
+
+/**
+ * The block's compact text for a summary, or null when there is none.
+ *
+ * Null is an ordinary answer, not an error: the tier falls back to evicting that summary
+ * exactly as the block does today (D-0075), so a record written before the line existed,
+ * or one whose line came back too long, costs the horizon one line and nothing else.
+ *
+ * @param {object|null} record
+ */
+export function compactLine(record) {
+    const line = typeof record?.line === 'string' ? record.line.trim() : '';
+    return line === '' ? null : line;
 }
 
 /**

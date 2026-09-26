@@ -1,7 +1,10 @@
 # P5 plan — strong canon, and the tokens to pay for it
 
 **Status: PLANNED, 2026-09-18.** Decisions logged as D-0066 to D-0071. Re-examined 2026-09-19
-and left unchanged (D-0072); the build order below is staged.
+and left unchanged (D-0072); the build order below is staged. **Extended 2026-09-25 with the
+compact summary tier (D-0075)**, which lands as stage 2.5, between the record and selection.
+**Stage 0c ran 2026-09-25 (D-0076)** and settled the tier's artifact and its share; the numbers
+below are measured rather than assumed, and migration is out of scope throughout (D-0077).
 
 P5 is the phase that answers `DESIGN.md` §13's question: **how do we derive strong, reliable
 canon with a model that cannot ingest the whole story** (D-0065). It has two halves that pay for
@@ -11,6 +14,10 @@ each other.
   canon. Three levers move that, and all three are SillyTavern settings that ship off.
 - **Derive.** Promotion keyed to eviction pressure cannot see what matters (D-0062, D-0064).
   Selection moves off the eviction stream and onto an index built over every summary in the chat.
+- **Retain** (added 2026-09-25, D-0075). The block holds one fidelity of summary and drops what
+  will not fit. A fixed share of it holds a *compact* fidelity instead, so distant history is
+  demoted rather than evicted. It roughly doubles the horizon for one number, and the artifact it
+  demotes to is the index record the derive half already writes.
 
 Neither half is new machinery in the sense P4 was. The reclaim is configuration and timing. The
 derive half deletes more code than it adds — the evict-set simulation goes, and with it the
@@ -148,10 +155,45 @@ That is the real finding: **a summary has two consumers with different needs and
 had one prompt.** The roleplay model wants a readable narrative bridge for recent history. A
 canon deriver wants comparable structure across 159 items. Prose can only carry structure
 implicitly, and short prose has nowhere to put it — which is exactly why condensing broke arcs.
-Metadata carries it explicitly, at a fixed ~20 tokens, without touching the prose.
+Metadata carries it explicitly, at ~38 tokens measured (D-0076), without touching the prose.
 
 So D-0039 stands. Nothing about the summary prompt changes in P5; the pressure that caused the
 divergence is relieved rather than reversed (D-0071).
+
+### What a second fidelity buys, and why it is not D-0039 again
+
+D-0039's finding was about *recent* history: a summary the roleplay model reads as a narrative
+bridge cannot be condensed to one clause without the arc going with it. That is an argument about
+the messages just behind the raw window. It says nothing about a scene ninety messages back,
+where the block today holds nothing at all because the budgeter dropped it.
+
+So the block's single fidelity is the thing being questioned, not the summary prompt. Full
+summaries near the window, compact ones behind them, nothing beyond that — and the evicted region
+starts much further back.
+
+**The share is derived, not a setting** (CLAUDE.md §4.15). If a compact line is `r`× smaller than
+a full summary, the share `s` of the scene budget at which the compact tail holds as many messages
+as the full tier does is
+
+    (1 − s) = s·r    →    s = 1 / (1 + r)
+
+Past that point the tail buys lines about scenes a hundred messages back by spending the full
+tier's rebuild spacing, which is the wrong trade in both directions at once.
+
+**Measured, stage 0c** (D-0076), over the 85 real summaries: a summary is 123.1 tokens mean, a
+prose compact line 23.0, so **`r` = 5.36 and the share is 15.7%**. Against `sceneCap` ~6,362:
+
+| compact share | full | compact | horizon | recoupling margin |
+|---|---|---|---|---|
+| 0% (today) | 51 | — | 51 | 3.4× |
+| **15.7%** | 43 | 43 | **86 (+69%)** | **2.9×** |
+| 23.7% (rendered records instead) | 39 | 39 | 78 (+53%) | 2.6× |
+| 30% | 36 | 50 | 86 (+69%) | 2.4× |
+
+The cost is the right-hand column, and it is real: rebuild spacing scales with the *full* tier's
+cap, so a 15.7% tail is 15.7% fewer messages between rebuilds. The third row is why the artifact
+is prose and not the rendered index record: a record costs 38.2 tokens, of which 10.5 is
+machinery — `kind`, a column of names, five separators — that the block cannot use.
 
 ---
 
@@ -202,8 +244,8 @@ overshoot, which drags D-0038's 35% into a re-derivation this phase is committed
 
 **5. Every summary carries an index record** (D-0070). One compact record per summary, written
 per-message beside the scene, branching for free. It holds the four-way kind (D-0064) and the
-slots — who, what, what lastingly changed, and *because*. Bounded by construction at ~20 tokens,
-which is what makes it cheap to write for all 159 and what stops it laundering specifics into
+slots — who, what, what lastingly changed, and *because*. Measured at 38.2 tokens (D-0076; the
+estimate here was ~20), which is still cheap enough to write for all 159 and what stops it laundering specifics into
 connective tissue the way prose-to-prose compression does.
 
 It rides the existing summarisation queue for new messages. A chat Cairn has not indexed gets a
@@ -213,8 +255,8 @@ selection primitive that already worked in the qvink era (D-0064).
 **6. The kind is a sort key, not a gate** (D-0070). A local four-way label is not stable under
 hindsight: a purchase is filler until it turns out to be where they settled. If the label
 *filters* what the derive pass can see, D-0062's third gap comes straight back at a smaller
-scale. The derive pass reads the whole index — 159 records at ~20 tokens is ~3,200, one call —
-and ranks it, with the kind as a strong prior it may overrule.
+scale. The derive pass reads the whole index — 159 records at a measured 38.2 tokens is ~6,100,
+still one call (D-0076) — and ranks it, with the kind as a strong prior it may overrule.
 
 This is also the answer to P5's framing question. The model does not need to ingest the whole
 story; it needs to ingest the whole *index*, which is the story at a fifth of the tokens with
@@ -257,6 +299,48 @@ broken, it needs no per-fact ground truth, and it is the signal that actually ca
 failure. If the verifier still reads light over a correctly-selected, chained canon, the field
 earns its place and this decision reopens.
 
+**10. The block holds two fidelities, split by a fixed derived share** (D-0075, added
+2026-09-25). `sceneCap` divides into a full tier and a compact tier at `s = 1/(1+r)`. Summaries
+demote at the boundary instead of being evicted there; eviction happens at the compact tier's own
+tail. Four things make it cheap rather than a new mechanism:
+
+- **Demotion is eviction's gentler sibling and lands in a slot already paid for.** `fit()` drops
+  oldest-first from the block's head (`src/pipeline/budgeter.js:180-190`); demoting those same
+  summaries rewrites the same bytes. Batched to the rebuild turn (decision 1), the prefix break
+  is the one that turn was taking anyway, so the extra cost is zero rather than small.
+- **The compact artifact is a prose line on the index record** — settled by stage 0c (D-0076),
+  which measured both candidates. The index pass returns the line in the same reply as the
+  record's slots, so there is one call, one store key and one parser, as rendering the record
+  would have had; and the block gets prose at 23.0 tokens rather than a table row at 38.2, which
+  reads continuously with the full summaries where the table row reads as a table. `renderRecord`
+  does not include the line, so the deriver's input does not grow by it.
+- **Compaction is lazy and batched, never per message.** A second call on every message taxes
+  every chat to buy something only aged-out summaries use, and the compressor sees the full
+  summary in isolation, so nothing is lost by running it late. Queued when a summary approaches
+  the boundary, batched 10–15 like the index pass, and **if it is not there at the rebuild turn
+  the summary keeps its full text and evicts as it does today** (CLAUDE.md §4.17).
+- **`recoupled()` must measure the full tier, not `sceneCap`.** The see-saw grows in full
+  summaries, so a guard that keeps measuring the whole scene budget silently stops guarding the
+  moment the tier exists. This is the one place the tier can break something that is currently
+  correct.
+
+**What it contributes to the canon half.** Under option B the deriver and the roleplay model read
+the same artifact, which is worth more than the call it saves: a record that reads wrong in the
+block is a record that would have ranked wrong in the pick, and the user sees it in play, on the
+turn, before stage 3 exists. It also means the index is no longer written only to be read by one
+pass every ~22 messages — it is load-bearing from the moment it is written, so a gap in it is
+visible rather than latent. The derive pass itself is unchanged: it still reads every record
+(decision 6), and which ones happen to be rendered in the block has no bearing on the pick.
+
+**This is not the budget reorder D-0065 forbade.** That was letting the guard sacrifice summaries
+to protect canon. This changes the *fidelity ladder* under the summaries and never spends a
+summary on canon; the priority order in `budgeter.js` is untouched.
+
+**It is also why Cairn becomes usable before stage 3.** At ~86 summaries of held history against
+qvink's ~34 at the same budget, the memory is at parity or better on the axis the user actually
+plays on, which makes real chats — and therefore real fixtures for P6 and the summary-quality
+judgment (D-0041) — a by-product of using it rather than a separate exercise.
+
 ---
 
 ## 1. On the run's chat, after the reclaim
@@ -286,6 +370,16 @@ faster than `STEP` falls. That matters twice, because rebuilds are where the der
 
 **Per derive call:** ~3,200 tokens of index in, ~150 out, once every ~27 messages. Comparable to
 one summary call, at a twenty-seventh of the frequency.
+
+**With the compact tier at its measured 15.7%** (decision 10, D-0076): the full tier is ~5,360
+tokens and ~43 summaries, the compact tail ~1,002 and ~43 more, so the held horizon is ~86
+messages of summarised story against ~51 without it. Recoupling falls from 3.4× to ~2.9× and
+rebuild spacing from ~27 messages to ~23, both still far from the guard. Nothing else in the table
+moves — the tier takes its room from `sceneCap`, after `canonCap`, so canon's ~1,591 is untouched.
+
+**The index the deriver reads costs 38.2 tokens a record, not ~20** (D-0076), so 159 records is
+~6,074 tokens rather than ~2,700. One call still, and nothing else in the plan moves; but the
+~20-token figure is retired wherever it appears.
 
 ---
 
@@ -319,7 +413,17 @@ one summary call, at a twenty-seventh of the frequency.
 - **`pipeline/scheduler.js`:** `RAW_WINDOW` and `STEP` to 8.
 - **`memory/examples.js` (new):** the derived latch and the `strip_examples` write. Small, and
   separate because it is the only module that writes a `power_user` setting.
-- **`pipeline/gates.js`, `pipeline/summarizer.js`:** the index job kind and its tally.
+- **`pipeline/gates.js`, `pipeline/summarizer.js`:** the index job kind and its tally, and the
+  compaction job that fills the compact tier ahead of the boundary (decision 10).
+- **`pipeline/budgeter.js`:** `sceneCap` splits into `fullCap` and `compactCap` at the derived
+  share, `fit()` keeps two lists against two caps, and **`recoupled()` measures `fullCap`** —
+  the tier's one real hazard.
+- **`prompt/assembler.js`:** which text a kept summary renders with, by tier. `renderBlock` and
+  `blockChars` are text-agnostic already, so neither changes.
+- **`memory/index-record.js`:** gains the prose `line` slot and its cap (D-0076). `renderRecord`
+  deliberately does not render it — the deriver reads slots, the block reads the line.
+- **`memory/index-strategy.js`:** the prompt asks for the line beside the slots, in the same
+  reply, and the parser reads it. No second call and no second artifact.
 - **`ui/inspector.js`, `ui/canon-section.js`, `settings.html`:** the index tally, the latch's
   state in words, and the canon slots.
 - **`docs/st-api-surface.md`:** new rows for `power_user.strip_examples`,
@@ -333,7 +437,8 @@ one summary call, at a twenty-seventh of the frequency.
 
 - **Log fields:** `index_records`, `index_pending`, `index_kinds` (the four-way counts),
   `canon_slots`, `canon_picked`, `canon_rederived`, `examples_stripped`, `examples_latched_at`,
-  `lore_reprioritised`, `lore_dropped`.
+  `lore_reprioritised`, `lore_dropped`, and for the tier `block_full`, `block_compact`,
+  `demoted`, `compact_pending`, `compact_missing` (demotions that fell back to eviction).
 - **The checks a run reads:**
   - `examples_stripped` goes false→true exactly once and never back, and `budget_card` falls by
     the card's example tokens on the same turn. **Both, or the reclaim did not happen.**
@@ -343,6 +448,10 @@ one summary call, at a twenty-seventh of the frequency.
   - `budget_limited_by` reads `room`, not `starved` — and `budget_cap` lands ~111 under
     the share, so one further reclaim would make the share bind.
   - `memory_canon_limited_by` reads `share`, not `guard`.
+  - `demoted` is non-zero only on rebuild turns, and `block_full + block_compact` is the held
+    count — ~86 on the run's chat against ~51 before the tier.
+  - `compact_missing` is rare and self-clearing. Persistently non-zero means the compaction queue
+    is not keeping ahead of the boundary, which is a lag to fix and never a correctness problem.
 - **The inspector** gains an index line (records, pending, the four-way split) and shows the
   examples latch and the lore cap in the reserves breakdown.
 
@@ -371,6 +480,14 @@ one summary call, at a twenty-seventh of the frequency.
 | The parser against mess (§3.12) | Fenced JSON, preamble, truncation mid-array, refusal, a slot over its cap, an unknown kind, `null` slots, a duplicate index |
 | Degrade | A failed index or pick writes nothing, the block is unchanged, one toast per streak (CLAUDE.md §4.17) |
 | Gates | No index or pick while the handover gate is shut, with no memory profile, in a group chat, or with the setting off |
+| The tier's share is deterministic | Same chat and settings, same `fullCap` / `compactCap`; nothing measured from a prompt reaches either (D-0033) |
+| The see-saw guard measures the full tier | Property test over random caps, shares and step sizes: `recoupled()` reads `fullCap`, and a share large enough to recouple the full tier is reported |
+| Demotion happens only at a rebuild | A turn that crosses the boundary without evicting leaves the block byte-identical; the demotion lands on the next rebuild |
+| A missing compaction never breaks the block | With no compact text on disk at a rebuild, the summary keeps its full text and evicts as today, and `compact_missing` counts it |
+| The tiers are contiguous and ordered | Every compact summary is older than every full one, and the block stays chronological across the boundary |
+| Demotion is not eviction | A demoted summary's text changes and its `index` stays; a test asserts the store is untouched either way |
+| The deriver's index excludes the line | `renderRecord` and `renderIndex` are byte-identical with and without a `line`; a fixture asserts it, because a leaked line costs the pick ~3,600 tokens |
+| A record without a line still works | The tier falls back to eviction for that summary; the record is still pickable |
 
 **Selection quality is a fixture, not a run.** The 159 summaries are on disk and the ground
 truth is ~90 words. The regression test is: does the pick over the real index contain the spine?
@@ -387,8 +504,9 @@ against the real corpus locally, then written fresh.
 **Step 0 — the labelling pass, before any code.** A frontier model, once, offline, over the
 run's 85 real summaries: four-way labels, slot-filled records, a genre read. Saved outside the
 repo in `~/workspaces/cairn-corpus`. It produces the regression fixture, the few-shot examples
-and the calibration target at once, and it is what confirms the last unmeasured number in this
-plan — whether a record really costs ~20 tokens.
+and the calibration target at once, and it is what confirms the two unmeasured numbers this plan
+rests on — whether a record really costs ~20 tokens (it costs 38.2) and the compression ratio `r`
+that sets the compact tier's share (5.36). Both answered 2026-09-25, D-0076.
 
 **The teacher must not also be the examiner.** The user's ~90-word telling and the ~100-token
 extraction are fixed *before* the pass runs and stay the independent measure.
@@ -398,7 +516,9 @@ extraction are fixed *before* the pass runs and stay the independent measure.
 1. The reclaim. It is visible on the first turn, in `budget_card`, `budget_limited_by` and
    `memory_canon_cap`. No play needed to see whether it worked.
 2. The index, backfilled over the chat. Counted in records written, not turns.
-3. The pick, and the genre verifier against it.
+3. The compact tier over that index. Visible in `block_full`, `block_compact` and the held count,
+   also on the first turn. ~86 held against ~51 (D-0076).
+4. The pick, and the genre verifier against it.
 
 **What needs live play, and it is not much** (D-0061): prefix stability against a real cache,
 which needs about three rebuilds, not thirty-five turns. At `RAW_WINDOW` / `STEP` 8/8 with the
@@ -426,9 +546,10 @@ and `STEP` are two numbers.
 
 ## Build order
 
-Six stages. Each one ends somewhere the tree is green and the work so far stands on its own,
+Seven stages. Each one ends somewhere the tree is green and the work so far stands on its own,
 and each one has a check that says whether to carry on. The eleven items are unchanged; the
-stages say where to stop and what to look at.
+stages say where to stop and what to look at. **Stage 2.5 was added 2026-09-25** (D-0075) and is
+the only stage that ships something the user can play on before the phase's claim is proved.
 
 ### Stage 0 — Calibrate. No shipped code.
 
@@ -440,12 +561,39 @@ It produces the regression fixture, the few-shot examples and the calibration ta
 fixture: does the judgment flip at two different lags; are derived boundaries more stable than
 importance verdicts; does the `kind` field help the ranker at all versus slots alone.
 
+**0c.** The compact tier's four questions, on the same 85 summaries and in the same pass
+(D-0075). Free, because the pass is already reading every summary:
+
+- **`r`, the compression ratio.** Full summary tokens against a compact line's, by our own
+  estimator (`util/tokens.js`), not by a claim. It sets the share at `1/(1+r)` and every number
+  in §1's tier paragraph moves with it.
+- **Option B or option A.** Render the pass's own index records as block text and read them as
+  memory. Do they read as history, or as a table? If they read, the tier costs no new call, no
+  new store key and no schema bump; if they do not, option A's one-sentence prose compaction is
+  built and measured the same way.
+- **Does a compact line keep the facts its summary carried?** Compare the two against the frozen
+  ~100-token extraction, not against each other.
+- **Does the chain read?** Forty-five full summaries behind ~42 compact ones, concatenated in
+  order: is the join legible, or does the block read as two documents stapled together?
+
+**0d — the model that will actually run it. OPEN.** 0c's records were written by a top-tier
+model (Anthropic-made), and that is the *reference*, not the target: in play the index and the
+line come from whatever the memory profile points at, which is the GLM / Kimi / DeepSeek class.
+Re-run the same fixture with one of those, write its `records.json` beside the first, re-run
+`measure` and diff. What it answers: does `r` hold, do the records stay inside their caps, does
+the line stay one sentence, and does the `kind` get wilder than the reference's already-loose 34
+`major`. Cheap and repeatable; the harness needs nothing new for it.
+
 **Freeze first.** The ~90-word telling and the ~100-token extraction are fixed *before* the pass
 runs and stay the independent measure — the teacher must not also be the examiner.
 
-**Check:** a record really costs ~20 tokens. That is the last unmeasured number in this plan,
-and every budget in §1 rests on it. If it comes back at 40, the index is ~6,400 tokens and the
-one-call claim in D-0070 needs re-arguing before stage 3 is built.
+**Check — RUN 2026-09-25, and both numbers came back different** (D-0076). A record costs **38.2
+tokens**, not ~20, so 159 of them is ~6,074 rather than ~2,700: one call still holds, and the
+re-argument D-0070 owed is in D-0076. `r` is **5.36** for a prose line (share 15.7%, horizon 51 →
+86) and 3.23 for a rendered record (share 23.7%, horizon 78) — which is what settled the artifact.
+Two findings the plan did not ask for: the yardstick's Namtira line survives in neither tier
+because a 100-character `what` has no room for background, and the pass labelled `major` 34 times
+where the hand count said 14. Both are carried into stage 2.5 and stage 3.
 
 ### Stage 1 — The reclaim. No model calls, visible on turn one.
 
@@ -473,6 +621,44 @@ mess before a caller exists.
 overwritten, and the parser survives the §3.12 mess suite. Nothing about the prompt has changed
 yet, so the assembler tests should not have moved.
 
+### Stage 2.5 — The compact tier. BUILT 2026-09-25 (D-0078).
+
+Decision 10 (D-0075), with the artifact settled by stage 0c (D-0076). `index-record.js` gains the
+prose `line` slot and `index-strategy.js` asks for it beside the slots, in the same reply — no
+second call, no second store key, and `renderRecord` still renders slots only. `budgeter.js`
+splits `sceneCap` into `fullCap` and `compactCap` at the measured 15.7% and `fit()` keeps two
+lists; `recoupled()` moves onto `fullCap`; `assembler.js` chooses each kept summary's text by
+tier; `summarizer.js` and `gates.js` carry the index job that now also fills the line, queued
+ahead of the boundary and batched 10–15.
+
+**Also here, because it is the same shape change:** somewhere for the standing background a
+summary mentions in passing. Stage 0c lost the yardstick's first fact — Namtira, ten times in the
+summaries and zero times in the records — to a 100-character `what` spent on the foreground event
+(D-0076). A fifth slot, a longer `what` or a prompt rule decides it, and it is decided with the
+line rather than after it, because the pick can only ever see what the index carries.
+
+**Here rather than after stage 3, for two reasons.** It needs the index record, which is stage 2,
+and it needs nothing from selection. And it is what makes Cairn usable in real play — ~86
+summaries of held history against qvink's ~34 at the same budget — so the real chats that later
+phases need as fixtures accumulate while stage 3 is built, instead of being a separate exercise
+(D-0041, D-0061).
+
+**Migration is deliberately not part of this** (D-0077). A played scenario may end up with
+metadata a later shape change invalidates, and that is accepted; the artefacts at risk are derived
+and a backfill rebuilds them.
+
+**Built as planned, with three things settled in the doing** (D-0078): the split freezes at the
+rebuild turn so the demotion invariant is structural rather than checked; the share is a ceiling
+against what the lines actually cost, so a chat with no records keeps its whole budget; and
+`isRebuild` counts demotions. The `background` slot from 0c landed in the same shape change.
+
+**Check** — first turn, no play needed: `memory_block_full + memory_block_compact` is `included`
+and larger than it was; `memory_demoted` is non-zero only where `memory_rebuilt` is true;
+`memory_canon_cap` is unchanged, because the tier takes its room after canon's share;
+`memory_compact_cap` is 0 until records exist. Then one rebuild in play: the break is still at the
+block's head and only there — **a demotion must not add a second break**, and if it does, decision
+10 is wrong about where demotion is free.
+
 ### Stage 3 — Selection. The phase's actual claim.
 
 Items 7–9: `compactor.js` loses the pressure test, the evict-set simulation and the
@@ -499,7 +685,8 @@ without a second pair of eyes on the chat while it plays.
 
 Item 11. **Size the run off rebuilds, not turns:** the run needs about three rebuilds for prefix
 stability against a real cache, and at 8/8 with the reclaimed cap a rebuild is every ~27
-messages. Count that out of the log before starting, and if it comes out long, shrink the cycle
+messages — ~23 with the compact tier, which is the number to count out of the log if stage 2.5 is
+in. Count that out of the log before starting, and if it comes out long, shrink the cycle
 first (D-0061) — a phase run is hours of an evening and they have been growing.
 
 Then `decisions.md`, `DESIGN.md` §13 P5 as built, `docs/how-it-works.md`,

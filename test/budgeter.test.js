@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     CAP_FRACTION, MARGIN_FRACTION, MIN_CAP_FRACTION,
-    canonCap, createBudget, deriveCap, FLOOR_FRACTION, recoupled,
+    canonCap, COMPACT_RATIO, COMPACT_SHARE, createBudget, deriveCap, FLOOR_FRACTION, recoupled, tierSplit,
 } from '../src/pipeline/budgeter.js';
 import { NEAR_LIMIT_FRACTION } from '../src/util/context-size.js';
 import { mulberry32 } from './helpers/random.js';
@@ -163,8 +163,8 @@ describe('canon\'s share of the block', () => {
             expect(canon.cap, seed).toBeLessThanOrEqual(cap);
             if (canon.cap > 0) expect(sceneCap, seed).toBeGreaterThanOrEqual(2 * stepTokens);
             // And the report that follows from it: canon never turns `recoupled` on.
-            if (canon.cap > 0 && !recoupled({ sceneCap: cap, floor: Math.floor(cap * FLOOR_FRACTION), stepTokens })) {
-                expect(recoupled({ sceneCap, floor, stepTokens }), seed).toBe(false);
+            if (canon.cap > 0 && !recoupled({ fullCap: cap, floor: Math.floor(cap * FLOOR_FRACTION), stepTokens })) {
+                expect(recoupled({ fullCap: sceneCap, floor, stepTokens }), seed).toBe(false);
             }
         }
     });
@@ -292,5 +292,124 @@ describe('fitting the block to the cap', () => {
         budget.reset();
 
         expect(budget.fit({ scenes: scenes(0, 5), sceneCap: 200, tokensOf }).kept).toHaveLength(6);
+    });
+});
+
+describe('the two fidelities', () => {
+    /** A summary the block holds in full, with or without a compact line. */
+    const scene = (index, { line = `line ${index}` } = {}) => ({
+        index, text: `full summary number ${index}, which runs on for a while`, line,
+    });
+    const lineOf = (s) => s.line ?? null;
+    /** Sized the way the assembler sizes: over whatever text the tier renders. */
+    const tokensOf = (list) => list.reduce((total, item) => total + Math.ceil(item.text.length / 4), 0);
+
+    it('derives the share from the measured ratio rather than choosing one (D-0075)', () => {
+        expect(COMPACT_SHARE).toBeCloseTo(1 / (1 + COMPACT_RATIO), 12);
+        // 1/(1+r) is the share at which the tail holds as many messages as the full tier.
+        const cap = 10_000;
+        const { fullCap, compactCap } = tierSplit({ sceneCap: cap, available: cap });
+        expect(fullCap + compactCap).toBe(cap);
+        expect(Math.round(fullCap / COMPACT_RATIO)).toBeCloseTo(compactCap, -1);
+    });
+
+    it('is a ceiling and not a reservation: no lines, no split', () => {
+        // The failure this prevents: a sixth of the budget held for a tail that cannot be
+        // filled, on every chat, from the turn Cairn is installed.
+        expect(tierSplit({ sceneCap: 6362, available: 0 })).toEqual({
+            fullCap: 6362, compactCap: 0, share: COMPACT_SHARE,
+        });
+        expect(tierSplit({ sceneCap: 6362, available: 200 }).compactCap).toBe(200);
+        expect(tierSplit({ sceneCap: 6362, available: 99_999 }).compactCap)
+            .toBe(Math.floor(6362 * COMPACT_SHARE));
+    });
+
+    it('is deterministic: the same chat and caps give the same split', () => {
+        for (const cap of [0, 1, 999, 6362, 23_040]) {
+            expect(tierSplit({ sceneCap: cap, available: cap })).toEqual(tierSplit({ sceneCap: cap, available: cap }));
+        }
+        expect(tierSplit({ sceneCap: 0, available: 500 })).toEqual({ fullCap: 0, compactCap: 0, share: COMPACT_SHARE });
+    });
+
+    it('demotes before it evicts, and keeps the block chronological', () => {
+        const budget = createBudget();
+        const scenes = Array.from({ length: 10 }, (_, i) => scene(i));
+        const fit = budget.fit({
+            scenes, sceneCap: 90, compactCap: 20, compactOf: lineOf, tokensOf, rebuild: true,
+        });
+
+        expect(fit.demoted).toBeGreaterThan(0);
+        expect(fit.compact).toBeGreaterThan(0);
+        expect(fit.full).toBeGreaterThan(0);
+        // Contiguous and ordered: every compact summary is older than every full one.
+        const tiers = fit.kept.map((item) => item.tier);
+        expect(tiers.indexOf('full')).toBeGreaterThan(tiers.lastIndexOf('compact'));
+        expect(fit.kept.map((item) => item.index)).toEqual([...fit.kept.map((item) => item.index)].sort((a, b) => a - b));
+        // A demoted summary keeps its place and changes only its text.
+        const demoted = fit.kept.find((item) => item.tier === 'compact');
+        expect(demoted.text).toBe(`line ${demoted.index}`);
+        expect(scenes[demoted.index].text).toContain('full summary');
+    });
+
+    it('evicts a summary with no line, exactly as it does today, and counts it', () => {
+        const budget = createBudget();
+        const scenes = Array.from({ length: 10 }, (_, i) => scene(i, { line: i < 4 ? null : undefined }));
+        const fit = budget.fit({
+            scenes, sceneCap: 90, compactCap: 20, compactOf: lineOf, tokensOf, rebuild: true,
+        });
+
+        expect(fit.unlined).toBeGreaterThan(0);
+        expect(fit.evicted).toBeGreaterThanOrEqual(fit.unlined);
+        expect(fit.kept.every((item) => item.tier === 'full' || item.text.startsWith('line'))).toBe(true);
+    });
+
+    it('is the old single-fidelity fit when nothing has a line', () => {
+        const scenes = Array.from({ length: 10 }, (_, i) => scene(i, { line: null }));
+        const tiered = createBudget().fit({
+            scenes, sceneCap: 90, compactCap: 0, compactOf: lineOf, tokensOf, rebuild: true,
+        });
+        const plain = createBudget().fit({ scenes, sceneCap: 90, tokensOf, rebuild: true });
+
+        expect(tiered.kept.map((item) => item.index)).toEqual(plain.kept.map((item) => item.index));
+        expect(tiered.demoted).toBe(0);
+        expect(tiered.fullCap).toBe(plain.fullCap);
+    });
+
+    it('never restores a demoted summary to full, however much room appears', () => {
+        const budget = createBudget();
+        const scenes = Array.from({ length: 10 }, (_, i) => scene(i));
+        budget.fit({ scenes, sceneCap: 90, compactCap: 20, compactOf: lineOf, tokensOf, rebuild: true });
+        const boundary = budget.boundary;
+        expect(boundary).toBeGreaterThan(0);
+
+        const roomy = budget.fit({
+            scenes, sceneCap: 100_000, compactCap: 20_000, compactOf: lineOf, tokensOf,
+        });
+        expect(budget.boundary).toBe(boundary);
+        expect(roomy.kept.filter((item) => item.tier === 'compact').length).toBe(boundary - roomy.kept[0].index);
+    });
+
+    it('rewinds both marks when a branch takes the chat back past them', () => {
+        const budget = createBudget();
+        const scenes = Array.from({ length: 10 }, (_, i) => scene(i));
+        budget.fit({ scenes, sceneCap: 90, compactCap: 20, compactOf: lineOf, tokensOf, rebuild: true });
+        expect(budget.boundary).not.toBe(null);
+
+        const branched = Array.from({ length: 2 }, (_, i) => scene(i));
+        const fit = budget.fit({ scenes: branched, sceneCap: 90, compactCap: 20, compactOf: lineOf, tokensOf });
+        expect(fit.kept.map((item) => item.index)).toEqual([0, 1]);
+        expect(fit.kept.every((item) => item.tier === 'full')).toBe(true);
+    });
+
+    it('measures recoupling against the full tier, which is what grows', () => {
+        // The silent failure: with a tail taking its share, a guard still reading the whole
+        // scene budget reports slack the growing tier does not have.
+        const sceneCap = 1000;
+        const { fullCap } = tierSplit({ sceneCap, available: sceneCap });
+        const floor = Math.floor(fullCap * FLOOR_FRACTION);
+        const stepTokens = Math.floor(fullCap - floor) + 1;
+
+        expect(recoupled({ fullCap, floor, stepTokens })).toBe(true);
+        expect(recoupled({ fullCap: sceneCap, floor, stepTokens })).toBe(false);
     });
 });

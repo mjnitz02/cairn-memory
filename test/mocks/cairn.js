@@ -70,3 +70,34 @@ export function makeMixedChat({ length, qvinkThrough, cairnThrough, gaps = [], s
 
     return chat;
 }
+
+/**
+ * A v4 store carrying a summary and the index record read from it, written out by hand
+ * (docs/decisions.md D-0074, D-0076). The record's hash is over the *summary*, not the
+ * message, which is what makes a resummarise invalidate it.
+ *
+ * @param {object} message The message the store belongs to, for the scene's hash.
+ * @param {string} text The summary.
+ * @param {object} [record] Slot overrides; `line` is the block's compact text.
+ */
+export function cairnIndexStore(message, text, record = {}, { prompt = 'h:00000000000004', at = '2026-09-25T09:00:00.000Z' } = {}) {
+    return {
+        ...cairnStore(message, text),
+        v: 4,
+        index: {
+            record: {
+                kind: 'filler',
+                who: ['Wren'],
+                what: 'Wren settled the matter before the tide turned',
+                changed: '',
+                because: '',
+                background: '',
+                line: `Wren settled it before the tide turned.`,
+                ...record,
+            },
+            hash: hashString(text),
+            prompt,
+            at,
+        },
+    };
+}

@@ -99,6 +99,33 @@ Cairn separates the two:
   then it drops to half the budget rather than shaving off the one summary that
   overflowed, so the next rebuild is half a budget of growth away.
 
+### Two fidelities, so old scenes fade rather than vanish
+
+A summary pushed out of the block used to be gone. Now it is **demoted** first: the
+block keeps a fixed part of its budget for one-sentence versions of older summaries,
+so the oldest part of the chat is present in less detail instead of absent. Only when
+the compact tail is full as well does anything leave.
+
+The one sentence is not a fresh summary of the message. It comes from the index
+record written beside each summary (below), which holds both the structure the canon
+pass reads and one plain sentence for this. Writing it there rather than as a second
+summary is why the longer memory costs no extra model call.
+
+Three things follow, and they are the ones worth knowing:
+
+- **The tail's share is a ceiling, not a reservation.** Until those sentences exist —
+  a fresh install, a chat Cairn has not caught up on — full summaries keep the whole
+  budget. Nothing is held back for a tail that cannot be filled.
+- **Demotion happens only on a turn that was rebuilding the block anyway.** Replacing
+  a summary with its sentence rewrites the same part of the prompt that dropping it
+  would, so it is done on the same turns and costs no extra cache miss.
+- **A summary with no sentence evicts exactly as it did before.** If the index has
+  fallen behind, the block is no worse than it was; it simply misses that line.
+
+On the measured chat this roughly doubles how much of the story the block holds —
+about 86 summaries where it held 51 — for the same tokens (`docs/decisions.md`
+D-0075, D-0076).
+
 ### How much room the block gets
 
 At most 35% of the prompt SillyTavern may send — the context window minus the

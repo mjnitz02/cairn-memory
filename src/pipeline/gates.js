@@ -64,6 +64,31 @@ export function assessCompaction(context, { memoryProfileId, keepCanon } = {}, {
     return { ready: true, reason: 'ready', sameProfile: sameProfile(context, memoryProfileId) };
 }
 
+/**
+ * Whether Cairn may index summaries in this chat now, and if not, why
+ * (docs/decisions.md D-0075).
+ *
+ * The handover gate has a say, as it does over a compaction pass: while qvink is
+ * injecting, Cairn is measuring and nothing more (D-0020, D-0027), and records written
+ * then would be records nothing reads.
+ *
+ * **`keepCanon` deliberately has no say.** The index feeds the block's compact tier as
+ * well as canon, so a user who turned canon off still gets the longer horizon the records
+ * pay for. Turning the memory block off stops it, because then `writing` is false.
+ *
+ * @param {object} context SillyTavern.getContext()
+ * @param {{memoryProfileId?: string}} settings
+ * @param {{writing?: boolean}} [handover] The assembler's gate verdict this turn.
+ * @returns {{ready: boolean, reason: string, sameProfile: boolean}}
+ */
+export function assessIndexing(context, { memoryProfileId } = {}, { writing } = {}) {
+    const blocked = (reason) => ({ ready: false, reason, sameProfile: false });
+    const reason = memoryCallsBlocked(context, memoryProfileId);
+    if (reason) return blocked(reason);
+    if (writing === false) return blocked('not-writing');
+    return { ready: true, reason: 'ready', sameProfile: sameProfile(context, memoryProfileId) };
+}
+
 /** What every memory call needs, or the reason it cannot be made. */
 function memoryCallsBlocked(context, memoryProfileId) {
     const settings = context?.extensionSettings ?? {};
