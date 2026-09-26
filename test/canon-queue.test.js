@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_ATTEMPTS, createSummarizer } from '../src/pipeline/summarizer.js';
-import { CANON_PROMPT } from '../src/memory/canon-strategy.js';
+import { CANON_PROMPT, HARD_FACT_CHARS } from '../src/memory/canon-strategy.js';
 import { canonFor } from '../src/memory/canon.js';
 import { readCanon, readIndex } from '../src/store/chat-store.js';
 import { resetToasts } from '../src/util/log.js';
@@ -163,13 +163,14 @@ describe('running a canon pick', () => {
         const chat = makeChat(12);
         const run = harness({
             chat,
-            // Four facts: one repeated inside the pick, one over its cap, one citing a
-            // row that was never sent, one good.
+            // Four facts: one repeated inside the pick, one past its hard cap, one with no
+            // row it could be traced to, one good.
             responses: [JSON.stringify({
                 canon: [
                     { fact: 'Wren grew up on the harbour.', entities: [], from: [1] },
                     { fact: 'wren grew up on the harbour', entities: [], from: [2] },
-                    { fact: `A fact far too long. ${'x'.repeat(200)}`, entities: [], from: [3] },
+                    { fact: `A fact far too long. ${'word '.repeat(60)}`, entities: [], from: [3] },
+                    { fact: 'A fact citing nothing.', entities: [], from: [] },
                     { ...MEANT[0], from: [4] },
                 ],
             })],
@@ -178,11 +179,14 @@ describe('running a canon pick', () => {
         run.summarizer.start();
         await run.summarizer.idle();
 
-        expect(readCanon(chat[3]).canon.facts).toEqual([
-            { text: 'Wren grew up on the harbour.', entities: [], from: [0] },
-            { text: MEANT[0].fact, entities: ['Wren'], from: [3] },
-        ]);
-        expect(run.summarizer.status.canon).toMatchObject({ picked: 2, duplicates: 1, refused: 1 });
+        const facts = readCanon(chat[3]).canon.facts;
+        expect(facts.map((fact) => fact.from)).toEqual([[0], [2], [3]]);
+        expect(facts[0]).toEqual({ text: 'Wren grew up on the harbour.', entities: [], from: [0] });
+        // Cut, not dropped (D-0085) — and the store holds only the stored shape.
+        expect(facts[1].text.length).toBeLessThanOrEqual(HARD_FACT_CHARS);
+        expect(facts[1]).not.toHaveProperty('clipped');
+        expect(facts[2]).toEqual({ text: MEANT[0].fact, entities: ['Wren'], from: [3] });
+        expect(run.summarizer.status.canon).toMatchObject({ picked: 3, duplicates: 1, refused: 1, clipped: 1 });
     });
 
     it('replaces the pick in force rather than adding to it', async () => {

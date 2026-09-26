@@ -19,12 +19,14 @@ const STABILITY_BANDS = [
 
 /**
  * @param {HTMLElement} host Element to render into.
+ * @param {{canon?: () => object|null}} [sources] `canon` is the assembler's `canonView`.
  */
-export function createInspector(host) {
+export function createInspector(host, { canon = () => null } = {}) {
     // Drawn apart: summaries and states land between generations, and redrawing the
     // snapshot for each would close whatever details the reader has open.
-    host.innerHTML = `<div class="${SLUG}-snapshot"></div><div class="${SLUG}-summaries"></div><div class="${SLUG}-state"></div>`;
-    const [snapshotPart, summariesPart, statePart] = host.children;
+    host.innerHTML = `<div class="${SLUG}-canon-view"></div><div class="${SLUG}-snapshot"></div>`
+        + `<div class="${SLUG}-summaries"></div><div class="${SLUG}-state"></div>`;
+    const [canonPart, snapshotPart, summariesPart, statePart] = host.children;
     // The state section joins the queue, which moves between generations, to the
     // placement, which only a generation changes.
     let stateStatus = null;
@@ -35,6 +37,7 @@ export function createInspector(host) {
 
     return {
         render(snapshot) {
+            canonPart.innerHTML = snapshot ? renderCanonView(canon()) : '';
             snapshotPart.innerHTML = snapshot ? renderSnapshot(snapshot) : renderEmpty();
             placement = snapshot?.state ?? null;
             drawState();
@@ -47,6 +50,35 @@ export function createInspector(host) {
             drawState();
         },
     };
+}
+
+/**
+ * Canon as the prompt carries it, open by default: a fact is the one thing in the block
+ * that outlives the scenes behind it, so a wrong one should be seen without digging
+ * (docs/decisions.md D-0085). Exported for tests, like `renderSnapshot`.
+ *
+ * @param {{inPrompt: string[], spilled: string[], waiting: string[], slots: number}|null} view
+ */
+export function renderCanonView(view) {
+    if (!view) return '';
+    const list = (texts) => `<ul class="${SLUG}-list ${SLUG}-canon-facts">${
+        texts.map((text) => `<li>${escapeHtml(text)}</li>`).join('')}</ul>`;
+
+    if (!view.inPrompt.length && !view.waiting.length) {
+        return `<details class="${SLUG}-details" open><summary>Canon</summary>
+            <div class="dim">No canon yet. It is picked once the index has a few records.</div></details>`;
+    }
+    const spilled = view.spilled.length
+        ? `<div class="${SLUG}-hint">Left out for want of room:</div>${list(view.spilled)}` : '';
+    const waiting = view.waiting.length
+        ? `<div class="${SLUG}-hint">A newer pick, which goes in at the next rebuild:</div>${list(view.waiting)}` : '';
+
+    return `
+        <details class="${SLUG}-details" open>
+            <summary>Canon in the prompt (${fmt(view.inPrompt.length)} of ${fmt(view.slots)} lines)</summary>
+            ${view.inPrompt.length ? list(view.inPrompt) : '<div class="dim">None in the prompt yet.</div>'}
+            ${spilled}${waiting}
+        </details>`;
 }
 
 function renderEmpty() {

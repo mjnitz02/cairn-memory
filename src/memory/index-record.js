@@ -17,11 +17,9 @@
  * (D-0039); the line is for summaries far enough back that the block holds nothing
  * today.
  *
- * **The kind is a sort key, never a gate** (D-0070). A local label is not stable
- * under hindsight: a purchase is filler until it turns out to be where they settled.
- * So the deriver reads every record and may overrule the label. Nothing in this file
- * filters on it, and `KINDS` is ordered by rank only so a ranker has a prior to start
- * from.
+ * **The kind is never a gate** (D-0070), and since 0d the deriver does not see it at
+ * all (D-0084): a label a modest model can read, it obeys. It is still written, because
+ * the log's kind spread is how a run shows whether the pass is discriminating.
  *
  * **What a record costs, measured.** 38.2 tokens mean over the 85 real summaries, median
  * 33, range 25 to 68 (docs/decisions.md D-0076) — not the ~17 D-0070 estimated. So 159
@@ -35,6 +33,8 @@
  *
  * Pure: plain data in, new plain data out. Inputs are never mutated.
  */
+
+import { clip, hardCap } from '../util/clip.js';
 
 /**
  * The four kinds of thing roleplay prose is made of (D-0064), in rank order.
@@ -63,11 +63,18 @@ export const MAX_WHO = 4;
 export const MAX_WHO_CHARS = 32;
 
 /**
- * A slot over its cap is dropped, not cut, as a state value and a canon fact are
- * (docs/decisions.md D-0053). 100 characters is about twice what a clause distilled
- * from a real summary needs, measured over the corpus by length alone (CLAUDE.md §3.13).
+ * A slot's **soft** cap: the number the prompt states. 100 characters is about twice
+ * what a clause distilled from a real summary needs, measured over the corpus by length
+ * alone (CLAUDE.md §3.13).
  */
 export const MAX_SLOT_CHARS = 100;
+
+/**
+ * Where a slot is cut rather than kept (docs/decisions.md D-0085). Dropping an overshoot
+ * instead lost DeepSeek up to half its records at 0d, because a `what` over its cap is
+ * the whole record; at 150 the 0d replies lose one `what` in 1,335.
+ */
+export const HARD_SLOT_CHARS = hardCap(MAX_SLOT_CHARS);
 
 /**
  * The slots, in render order. `what` is required; the other three are usually empty.
@@ -80,8 +87,13 @@ export const MAX_SLOT_CHARS = 100;
  */
 export const SLOTS = Object.freeze(['what', 'changed', 'because', 'background']);
 
-/** The column header the rendered index carries once, so each record can be pure content. */
-export const INDEX_HEADER = 'n | kind | who | what | changed | because | background';
+/**
+ * The column header the rendered index carries once, so each record can be pure content.
+ * **No `kind`**: a modest model treats a label it can see as a gate, and at 0d the
+ * promise the story's first line rests on was labelled `filler` in 12 runs of 15 and
+ * never picked (docs/decisions.md D-0084). The kind is still written, for the log.
+ */
+export const INDEX_HEADER = 'n | who | what | changed | because | background';
 
 /**
  * The compact line's cap. Measured at 23.0 tokens mean over the 85 real summaries, range
@@ -89,6 +101,9 @@ export const INDEX_HEADER = 'n | kind | who | what | changed | because | backgro
  * and a hard stop on a line that tried to be a paragraph.
  */
 export const MAX_LINE_CHARS = 160;
+
+/** The line's hard cap, as `HARD_SLOT_CHARS` is the slots' (D-0085). */
+export const HARD_LINE_CHARS = hardCap(MAX_LINE_CHARS);
 
 const FIELD_SEPARATOR = ' | ';
 
@@ -105,31 +120,38 @@ export function validRecord(value) {
     if (!value.who.every((name) => typeof name === 'string' && name !== '' && name.length <= MAX_WHO_CHARS)) {
         return false;
     }
-    if (typeof value.what !== 'string' || value.what === '' || value.what.length > MAX_SLOT_CHARS) return false;
-    if (typeof value.line !== 'string' || value.line.length > MAX_LINE_CHARS) return false;
+    if (typeof value.what !== 'string' || value.what === '' || value.what.length > HARD_SLOT_CHARS) return false;
+    if (typeof value.line !== 'string' || value.line.length > HARD_LINE_CHARS) return false;
     return ['changed', 'because', 'background'].every((slot) =>
-        typeof value[slot] === 'string' && value[slot].length <= MAX_SLOT_CHARS);
+        typeof value[slot] === 'string' && value[slot].length <= HARD_SLOT_CHARS);
 }
 
 /**
- * Read one record out of a reply, or reject it. Nothing is clamped: a slot past its
- * cap is dropped and every drop is counted, so what the panel reports is the applied
- * change and not the model's claim (CLAUDE.md §4.18).
+ * Read one record out of a reply, or reject it. A slot past its hard cap is cut, and
+ * every cut and every drop is counted, so what the panel reports is the applied change
+ * and not the model's claim (CLAUDE.md §4.18).
  *
  * A record with no `what` is nothing at all and is rejected. Everything else degrades
- * to a thinner record rather than to none: an unreadable kind becomes `filler`, an
- * over-long `changed` becomes empty, a fifth name is left off.
+ * to a thinner record rather than to none: an unreadable kind becomes `filler`, a fifth
+ * name is left off.
  *
  * @param {unknown} raw
- * @returns {{record: object|null, dropped: Array<{slot: string, reason: string}>}}
+ * @returns {{record: object|null, dropped: Array<{slot: string, reason: string}>,
+ *            clipped: string[]}} `clipped` names the slots that were cut.
  */
 export function normaliseRecord(raw) {
     const dropped = [];
-    if (!isObject(raw)) return { record: null, dropped: [{ slot: 'record', reason: 'not-a-record' }] };
+    const clipped = [];
+    if (!isObject(raw)) return { record: null, dropped: [{ slot: 'record', reason: 'not-a-record' }], clipped };
 
-    const what = text(raw.what);
-    if (!what) return { record: null, dropped: [{ slot: 'what', reason: 'no-what' }] };
-    if (what.length > MAX_SLOT_CHARS) return { record: null, dropped: [{ slot: 'what', reason: 'too-long' }] };
+    const cut = (slot, value, hard) => {
+        const result = clip(value, hard);
+        if (result.clipped) clipped.push(slot);
+        return result.text;
+    };
+
+    const what = cut('what', text(raw.what), HARD_SLOT_CHARS);
+    if (!what) return { record: null, dropped: [{ slot: 'what', reason: 'no-what' }], clipped };
 
     let kind = typeof raw.kind === 'string' ? raw.kind.trim().toLowerCase() : '';
     if (!KINDS.includes(kind)) {
@@ -151,18 +173,14 @@ export function normaliseRecord(raw) {
 
     const record = { kind, who, what, changed: '', because: '', background: '', line: '' };
     for (const slot of ['changed', 'because', 'background']) {
-        const value = text(raw[slot]);
-        if (value.length > MAX_SLOT_CHARS) dropped.push({ slot, reason: 'too-long' });
-        else record[slot] = value;
+        record[slot] = cut(slot, text(raw[slot]), HARD_SLOT_CHARS);
     }
 
-    // An over-long or missing line costs the compact tier this one summary — it evicts
-    // as it does today (docs/decisions.md D-0075) — and costs the deriver nothing.
-    const line = text(raw.line);
-    if (line.length > MAX_LINE_CHARS) dropped.push({ slot: 'line', reason: 'too-long' });
-    else record.line = line;
+    // A missing line costs the compact tier this one summary — it evicts as it did
+    // before the tier existed (docs/decisions.md D-0075) — and costs the deriver nothing.
+    record.line = cut('line', text(raw.line), HARD_LINE_CHARS);
 
-    return { record, dropped };
+    return { record, dropped, clipped };
 }
 
 /** Where a kind ranks, for a sort that starts from the prior. Unknown kinds rank last. */
@@ -174,7 +192,7 @@ export function kindRank(kind) {
 /**
  * One record as the deriver reads it: fixed columns, no labels. The labels would cost
  * more than the slots they name once there are 159 of them, so `INDEX_HEADER` says what
- * the columns are once and each line is content.
+ * the columns are once and each line is content. The kind is left out (`INDEX_HEADER`).
  *
  * @param {object} record A record `validRecord` accepts.
  * @param {number} n The record's 1-based position in the rendered index.
@@ -182,7 +200,6 @@ export function kindRank(kind) {
 export function renderRecord(record, n) {
     return [
         String(n),
-        record.kind,
         record.who.join(', '),
         record.what,
         record.changed,

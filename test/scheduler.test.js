@@ -131,3 +131,28 @@ describe('the step waits for a missing summary', () => {
             .toMatchObject({ summarisedThrough: 40, stepped: false, reason: 'held', waiting: true });
     });
 });
+
+describe('sizes from the settings (docs/decisions.md D-0085)', () => {
+    it('takes a new window and step, and starts over so the next turn is a first turn', () => {
+        const seeSaw = createSeeSaw({ rawWindow: 8, step: 8 });
+        seeSaw.advance(40);
+        expect(seeSaw.advance(41).reason).toBe('held');
+
+        expect(seeSaw.configure({ rawWindow: 12, step: 4 })).toBe(true);
+        expect(seeSaw).toMatchObject({ rawWindow: 12, step: 4, summarisedThrough: null });
+        expect(seeSaw.advance(42)).toMatchObject({ reason: 'first-turn', summarisedThrough: 42 - 1 - 12 });
+    });
+
+    it('changes nothing when the sizes are the same, unset or not sizes at all', () => {
+        const seeSaw = createSeeSaw({ rawWindow: 8, step: 8 });
+        seeSaw.advance(40);
+        const held = seeSaw.summarisedThrough;
+
+        for (const sizes of [{ rawWindow: 8, step: 8 }, {}, undefined, { rawWindow: 0 }, { rawWindow: 2.5, step: -1 }]) {
+            expect(seeSaw.configure(sizes)).toBe(false);
+        }
+        expect(seeSaw.summarisedThrough).toBe(held);
+        // A step of 0 is a real setting: qvink's own cadence, kept reachable as the control.
+        expect(seeSaw.configure({ step: 0 })).toBe(true);
+    });
+});

@@ -17,9 +17,10 @@
  * recording would throw away the raw material the later pass needs, and no amount of
  * downstream context recovers it.
  *
- * Built in, not a setting, as the state and canon prompts are (D-0044): the caps are
- * the record's, so an edit could only break the parser. Follows DESIGN.md §12 — an
- * `IMPORTANT:` line, concrete examples, a tiebreaker at the end.
+ * Editable in the settings since D-0085, like the summary prompt; an edit without
+ * `{{summaries}}` falls back to this one. The caps it states are the soft ones
+ * (util/clip.js), so an edit that changes them only changes what the model aims at.
+ * Follows DESIGN.md §12 — an `IMPORTANT:` line, concrete examples, a tiebreaker at the end.
  *
  * Pure: no ST, no network. ST's macro expansion comes in as `expand`.
  */
@@ -28,7 +29,7 @@ import {
     KINDS, KIND_MEANINGS, MAX_LINE_CHARS, MAX_SLOT_CHARS, MAX_WHO, MAX_WHO_CHARS, normaliseRecord,
 } from './index-record.js';
 import { hashString } from '../util/hash.js';
-import { renderTemplate } from '../util/template.js';
+import { renderTemplate, resolvePrompt } from '../util/template.js';
 
 /**
  * The most summaries one batch may carry. D-0064's 10–15, at the top of that range:
@@ -80,6 +81,11 @@ Summaries:
 
 Reply with JSON of the form {"records":[{"n":1,"kind":"…","who":["…"],"what":"…","changed":"…","because":"…","background":"…","line":"…"}]}, one record per number and nothing else.`;
 
+/** The template to send for an `indexPrompt` setting (`resolvePrompt`). */
+export function resolveIndexPrompt(setting) {
+    return resolvePrompt(setting, INDEX_PROMPT, ['summaries']);
+}
+
 /** The tiebreaker, spelled out from the ranking so it cannot drift from `KINDS`. */
 const SMALLER_CLAIM = `${KINDS[KINDS.length - 1]} over ${KINDS[1]}, and an empty changed over a guessed one`;
 
@@ -92,12 +98,14 @@ export const indexBatch = {
      *        oldest first, 1 to MAX_BATCH. Numbered from 1 in the prompt; mapping those
      *        positions back to chat indexes is the caller's, since only it knows the
      *        batch's overlap with the last one.
+     * @param {string} [request.template] The `indexPrompt` setting, raw.
      * @param {(text: string) => string} [request.expand] ST's `substituteParams`
      *        (public/scripts/st-context.js:163), applied to the template only.
      * @returns {{messages: Array<{role: string, content: string}>, maxTokens: number,
-     *            prompt: string, count: number}} `prompt` is stored as `index.prompt`.
+     *            prompt: string, count: number, fallback: boolean}}
+     *          `prompt` is stored as `index.prompt`.
      */
-    build({ summaries, expand }) {
+    build({ summaries, template, expand }) {
         if (!Array.isArray(summaries) || summaries.length < 1) {
             throw new RangeError('An index pass reads at least one summary');
         }
@@ -105,7 +113,8 @@ export const indexBatch = {
             throw new RangeError(`An index pass reads at most ${MAX_BATCH} summaries`);
         }
 
-        const content = renderTemplate(INDEX_PROMPT, {
+        const resolved = resolveIndexPrompt(template);
+        const content = renderTemplate(resolved.template, {
             smaller: SMALLER_CLAIM,
             summaries: summaries.map((scene, i) => `${i + 1}. ${textOf(scene)}`).join('\n'),
         }, { expand });
@@ -113,8 +122,9 @@ export const indexBatch = {
         return {
             messages: [{ role: 'user', content }],
             maxTokens: INDEX_MAX_TOKENS,
-            prompt: hashString(INDEX_PROMPT),
+            prompt: hashString(resolved.template),
             count: summaries.length,
+            fallback: resolved.fallback,
         };
     },
 
@@ -136,7 +146,8 @@ export const indexBatch = {
  * @returns {{ok: true, records: Array<{n: number, kind: string, who: string[],
  *            what: string, changed: string, because: string, background: string,
  *            line: string}>,
- *            dropped: Array<{slot: string, reason: string, n?: number}>}
+ *            dropped: Array<{slot: string, reason: string, n?: number}>,
+ *            clipped: Array<{slot: string, n: number}>}
  *          | {ok: false, reason: 'empty'|'refusal'|'format'|'truncated'}}
  */
 export function parseIndexReply(content, { count = MAX_BATCH } = {}) {
@@ -156,6 +167,7 @@ export function parseIndexReply(content, { count = MAX_BATCH } = {}) {
 
     const records = [];
     const dropped = [];
+    const clipped = [];
     const seen = new Set();
 
     for (const entry of value.records) {
@@ -171,8 +183,9 @@ export function parseIndexReply(content, { count = MAX_BATCH } = {}) {
             continue;
         }
 
-        const { record, dropped: slots } = normaliseRecord(entry);
+        const { record, dropped: slots, clipped: cut } = normaliseRecord(entry);
         for (const drop of slots) dropped.push({ ...drop, n });
+        for (const slot of cut) clipped.push({ slot, n });
         if (!record) continue;
 
         seen.add(n);
@@ -180,7 +193,7 @@ export function parseIndexReply(content, { count = MAX_BATCH } = {}) {
     }
 
     records.sort((a, b) => a.n - b.n);
-    return { ok: true, records, dropped };
+    return { ok: true, records, dropped, clipped };
 }
 
 function textOf(item) {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { LOG_FILENAME, createDiskLog } from '../src/util/disk-log.js';
+import { LOG_FILENAME, createDiskLog, logFilename } from '../src/util/disk-log.js';
 import { createContext } from './mocks/sillytavern.js';
 
 /** A snapshot of the shape createObserver emits. */
@@ -34,27 +34,54 @@ function snapshot(overrides = {}) {
 
 let fetchMock;
 let getContext;
+let context;
+/** What each file holds on "disk", as ST's `/user/files/` route would serve it. */
+let disk;
+let uploadResponse;
+
+/**
+ * ST's two routes: `/user/files/<name>` serves a file or 404s (src/users.js:1218), and
+ * `/api/files/upload` replaces one (src/endpoints/files.js:28).
+ */
+function routedFetch(url, init = {}) {
+    if (url === '/api/files/upload') {
+        const response = uploadResponse();
+        if (response.ok) {
+            const { name, data } = JSON.parse(init.body);
+            disk.set(name, Buffer.from(data, 'base64').toString('utf8'));
+        }
+        return Promise.resolve(response);
+    }
+    const name = decodeURIComponent(url.replace('/user/files/', ''));
+    return Promise.resolve(disk.has(name)
+        ? { ok: true, status: 200, text: async () => disk.get(name) }
+        : { ok: false, status: 404, text: async () => 'Not Found' });
+}
 
 beforeEach(() => {
-    fetchMock = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ path: `user/files/${LOG_FILENAME}` }),
-    });
+    disk = new Map();
+    uploadResponse = () => ({ ok: true, status: 200, json: async () => ({ path: `user/files/${LOG_FILENAME}` }) });
+    fetchMock = vi.fn(routedFetch);
     vi.stubGlobal('fetch', fetchMock);
 
-    const context = createContext();
+    context = createContext();
     context.getRequestHeaders = () => ({ 'Content-Type': 'application/json' });
     getContext = () => context;
 });
+
+/** The uploads, in order — the reads that precede them are not writes. */
+function uploads() {
+    return fetchMock.mock.calls.filter(([url]) => url === '/api/files/upload');
+}
 
 afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
 });
 
-/** Decode what was POSTed back into the lines it represents. */
+/** Decode what was last POSTed back into the lines it represents. */
 function writtenLines() {
-    const body = JSON.parse(fetchMock.mock.calls.at(-1)[1].body);
+    const body = JSON.parse(uploads().at(-1)[1].body);
     return Buffer.from(body.data, 'base64').toString('utf8').trim().split('\n');
 }
 
@@ -67,17 +94,17 @@ describe('disk log', () => {
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('posts the run to ST\'s file endpoint', async () => {
+    it('posts the run to ST\'s file endpoint, under the open chat\'s own name', async () => {
         const log = createDiskLog({ delayMs: 0 });
         log.setEnabled(true);
         log.append(snapshot(), getContext);
 
-        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        await vi.waitFor(() => expect(uploads()).toHaveLength(1));
 
-        const [url, init] = fetchMock.mock.calls[0];
+        const [url, init] = uploads()[0];
         expect(url).toBe('/api/files/upload');
         expect(init.method).toBe('POST');
-        expect(JSON.parse(init.body).name).toBe(LOG_FILENAME);
+        expect(JSON.parse(init.body).name).toBe(logFilename(context.chatId));
     });
 
     it('writes one flat JSON line per generation', async () => {
@@ -86,7 +113,7 @@ describe('disk log', () => {
         log.append(snapshot(), getContext);
         log.append(snapshot({ promptTokens: 300 }), getContext);
 
-        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        await vi.waitFor(() => expect(uploads()).toHaveLength(1));
 
         const lines = writtenLines();
         expect(lines).toHaveLength(2);
@@ -107,10 +134,10 @@ describe('disk log', () => {
         log.setEnabled(true);
 
         log.append(snapshot(), getContext);
-        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(uploads()).toHaveLength(1));
 
         log.append(snapshot(), getContext);
-        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+        await vi.waitFor(() => expect(uploads()).toHaveLength(2));
 
         expect(writtenLines()).toHaveLength(2);
     });
@@ -122,27 +149,96 @@ describe('disk log', () => {
             stability: { ...snapshot().stability, divergence: { index: 1, previous: 'café — ✓', current: '日本語' } },
         }), getContext);
 
-        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        await vi.waitFor(() => expect(uploads().length).toBeGreaterThan(0));
         expect(JSON.parse(writtenLines()[0]).divergence_current).toBe('日本語');
     });
 
     it('swallows a failed upload rather than breaking the turn', async () => {
-        fetchMock.mockResolvedValue({ ok: false, status: 500, text: async () => 'nope' });
+        uploadResponse = () => ({ ok: false, status: 500, text: async () => 'nope' });
+        const log = createDiskLog({ delayMs: 0 });
+        log.setEnabled(true);
+
+        log.append(snapshot(), getContext);
+        await vi.waitFor(() => expect(uploads()).toHaveLength(1));
+        expect(log.count).toBe(1); // kept, so the next write retries it
+    });
+});
+
+/** docs/decisions.md D-0085: one trail per chat, across every session it is played in. */
+describe('one log per chat, appended to', () => {
+    it('adds to what an earlier session wrote rather than replacing it', async () => {
+        const name = logFilename(context.chatId);
+        disk.set(name, '{"earlier":1}\n{"earlier":2}\n');
+        const log = createDiskLog({ delayMs: 0 });
+        log.setEnabled(true);
+
+        log.append(snapshot(), getContext);
+        await vi.waitFor(() => expect(uploads()).toHaveLength(1));
+        log.append(snapshot(), getContext);
+        await vi.waitFor(() => expect(uploads()).toHaveLength(2));
+
+        const lines = disk.get(name).trim().split('\n');
+        expect(lines).toHaveLength(4);
+        expect(JSON.parse(lines[0])).toEqual({ earlier: 1 });
+        // Read back once a session, not before every write.
+        expect(fetchMock.mock.calls.filter(([url]) => url.startsWith('/user/files/'))).toHaveLength(1);
+    });
+
+    it('writes nothing when it cannot read the file back, so it never replaces a trail', async () => {
+        const name = logFilename(context.chatId);
+        disk.set(name, '{"earlier":1}\n');
+        fetchMock.mockImplementation((url, init) => (url.startsWith('/user/files/')
+            ? Promise.resolve({ ok: false, status: 500, text: async () => 'busy' })
+            : routedFetch(url, init)));
         const log = createDiskLog({ delayMs: 0 });
         log.setEnabled(true);
 
         log.append(snapshot(), getContext);
         await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
-        expect(log.count).toBe(1); // kept, so the next write retries it
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(uploads()).toHaveLength(0);
+        expect(disk.get(name)).toBe('{"earlier":1}\n');
+        expect(log.count).toBe(1);
     });
 
-    it('drops the run on reset, because a new chat is a new run', async () => {
+    it('keeps each chat in its own file across a chat change, dropping nothing', async () => {
+        const log = createDiskLog({ delayMs: 0 });
+        log.setEnabled(true);
+        const first = context.chatId;
+
+        log.append(snapshot(), getContext);
+        log.reset();
+        context.chatId = 'another-chat';
+        log.append(snapshot({ promptTokens: 999 }), getContext);
+        await vi.waitFor(() => expect(uploads()).toHaveLength(2));
+
+        expect(disk.get(logFilename(first)).trim().split('\n')).toHaveLength(1);
+        const other = disk.get(logFilename('another-chat')).trim().split('\n');
+        expect(JSON.parse(other[0])).toMatchObject({ prompt_tokens: 999, chat_id: 'another-chat' });
+    });
+
+    it('marks every line with its chat and the session that wrote it', async () => {
         const log = createDiskLog({ delayMs: 0 });
         log.setEnabled(true);
         log.append(snapshot(), getContext);
-        log.reset();
+        log.append(snapshot(), getContext);
+        await vi.waitFor(() => expect(uploads()).toHaveLength(1));
 
-        expect(log.count).toBe(0);
+        const [a, b] = writtenLines().map((line) => JSON.parse(line));
+        expect(a.chat_id).toBe(context.chatId);
+        expect(Number.isNaN(Date.parse(a.session))).toBe(false);
+        expect(b.session).toBe(a.session);
+    });
+
+    it('names a chat\'s file with only the characters ST accepts, and keeps two chats apart', () => {
+        const name = logFilename('Esk - 2026-09-01@12h30m45s');
+        expect(name).toMatch(/^cairn-Esk_-_2026-09-01_12h30m45s-[0-9a-f]{8}\.jsonl$/);
+        // src/endpoints/assets.js:22's rule.
+        expect(name).toMatch(/^[a-zA-Z0-9_\-.]+$/);
+        expect(logFilename('Esk @ 1')).not.toBe(logFilename('Esk # 1'));
+        expect(logFilename(null)).toBe(LOG_FILENAME);
+        expect(logFilename('日本語')).toMatch(/^cairn-chat-[0-9a-f]{8}\.jsonl$/);
     });
 
     it('debounces bursts into a single write', async () => {
@@ -156,7 +252,7 @@ describe('disk log', () => {
         expect(fetchMock).not.toHaveBeenCalled();
 
         await vi.advanceTimersByTimeAsync(1500);
-        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(uploads()).toHaveLength(1);
         expect(writtenLines()).toHaveLength(3);
     });
 });
@@ -172,7 +268,7 @@ describe('what a line has to answer', () => {
         const log = createDiskLog({ delayMs: 0 });
         log.setEnabled(true);
         log.append(snapshot(), getContext);
-        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        await vi.waitFor(() => expect(uploads().length).toBeGreaterThan(0));
 
         expect(JSON.parse(writtenLines()[0])).toMatchObject({
             divergence_index: 900,
@@ -187,7 +283,7 @@ describe('what a line has to answer', () => {
         const log = createDiskLog({ delayMs: 0 });
         log.setEnabled(true);
         log.append(snapshot(), getContext);
-        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        await vi.waitFor(() => expect(uploads().length).toBeGreaterThan(0));
 
         expect(JSON.parse(writtenLines()[0]).injections[0]).toMatchObject({
             key: 'qvink_memory_short',
@@ -206,7 +302,7 @@ describe('what a line has to answer', () => {
             divergenceIn: null,
             stability: { previousLength: 0, currentLength: 1000, commonPrefix: 0, stabilityPercent: null, divergence: null },
         }), getContext);
-        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        await vi.waitFor(() => expect(uploads().length).toBeGreaterThan(0));
 
         const entry = JSON.parse(writtenLines()[0]);
         expect(entry).toHaveProperty('divergence_in', null);
@@ -224,7 +320,7 @@ describe('disk log — the holder regime', () => {
         log.setEnabled(true);
         log.append(snapshot({ worldInfoHeld: 29 }), getContext);
 
-        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        await vi.waitFor(() => expect(uploads().length).toBeGreaterThan(0));
         expect(JSON.parse(writtenLines().at(-1)).world_info_held).toBe(29);
     });
 
@@ -233,7 +329,7 @@ describe('disk log — the holder regime', () => {
         log.setEnabled(true);
         log.append(snapshot(), getContext);
 
-        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        await vi.waitFor(() => expect(uploads().length).toBeGreaterThan(0));
         expect(JSON.parse(writtenLines().at(-1)).world_info_held).toBeNull();
     });
 });
@@ -270,7 +366,7 @@ describe('disk log — the memory plan', () => {
             },
         }), getContext);
 
-        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        await vi.waitFor(() => expect(uploads().length).toBeGreaterThan(0));
         expect(JSON.parse(writtenLines().at(-1))).toMatchObject({
             memory_planned: true,
             memory_included: 96,
@@ -285,7 +381,7 @@ describe('disk log — the memory plan', () => {
         log.setEnabled(true);
         log.append(snapshot(), getContext);
 
-        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        await vi.waitFor(() => expect(uploads().length).toBeGreaterThan(0));
         expect(JSON.parse(writtenLines().at(-1)).memory_planned).toBe(false);
     });
 });
@@ -306,7 +402,7 @@ describe('disk log — P2 summaries', () => {
         const log = createDiskLog({ delayMs: 0 });
         log.setEnabled(true);
         log.append(snapshot(overrides), getContext);
-        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        await vi.waitFor(() => expect(uploads().length).toBeGreaterThan(0));
         return JSON.parse(writtenLines().at(-1));
     }
 
@@ -369,7 +465,7 @@ describe('disk log — P3 world state', () => {
         const log = createDiskLog({ delayMs: 0 });
         log.setEnabled(true);
         log.append(snapshot(overrides), getContext);
-        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        await vi.waitFor(() => expect(uploads().length).toBeGreaterThan(0));
         return JSON.parse(writtenLines().at(-1));
     }
 
@@ -441,7 +537,7 @@ describe('disk log — P6 the cap and its reserves', () => {
         const log = createDiskLog({ delayMs: 0 });
         log.setEnabled(true);
         log.append(snapshot(overrides), getContext);
-        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        await vi.waitFor(() => expect(uploads().length).toBeGreaterThan(0));
         return JSON.parse(writtenLines().at(-1));
     }
 
@@ -515,12 +611,12 @@ describe('the fields a run is read from', () => {
     const summaries = {
         canon: {
             gate: 'ready', reason: 'covered', inFlight: null, pending: null, givenUp: false,
-            calls: 2, picked: 10, duplicates: 1, refused: 0, failures: 0, lastReason: 'none',
+            calls: 2, picked: 10, duplicates: 1, refused: 0, clipped: 1, failures: 0, lastReason: 'none',
             ms: 9_000, lastMs: 4_400, tokensIn: 10_600, tokensOut: 800,
         },
         index: {
             gate: 'ready', inFlight: null, pending: null, waiting: 0, givenUp: false,
-            calls: 6, records: 85, dropped: 0, missed: 0, failures: 0, lastReason: 'none',
+            calls: 6, records: 85, dropped: 0, clipped: 3, missed: 0, failures: 0, lastReason: 'none',
             ms: 26_000, lastMs: 4_100, tokensIn: 18_000, tokensOut: 6_400,
         },
     };
@@ -529,7 +625,7 @@ describe('the fields a run is read from', () => {
         const log = createDiskLog({ delayMs: 0 });
         log.setEnabled(true);
         log.append(snapshot({ memory, summaries }), getContext);
-        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        await vi.waitFor(() => expect(uploads().length).toBeGreaterThan(0));
         return JSON.parse(writtenLines().at(-1));
     };
 

@@ -29,7 +29,7 @@ import { MAX_ATTEMPTS, createTally } from './tally.js';
  *          report: Function, clock: () => number, strategy?: object}} machinery
  */
 export function createIndexJob({ getContext, send, save, discard, report, clock, strategy = indexBatch }) {
-    const batches = createTally({ records: 0, dropped: 0, missed: 0 });
+    const batches = createTally({ records: 0, dropped: 0, clipped: 0, missed: 0 });
 
     /** A batch is tried again once the range it would read moves on. */
     const key = (chatId, job) => `${chatId}\n${job[0].index}\n${job[job.length - 1].index}`;
@@ -60,13 +60,14 @@ export function createIndexJob({ getContext, send, save, discard, report, clock,
          * branch, a deletion or a chat change while the request was out means those
          * indexes belong to a chat that no longer exists.
          */
-        async run(context, { memoryProfileId }, job) {
+        async run(context, { memoryProfileId, indexPrompt }, job) {
             const { chatId } = context;
             const messages = job.map((entry) => context.chat[entry.index]);
             let request;
             try {
                 request = strategy.build({
                     summaries: job.map((entry) => ({ text: entry.text })),
+                    template: indexPrompt,
                     expand: (text) => context.substituteParams(text),
                 });
             } catch (err) {
@@ -95,10 +96,11 @@ export function createIndexJob({ getContext, send, save, discard, report, clock,
             if (!written) return fail(chatId, job, 'write');
 
             // What the panel reports is the applied change, never the model's claim
-            // (CLAUDE.md §4.18): records actually stored, slots the parser dropped, and
-            // numbers the reply never answered.
+            // (CLAUDE.md §4.18): records actually stored, slots the parser dropped or cut
+            // to their hard cap, and numbers the reply never answered.
             batches.stats.records += written;
             batches.stats.dropped += parsed.dropped.length;
+            batches.stats.clipped += parsed.clipped?.length ?? 0;
             batches.stats.missed += job.length - parsed.records.length;
             batches.succeed(key(chatId, job));
             debug(`Indexed summaries ${span(job)}: ${written} record(s) written, `

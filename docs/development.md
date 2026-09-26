@@ -91,23 +91,31 @@ memory. A change to its shape needs:
 ## Reading a run
 
 With **Write inspector log to disk** on (the default), every observed generation
-appends a flat JSON line to:
+appends a flat JSON line to that chat's own file:
 
 ```
-~/workspaces/SillyTavern/data/default-user/user/files/cairn-inspector.jsonl
+~/workspaces/SillyTavern/data/default-user/user/files/cairn-<chat>-<id>.jsonl
 ```
+
+`<chat>` is the chat's name flattened to the characters ST accepts, and `<id>` is
+a hash of the real name, so two chats never share a file. A chat played over
+several sessions is one trail: every line carries `chat_id` and `session` (when
+that page load began), so a sitting's lines are `select(.session == …)`.
 
 One line per generation, with `stability_percent`, `prompt_tokens`,
 `injected_tokens`, `writers`, the per-injection breakdown and the divergence
 excerpts. To watch the stability curve of a session:
 
 ```sh
-jq -r '[.api, .stability_percent, .prompt_tokens, .writers] | @tsv' \
-  ~/workspaces/SillyTavern/data/default-user/user/files/cairn-inspector.jsonl
+jq -r '[.session, .api, .stability_percent, .prompt_tokens, .writers] | @tsv' \
+  ~/workspaces/SillyTavern/data/default-user/user/files/cairn-<chat>-<id>.jsonl
 ```
 
-The file is rewritten in full on each write (ST's endpoint replaces files rather
-than appending) and reset when the chat changes.
+ST's endpoint replaces files rather than appending, so the first write of a
+session reads the file back and each write after carries what was already there.
+If the read-back fails, nothing is written that session rather than risk replacing
+the trail. `cairn-inspector.jsonl` is where lines went before this, and where one
+goes if no chat is open.
 
 ## Calibrating against real summaries
 

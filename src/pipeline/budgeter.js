@@ -62,21 +62,12 @@ export const MARGIN_FRACTION = 0.05;
 export const CANON_FRACTION = 0.20;
 
 /**
- * What a full summary costs against its own compact line, measured over the 85 real
- * summaries: 123.1 tokens against 23.0 (docs/decisions.md D-0076). It is a measurement
- * and not a preference, so it is the one number to change when it is measured again —
- * `scripts/calibrate-tier.mjs measure` prints it.
+ * The compact tier's **ceiling** share of the scene budget (docs/decisions.md D-0085).
+ * It was derived from a measured ratio as `1/(1 + r)` (D-0075), but `r` moved with every
+ * model 0d tried — 3.4 to 5.7 — so the share is now a setting like canon's, defaulting
+ * near what GLM-class models measure (`r` ≈ 4, a share of ~20%).
  */
-export const COMPACT_RATIO = 5.36;
-
-/**
- * The compact tier's share of the scene budget, **derived rather than chosen**
- * (CLAUDE.md §4.15, docs/decisions.md D-0075). At `s = 1/(1 + r)` the compact tail holds
- * about as many messages as the full tier does, which roughly doubles the held horizon
- * and stops there: past that point the tail buys lines about scenes a hundred messages
- * back by spending the full tier's rebuild spacing.
- */
-export const COMPACT_SHARE = 1 / (1 + COMPACT_RATIO);
+export const COMPACT_FRACTION = 0.20;
 
 /**
  * The floor under the cap. A card, lorebook and raw window that already fill the
@@ -95,7 +86,7 @@ export const MIN_CAP_FRACTION = 0.10;
  * function of the chat: the same chat and settings always give the same number,
  * and a reload costs nothing (docs/decisions.md D-0033).
  *
- * @param {{maxPromptTokens: number,
+ * @param {{maxPromptTokens: number, fraction?: number,
  *          reserves?: {card: number, lore: number, window: number, state: number}|null}} input
  *        `reserves` null means a reserve could not be read at all; the cap falls
  *        back to the plain share rather than guessing (CLAUDE.md §4.17).
@@ -103,9 +94,9 @@ export const MIN_CAP_FRACTION = 0.10;
  *            minimum: number, parts: object|null,
  *            limitedBy: 'share'|'room'|'starved'|'unknown'}}
  */
-export function deriveCap({ maxPromptTokens, reserves } = {}) {
+export function deriveCap({ maxPromptTokens, reserves, fraction = CAP_FRACTION } = {}) {
     const max = Number.isFinite(maxPromptTokens) ? Math.max(0, maxPromptTokens) : 0;
-    const share = Math.floor(max * CAP_FRACTION);
+    const share = Math.floor(max * fractionOr(fraction, CAP_FRACTION));
     const minimum = Math.floor(max * MIN_CAP_FRACTION);
 
     if (!reserves) {
@@ -131,6 +122,11 @@ function nonNegative(value) {
     return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
 }
 
+/** A share from the settings, or the default when it is not a number in [0, 1]. */
+export function fractionOr(value, fallback) {
+    return Number.isFinite(value) && value >= 0 && value <= 1 ? value : fallback;
+}
+
 /**
  * How much of the block canon may take, and why that number (docs/p4-plan.md decision 5).
  *
@@ -141,14 +137,14 @@ function nonNegative(value) {
  * canon at all, which is the right order of sacrifice — the summaries are the memory,
  * and canon is what is left of the ones already dropped.
  *
- * @param {{cap: number, stepTokens: number}} input The block's cap and what one
+ * @param {{cap: number, stepTokens: number, fraction?: number}} input The block's cap and what one
  *        see-saw step adds, both as the assembler works them out.
  * @returns {{cap: number, share: number, guard: number, limitedBy: 'share'|'guard'}}
  */
-export function canonCap({ cap, stepTokens } = {}) {
+export function canonCap({ cap, stepTokens, fraction = CANON_FRACTION } = {}) {
     const block = nonNegative(cap);
     const step = nonNegative(stepTokens);
-    const share = Math.floor(block * CANON_FRACTION);
+    const share = Math.floor(block * fractionOr(fraction, CANON_FRACTION));
     const guard = block - 2 * step;
 
     return {
@@ -197,16 +193,17 @@ export function recoupled({ fullCap, floor, stepTokens }) {
  * assembler holds the result across a see-saw cycle so that a split which moves as lines
  * are written cannot demote a summary on an ordinary turn (D-0059's pattern).
  *
- * @param {{sceneCap: number, available?: number}} input `available` is the token cost of
+ * @param {{sceneCap: number, available?: number, fraction?: number}} input `available` is the token cost of
  *        the compact texts that could be held, or 0 when there are none.
  * @returns {{fullCap: number, compactCap: number, share: number}}
  */
-export function tierSplit({ sceneCap, available = 0 } = {}) {
+export function tierSplit({ sceneCap, available = 0, fraction = COMPACT_FRACTION } = {}) {
     const budget = nonNegative(sceneCap);
-    const ceiling = Math.floor(budget * COMPACT_SHARE);
+    const share = fractionOr(fraction, COMPACT_FRACTION);
+    const ceiling = Math.floor(budget * share);
     const compactCap = Math.min(ceiling, nonNegative(available));
 
-    return { fullCap: budget - compactCap, compactCap, share: COMPACT_SHARE };
+    return { fullCap: budget - compactCap, compactCap, share };
 }
 
 /**

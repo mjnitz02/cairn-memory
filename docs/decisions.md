@@ -8,6 +8,120 @@ what we believed and why it changed.
 
 ---
 
+## D-0085 — Usable before tuned: the budget and the prompts are settings, caps are soft and hard, the pick loses the kind, and the log is per chat
+**2026-09-26.** Matt's call after 0d (D-0084): the margins 0d measured are too narrow to tune the
+prompts against one chat, so the next step is a build that can be installed and played on several
+story chains, with everything a QA pass wants to move reachable from the panel. Six changes; the
+first four supersede parts of earlier entries.
+
+**1. `COMPACT_FRACTION` replaces `COMPACT_RATIO`** (supersedes D-0075's "derived rather than
+chosen", and the plan to move the constant once at 0d, D-0081). The share was `1/(1 + r)` with `r`
+measured, and 0d measured `r` from 3.4 to 5.7 across five models and three runs each — it is a
+property of the model, not of the story. A fraction is what the budget actually uses, and it is
+what we can set; how well a model's lines fit it is what the log shows. **Default 0.20**, near
+`1/(1 + r)` for the GLM-class `r` ≈ 4 that Cairn will run on. It stays a ceiling, not a
+reservation.
+
+**2. The budget's numbers are settings** (supersedes D-0038's "no setting" for the block's share
+and p4-plan decision 5's "derived, not a setting" for canon's). `memoryFraction` (0.35),
+`canonFraction` (0.20), `compactFraction` (0.20), `rawWindow` (8) and `step` (8), each with one
+plain sentence in the panel and a default equal to the constant it replaced, so an unconfigured
+install behaves exactly as before. CLAUDE.md §4.15 says derive before adding a knob; these were
+derived, and 0d is the evidence that the derivation does not transfer between models. A change to
+the window or the step restarts the see-saw, so it lands as a first turn — a rebuild — and never
+mid-cycle.
+
+**3. Soft and hard caps** (supersedes D-0053 for index records and canon facts; state values are
+unchanged). The prompt states the soft cap; the parser keeps anything up to **1.5×** it as written
+and cuts past that at a word, with an ellipsis (`util/clip.js`). At 0d a `what` over its cap cost
+the whole record — up to 44 of 85 for DeepSeek — and 131 of 1,335 lines were dropped; at 150 and
+240 characters the same replies lose one `what`. Cuts are counted apart from drops
+(`index_clipped_slots`, `compaction_clipped`), so the log still reports the applied change. **No
+stored-shape change:** a stored string is only allowed to be longer, and every old record is still
+valid.
+
+**4. The pick no longer sees the kind** (D-0084 finding 2; chosen over cutting the kinds to two,
+which would still have gated a promise labelled `minor`). `renderRecord` and `INDEX_HEADER` drop
+the column and the canon prompt's example and rule are rewritten without it. The kind is still
+written, because the inspector's and the log's kind spread is how a run shows whether the pass
+discriminates at all.
+
+**5. The index, canon and state prompts are editable** (supersedes D-0044's "built in, not a
+setting", which D-0053 and D-0071 repeated). An edit missing the macro the call needs —
+`{{summaries}}`, `{{index}}`, `{{state}}` and `{{messages}}` — falls back to the built-in prompt,
+as the summary prompt always has (`resolvePrompt`). The objection was that an edit could only break
+the parser; the fallback and the soft/hard caps between them make that a worse prompt, not a
+broken tier, and prompt work is exactly what the next phase needs to do in play.
+
+**6. One log per chat, appended to across sessions.** ST's upload endpoint replaces whole files,
+so the first write of a session reads the file back (`src/users.js:1218`) and every write carries
+what was there; a failed read-back writes nothing rather than risk replacing a trail. Every line
+carries `chat_id` and `session`. And canon is shown as text in the inspector — in the prompt, left
+out by the cap, and waiting for a rebuild — because the log carries counts only and a wrong fact
+should be seen, not inferred.
+
+**Found in the doing.** `reset()` never cleared the held compact split, so a new chat's first
+block was fitted to the last chat's tail: the rebuild re-derived it, but after the fit had used it.
+Now a test. And `hashString` returns `h:` and hex — a colon ST's upload refuses — which the
+filename test caught before any log was lost.
+
+**Reopens if:** a QA chain shows a setting nobody moves (fold it back to a constant, §4.15), or a
+clipped fact or line that misleads where a dropped one would only have been missing.
+
+---
+
+## D-0084 — Stage 0d, run: the class reaches four of five spine lines at best, the kind gates in practice, and `r` is the model's
+**2026-09-26.** The stage 0 fixture — the same 85 summaries, the shipped prompts and parser —
+re-run on the model class Cairn will run on, through nano-gpt with `scripts/run-tier.mjs`. Five
+models, three full runs each; DeepSeek-R1-0528 smoke-tested only. $0.37 in all. Scored against
+the frozen `yardstick.md` exactly as D-0080 scored the reference; the verdict and every run's
+output are in the corpus (`p5-stage0/0d/verdict.md`).
+
+| model | spine lines per run | register kept | `r` (lines only) |
+|---|---|---|---|
+| reference | 5 | yes | 4.13 |
+| glm-5.3 | 3, 4, 4 | 3 of 3 | 3.6–3.8 |
+| gemma-4-31b-it | 3, 3, 2 | 3 of 3 | 4.2–4.4 |
+| deepseek-v4-pro | 2, 2, 3 | 2 of 3 | 3.5–3.7 |
+| glm-4.7 | 2, 2, 1 | 2 of 3 | 4.3–5.7 |
+| kimi-k2.6 | 0, 2, 2 | 0 of 3 | 3.4–3.6 |
+
+**1. No run reaches five.** Line 4 (the army, the contract, her freedom) survives in 12 of 15 and
+line 5 in 11. Line 1 fails in 13 and line 3 — the price of the power — in 11.
+
+**2. The kind gates in practice** (D-0080 §1's watch item, now observed). Every index carries the
+childhood promise at row 62, but 12 of 15 label that row `filler`, and the only two picks that
+carry the promise are the only two indexes that labelled it `major`. Several picks cite nothing
+but `major` rows. The prompt said the kind was a hint; a modest model obeyed it anyway. **Taken
+in D-0085: the pick no longer sees the kind.**
+
+**3. The register is a pick loss, not an index loss.** Kimi's indexes carry more captivity rows
+than the reference's, and all three of its picks leave them out, so the canon reads as a rescue
+romance. That is D-0071 decision 9's reopen condition met on one model. It is **noted, not acted
+on**: a tone field is a design change, and one model on one chat is not the evidence to make it
+on. The QA chains D-0085 makes possible are.
+
+**4. The caps drop what these models write.** A `what` past 100 characters loses its record, and
+DeepSeek lost 16–44 of 85 that way; up to 21 lines per run went the same way. **Taken in D-0085:
+soft and hard caps.**
+
+**5. `r` is the model's, not the story's.** 3.4 to 5.7 against the constant's 5.36, so the
+constant was right for one model in two runs of fifteen. **Taken in D-0085: a fraction.**
+
+**6. R1 cannot run the index at the shipped cap.** It spent all 6,144 tokens reasoning and wrote
+nothing. Raising `INDEX_MAX_TOKENS` for a reasoning model is a design question, not a test setting.
+
+**What was decided.** GLM is the baseline memory model for play. The prompts are not tuned against
+this one chat: the margins are a line or two of five, and a fix fitted to one yardstick is the
+teacher examining itself again. Instead Cairn is made usable (D-0085) and played on several chains
+for a few days, and the prompts are tuned against that wider corpus.
+
+**Reopens if:** the QA chains show the same misses — line-1-shaped facts lost from `background`,
+captivity-shaped register dropped by the pick — on more than one model and chain, which is when
+the prompt change D-0080 names, or D-0071's tone field, becomes the next step.
+
+---
+
 ## D-0083 — Stage 4 as built: the log's field list is a test, and the inspector's renderers are pure
 **2026-09-26.** P5 stage 4, the surface. Small in itself; two things found in the doing are worth
 the entry.

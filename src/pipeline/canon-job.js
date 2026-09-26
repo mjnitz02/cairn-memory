@@ -31,7 +31,7 @@ import { MAX_ATTEMPTS, createTally } from './tally.js';
  *        null. It carries the chat's own records, so it never reaches the log.
  */
 export function createCanonJob({ getContext, send, save, discard, report, clock, pending, strategy = canonPick }) {
-    const picks = createTally({ picked: 0, duplicates: 0, refused: 0 });
+    const picks = createTally({ picked: 0, duplicates: 0, refused: 0, clipped: 0 });
 
     /** A pick is tried again once the index it would read moves on, or the question changes. */
     const key = (chatId, job) => `${chatId}\n${job.covers[0]}\n${job.covers[1]}\n${job.slots}`;
@@ -59,13 +59,14 @@ export function createCanonJob({ getContext, send, save, discard, report, clock,
          * One pick. The batch lands on the newest record it read — behind the raw
          * window by construction, so it is written where swipes never reach.
          */
-        async run(context, { memoryProfileId }, job) {
+        async run(context, { memoryProfileId, canonPrompt }, job) {
             const { chatId } = context;
             let request;
             try {
                 request = strategy.build({
                     records: job.records.map((entry) => entry.record),
                     slots: job.slots,
+                    template: canonPrompt,
                     expand: (text) => context.substituteParams(text),
                 });
             } catch (err) {
@@ -107,6 +108,7 @@ export function createCanonJob({ getContext, send, save, discard, report, clock,
             picks.stats.picked += applied.picked;
             picks.stats.duplicates += applied.duplicates;
             picks.stats.refused += applied.dropped + applied.uncited;
+            picks.stats.clipped += parsed.picked.filter((fact) => fact.clipped).length;
             picks.succeed(key(chatId, job));
             debug(`Picked canon over records #${job.covers[0]}–#${index}: ${applied.picked} of `
                 + `${job.slots} slot(s) filled, ${applied.duplicates} repeated, `

@@ -565,8 +565,8 @@ It produces the regression fixture, the few-shot examples and the calibration ta
 **Re-run 2026-09-26 in the v4 shape** (D-0081), because stage 2.5 added `background` and the prose
 `line` under it. `background` closes 0c's one real loss — Namtira goes from 0 to 12 mentions across
 the records — and a record now costs 51.0 tokens with `r` at 4.13 rather than 38.2 and 5.36.
-`COMPACT_RATIO` stays at 5.36 until 0d so the constant moves once, on the model that will run it;
-the error is in the safe direction.
+`COMPACT_RATIO` stayed at 5.36 until 0d, which then showed `r` is the model's (D-0084), so it
+became a fraction instead (D-0085).
 
 **0b. RUN 2026-09-26 (D-0082).** The three zero-generation checks D-0072 leaves open, against the
 same fixture. **The `kind` earns nothing** — 47% recall against the slots' 84%, no precision added,
@@ -597,7 +597,7 @@ index at all.
 - **Does the chain read?** Forty-five full summaries behind ~42 compact ones, concatenated in
   order: is the join legible, or does the block read as two documents stapled together?
 
-**0d — the model that will actually run it. OPEN, and now the phase's remaining risk** (D-0080).
+**0d — the model that will actually run it. RUN 2026-09-26 (D-0084).** No run of the five models reached five spine lines; GLM-5.3 reached four, and is the baseline. The kind gated the pick in practice and the caps dropped what these models write, both taken in D-0085, and `r` measured 3.4–5.7, so `COMPACT_RATIO` became `COMPACT_FRACTION`. What follows is the plan as it stood.
 **The harness is ready and needs nothing built** (D-0081): `calibrate-tier.mjs batches` renders the
 six index prompts, `assemble` reads the replies back through the shipped parser into a records file
 beside the reference's, and `measure` and `pick-gate.mjs` both take a records file by name. What it

@@ -22,18 +22,6 @@
                 world state.
             </div>
 
-            <label for="cairn_summaryPrompt">Summary prompt</label>
-            <textarea id="cairn_summaryPrompt" class="text_pole textarea_compact" rows="8"></textarea>
-            <div class="cairn-hint">
-                The instructions the memory model gets for summarising one message:
-                <code>{{message}}</code> is the message, <code>{{history}}</code> the summaries just
-                before it. Editing it does not rewrite summaries already written.
-            </div>
-            <div id="cairn_summaryPromptReset" class="menu_button menu_button_icon">
-                <i class="fa-solid fa-rotate-left"></i>
-                <span>Reset to default</span>
-            </div>
-
             <label class="checkbox_label" for="cairn_showInspector">
                 <input id="cairn_showInspector" type="checkbox">
                 <span>Show inspector</span>
@@ -45,8 +33,9 @@
                 <span>Write inspector log to disk</span>
             </label>
             <div class="cairn-hint">
-                Appends each generation to <code>data/&lt;user&gt;/user/files/cairn-inspector.jsonl</code>,
-                so a run can be read without copying numbers out by hand.
+                Appends each generation to a file of its own for each chat,
+                <code>data/&lt;user&gt;/user/files/cairn-&lt;chat&gt;-&lt;id&gt;.jsonl</code>, so a chat
+                played over several sessions reads as one trail.
             </div>
 
             <label class="checkbox_label" for="cairn_holdWorldInfo">
@@ -110,6 +99,62 @@
                 is what stops it calling everything important. The spine of a story does not grow
                 as the story does, so a long chat wants about the same number as a short one.
             </div>
+
+            <details class="cairn-details">
+                <summary>Budget</summary>
+                <label for="cairn_memoryFraction">Memory share (% of the prompt)</label>
+                <input id="cairn_memoryFraction" type="number" class="text_pole" min="0" max="90" step="1">
+                <div class="cairn-hint">The most of the prompt the memory block may take. It gets less when the character card, lorebook and recent messages leave less room.</div>
+                <label for="cairn_canonFraction">Canon share (% of the memory block)</label>
+                <input id="cairn_canonFraction" type="number" class="text_pole" min="0" max="90" step="1">
+                <div class="cairn-hint">The most of the memory block canon may take. Room it does not use goes to summaries.</div>
+                <label for="cairn_compactFraction">Short-summary share (% of the summaries)</label>
+                <input id="cairn_compactFraction" type="number" class="text_pole" min="0" max="90" step="1">
+                <div class="cairn-hint">The most of the summaries&#39; room that one-line versions of old summaries may take. Higher reaches further back; lower keeps more recent summaries in full.</div>
+                <label for="cairn_rawWindow">Recent messages kept in full</label>
+                <input id="cairn_rawWindow" type="number" class="text_pole" min="1" max="100" step="1">
+                <div class="cairn-hint">How many of the newest messages stay in the prompt as written rather than as summaries. Changing it rebuilds the memory block on the next turn.</div>
+                <label for="cairn_step">Summary step (messages)</label>
+                <input id="cairn_step" type="number" class="text_pole" min="0" max="100" step="1">
+                <div class="cairn-hint">How many messages build up before the next batch is swapped for their summaries. Bigger steps change the prompt less often, which keeps the model&#39;s cache warm. Changing it rebuilds the memory block on the next turn.</div>
+            </details>
+
+            <details class="cairn-details">
+                <summary>Memory prompts</summary>
+                <div class="cairn-hint">
+                    What the memory model is asked. Each one falls back to its default if an edit
+                    leaves out the placeholder it needs, and editing one does not rewrite what is
+                    already written.
+                </div>
+                <label for="cairn_summaryPrompt">Summary prompt</label>
+                <textarea id="cairn_summaryPrompt" class="text_pole textarea_compact" rows="8"></textarea>
+                <div class="cairn-hint">Summarises one message: <code>{{message}}</code> is the message, <code>{{history}}</code> the summaries just before it.</div>
+                <div id="cairn_summaryPromptReset" class="menu_button menu_button_icon">
+                    <i class="fa-solid fa-rotate-left"></i>
+                    <span>Reset to default</span>
+                </div>
+                <label for="cairn_indexPrompt">Index prompt</label>
+                <textarea id="cairn_indexPrompt" class="text_pole textarea_compact" rows="8"></textarea>
+                <div class="cairn-hint">Turns up to fifteen summaries into index records and one-line versions: <code>{{summaries}}</code> is the numbered list, and is required.</div>
+                <div id="cairn_indexPromptReset" class="menu_button menu_button_icon">
+                    <i class="fa-solid fa-rotate-left"></i>
+                    <span>Reset to default</span>
+                </div>
+                <label for="cairn_canonPrompt">Canon prompt</label>
+                <textarea id="cairn_canonPrompt" class="text_pole textarea_compact" rows="8"></textarea>
+                <div class="cairn-hint">Picks the canon from the whole index: <code>{{index}}</code> is the index and is required, <code>{{slots}}</code> the number of canon lines.</div>
+                <div id="cairn_canonPromptReset" class="menu_button menu_button_icon">
+                    <i class="fa-solid fa-rotate-left"></i>
+                    <span>Reset to default</span>
+                </div>
+                <label for="cairn_statePrompt">World state prompt</label>
+                <textarea id="cairn_statePrompt" class="text_pole textarea_compact" rows="8"></textarea>
+                <div class="cairn-hint">Keeps the world state current: <code>{{state}}</code> is the record so far and <code>{{messages}}</code> the new messages, and both are required; <code>{{earlier}}</code> holds summaries before them.</div>
+                <div id="cairn_statePromptReset" class="menu_button menu_button_icon">
+                    <i class="fa-solid fa-rotate-left"></i>
+                    <span>Reset to default</span>
+                </div>
+            </details>
 
             <label class="checkbox_label" for="cairn_debugLogging">
                 <input id="cairn_debugLogging" type="checkbox">

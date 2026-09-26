@@ -2,49 +2,91 @@
  * Writes the observer's snapshots to a file on disk, so a run can be read
  * directly instead of copied out of the inspector by hand.
  *
- * Uses ST's own Data Bank endpoint (`/api/files/upload`,
- * src/endpoints/files.js:28) rather than inventing a transport or adding a
- * server plugin. It writes whole files, not appends, so we rewrite the full
- * rolling log each time — a few hundred KB at most for a long session.
+ * **One file per chat, appended to across sessions** (docs/decisions.md D-0085):
+ * a chat played over several evenings is one trail, and a chat switch no longer
+ * throws the last one away. ST's upload endpoint (`/api/files/upload`,
+ * src/endpoints/files.js:28) replaces whole files, so the first write of a
+ * session reads the file back (`/user/files/`, src/users.js:1218) and every write
+ * after carries what was already there.
  *
  * Lands in `data/<user>/user/files/`.
  */
 import { nearPromptLimit } from './context-size.js';
+import { hashString } from './hash.js';
 import { warn, debug } from './log.js';
 
-/** Fixed name so the path is predictable between sessions. */
+/** Where a chat's log goes before any chat is open, and the prefix every name shares. */
 export const LOG_FILENAME = 'cairn-inspector.jsonl';
 
 /** Wait for a quiet moment before writing; generations arrive in bursts. */
 const WRITE_DELAY_MS = 1500;
 
-export function createDiskLog({ filename = LOG_FILENAME, delayMs = WRITE_DELAY_MS } = {}) {
-    const entries = [];
+/**
+ * A chat's log file. ST only accepts `[A-Za-z0-9_.-]` (src/endpoints/assets.js:22), and
+ * a chat id is a character name and a timestamp, so the readable part is flattened and a
+ * hash of the real id keeps two chats that flatten alike apart.
+ *
+ * @param {string|null|undefined} chatId
+ */
+export function logFilename(chatId) {
+    if (!chatId) return LOG_FILENAME;
+    const readable = String(chatId).replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60);
+    // `hashString` is `h:` and hex; the colon is not a character ST accepts.
+    return `cairn-${readable || 'chat'}-${hashString(String(chatId)).slice(2, 10)}.jsonl`;
+}
+
+export function createDiskLog({ delayMs = WRITE_DELAY_MS } = {}) {
+    /** File name → `{base, entries}`: what the file held, and what is still to be added. */
+    const files = new Map();
     let enabled = false;
     let timer = null;
     let lastPath = null;
+    /** Writes run one after another, so two flushes never race on one file. */
+    let writing = Promise.resolve();
+    /** When this page load began, on every line, so a trail shows where each sitting starts. */
+    const session = new Date().toISOString();
+
+    async function readBack(context, name) {
+        const response = await fetch(`/user/files/${encodeURIComponent(name)}`, {
+            headers: context.getRequestHeaders(),
+            cache: 'no-store',
+        });
+        if (response.status === 404) return '';
+        if (!response.ok) throw new Error(`reading ${name}: ${response.status}`);
+        return response.text();
+    }
+
+    async function flushFile(context, name, file) {
+        // Never write without knowing what is there: an unread file would be replaced.
+        if (file.base === null) file.base = await readBack(context, name);
+        const taken = file.entries.length;
+        const body = file.base + file.entries.slice(0, taken).map((entry) => JSON.stringify(entry)).join('\n') + '\n';
+
+        const response = await fetch('/api/files/upload', {
+            method: 'POST',
+            headers: context.getRequestHeaders(),
+            body: JSON.stringify({ name, data: toBase64(body) }),
+        });
+        if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
+
+        file.base = body;
+        file.entries.splice(0, taken);
+        lastPath = (await response.json()).path;
+        debug(`Wrote ${taken} snapshot(s) to ${lastPath}`);
+    }
 
     async function flush(getContext) {
         timer = null;
-        if (!entries.length) return;
-
-        try {
-            const context = getContext();
-            const body = entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n';
-
-            const response = await fetch('/api/files/upload', {
-                method: 'POST',
-                headers: context.getRequestHeaders(),
-                body: JSON.stringify({ name: filename, data: toBase64(body) }),
-            });
-
-            if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
-
-            lastPath = (await response.json()).path;
-            debug(`Wrote ${entries.length} snapshot(s) to ${lastPath}`);
-        } catch (err) {
-            // A diagnostic that cannot write is still only a diagnostic.
-            warn('Could not write the inspector log.', err);
+        const context = getContext();
+        for (const [name, file] of files) {
+            if (!file.entries.length) continue;
+            try {
+                await flushFile(context, name, file);
+            } catch (err) {
+                // A diagnostic that cannot write is still only a diagnostic. The entries
+                // stay queued, so the next write carries them.
+                warn('Could not write the inspector log.', err);
+            }
         }
     }
 
@@ -53,22 +95,31 @@ export function createDiskLog({ filename = LOG_FILENAME, delayMs = WRITE_DELAY_M
             enabled = Boolean(value);
         },
 
-        /** Queue a snapshot. Writes are debounced, not per-turn. */
+        /** Queue a snapshot for the open chat's file. Writes are debounced, not per-turn. */
         append(snapshot, getContext) {
             if (!enabled) return;
 
-            entries.push(toEntry(snapshot));
+            const chatId = getContext()?.chatId ?? null;
+            const name = logFilename(chatId);
+            if (!files.has(name)) files.set(name, { base: null, entries: [] });
+            files.get(name).entries.push({ ...toEntry(snapshot), chat_id: chatId, session });
             clearTimeout(timer);
-            timer = setTimeout(() => flush(getContext), delayMs);
+            timer = setTimeout(() => {
+                writing = writing.then(() => flush(getContext));
+            }, delayMs);
         },
 
-        /** Drop the accumulated run — a new chat is a new run. */
-        reset() {
-            entries.length = 0;
-        },
+        /**
+         * A chat change. Nothing is dropped: queued entries belong to their own chat's
+         * file and are still written. Only what this session knows of each file is kept.
+         */
+        reset() {},
 
+        /** Entries queued and not yet written, across every chat. */
         get count() {
-            return entries.length;
+            let count = 0;
+            for (const file of files.values()) count += file.entries.length;
+            return count;
         },
 
         get path() {
@@ -348,6 +399,8 @@ function compactionFields(status) {
         compaction_picked: status.picked ?? null,
         compaction_duplicates: status.duplicates ?? null,
         compaction_dropped_fields: status.refused ?? null,
+        // Facts cut to their hard cap rather than dropped (D-0085).
+        compaction_clipped: status.clipped ?? null,
         compaction_failed: status.failures ?? null,
         compaction_last_reason: status.lastReason ?? null,
         compaction_ms: status.ms ?? null,
@@ -380,6 +433,8 @@ function indexFields(status) {
         index_batches: status.calls ?? null,
         index_records: status.records ?? null,
         index_dropped_slots: status.dropped ?? null,
+        // Slots cut to their hard cap rather than dropped (D-0085).
+        index_clipped_slots: status.clipped ?? null,
         index_unanswered: status.missed ?? null,
         index_failed: status.failures ?? null,
         index_last_reason: status.lastReason ?? null,

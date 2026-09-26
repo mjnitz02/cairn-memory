@@ -23,9 +23,9 @@
  * record it rests on does. It is also cheap grounding — a model that must name the row
  * invents less than one that need not.
  *
- * Built in, not a setting, as the other three prompts are (D-0044): the caps are the
- * store's, so an edit could only break the parser. Follows DESIGN.md §12 — an
- * `IMPORTANT:` line, concrete include and exclude examples, a tiebreaker at the end.
+ * Editable in the settings since D-0085; an edit without `{{index}}` falls back to this
+ * one. Follows DESIGN.md §12 — an `IMPORTANT:` line, concrete include and exclude
+ * examples, a tiebreaker at the end.
  *
  * Pure: no ST, no network. ST's macro expansion comes in as `expand`.
  */
@@ -34,8 +34,9 @@ import {
     MAX_ENTITIES, MAX_ENTITY_CHARS, MAX_FACT_CHARS, MAX_SLOTS, MAX_SOURCES, MIN_SLOTS,
 } from './canon.js';
 import { INDEX_HEADER, renderIndex } from './index-record.js';
+import { clip, hardCap } from '../util/clip.js';
 import { hashString } from '../util/hash.js';
-import { renderTemplate } from '../util/template.js';
+import { renderTemplate, resolvePrompt } from '../util/template.js';
 
 /**
  * Room for a reasoning model's thinking over a long index before a short list. The
@@ -43,6 +44,9 @@ import { renderTemplate } from '../util/template.js';
  * the room, because this is the one pass that reasons over the whole story.
  */
 export const CANON_MAX_TOKENS = 4096;
+
+/** Where a fact is cut rather than kept; the prompt states `MAX_FACT_CHARS` (D-0085). */
+export const HARD_FACT_CHARS = hardCap(MAX_FACT_CHARS);
 
 export const CANON_PROMPT = `You are choosing the permanent spine of a long roleplay. Below is an index of the whole story so far: one numbered row per scene, in order, with the columns \`${INDEX_HEADER}\`. The storyteller will soon have room for only these few lines and the most recent scenes — everything else is already gone.
 
@@ -60,23 +64,23 @@ Leave out:
 - What might happen next, what someone intends, or what a scene is building towards.
 - A journey, a meal, a purchase or a conversation that nothing later rests on.
 
-**\`kind\` is a hint and you may overrule it.** A row marked filler can hold the fact the whole story turns on — a purchase is filler until it turns out to be where they settled — and a row marked major can be a battle nothing later refers to. Read \`changed\`, \`because\` and \`background\` before the label.
+**Read every row.** A quiet row can hold the fact the whole story turns on — a purchase is small until it turns out to be where they settled, and a confession can be the only place an old promise is written down — while a loud row can be a battle nothing later refers to. Read \`changed\`, \`because\` and \`background\` as closely as \`what\`.
 
 **Chain the causes.** A fact stripped of why it happened reads as trivia once the scene around it is gone, and a row's \`because\` is there to be used. Prefer "he destroyed the army to buy her freedom" over "he destroyed an army".
 
 Example, over a five-row index and three slots.
-1 | filler | Wren, Aster | Wren asked Aster about the ferry timetable | | | Wren's brother drowned in the spring flood
-2 | major | Aster | Aster admitted she crewed the winter run with Wren's brother | Aster knew Wren's brother | Wren asked her outright |
-3 | description | Aster, Wren | Aster and Wren waited out the fog in the ferry terminal | | the crossing was posted delayed |
-4 | major | Aster | Aster rowed Wren across the water before the feast day | Wren is across the water | the ferry never sailed | Aster promised her a crossing
-5 | description | Wren | Wren walked up from the harbour into the town | | |
+1 | Wren, Aster | Wren asked Aster about the ferry timetable | | | Wren's brother drowned in the spring flood
+2 | Aster | Aster admitted she crewed the winter run with Wren's brother | Aster knew Wren's brother | Wren asked her outright |
+3 | Aster, Wren | Aster and Wren waited out the fog in the ferry terminal | | the crossing was posted delayed |
+4 | Aster | Aster rowed Wren across the water before the feast day | Wren is across the water | the ferry never sailed | Aster promised her a crossing
+5 | Wren | Wren walked up from the harbour into the town | | |
 Reply: {"canon":[{"fact":"Wren's brother drowned in the spring flood.","entities":["Wren"],"from":[1]},{"fact":"Aster crewed the winter run with Wren's brother the year before he drowned.","entities":["Aster","Wren"],"from":[2]},{"fact":"Aster rowed Wren across the water before the feast day, as she had promised, because the ferry never sailed.","entities":["Aster","Wren"],"from":[4]}]}
 
-Row 1 is marked filler and is still picked, because its \`background\` carries the death the rest of the story rests on. Rows 3 and 5 are a wait and a walk: nothing later needs them. Nothing says Aster seemed shaken or that Wren doubted her — those are feelings, and they passed with the scene.
+Row 1 is a question about a timetable and is still picked, because its \`background\` carries the death the rest of the story rests on. Rows 3 and 5 are a wait and a walk: nothing later needs them. Nothing says Aster seemed shaken or that Wren doubted her — those are feelings, and they passed with the scene.
 
 Rules:
 - Exactly {{slots}} facts, ordered oldest first as the rows are.
-- One plain sentence a fact, at most ${MAX_FACT_CHARS} characters. A longer one is thrown away rather than shortened.
+- One plain sentence a fact, at most ${MAX_FACT_CHARS} characters. A much longer one is cut short.
 - Write each fact so it stands alone, with names rather than pronouns.
 - from lists the row numbers the fact comes from: at least one, at most ${MAX_SOURCES}.
 - entities names who or what the fact is about: at most ${MAX_ENTITIES}, each at most ${MAX_ENTITY_CHARS} characters.
@@ -88,6 +92,11 @@ The index:
 
 Reply with JSON of the form {"canon":[{"fact":"…","entities":["…"],"from":[1]}]}, and nothing else.`;
 
+/** The template to send for a `canonPrompt` setting (`resolvePrompt`). */
+export function resolveCanonPrompt(setting) {
+    return resolvePrompt(setting, CANON_PROMPT, ['index']);
+}
+
 export const canonPick = {
     id: 'canon-pick-v2',
 
@@ -97,13 +106,14 @@ export const canonPick = {
      *        oldest first. Numbered from 1 in the prompt; mapping those positions back
      *        to chat indexes is the caller's, as it is for a batch (index-strategy.js).
      * @param {number} request.slots How many facts to ask for, MIN_SLOTS to MAX_SLOTS.
+     * @param {string} [request.template] The `canonPrompt` setting, raw.
      * @param {(text: string) => string} [request.expand] ST's `substituteParams`
      *        (public/scripts/st-context.js:163), applied to the template only.
      * @returns {{messages: Array<{role: string, content: string}>, maxTokens: number,
-     *            prompt: string, slots: number, records: number}}
+     *            prompt: string, slots: number, records: number, fallback: boolean}}
      *          `prompt` is stored as `canon.prompt`.
      */
-    build({ records, slots, expand }) {
+    build({ records, slots, template, expand }) {
         if (!Array.isArray(records) || records.length < 1) {
             throw new RangeError('A canon pick reads at least one index record');
         }
@@ -111,7 +121,8 @@ export const canonPick = {
             throw new RangeError(`A canon pick fills ${MIN_SLOTS} to ${MAX_SLOTS} slots`);
         }
 
-        const content = renderTemplate(CANON_PROMPT, {
+        const resolved = resolveCanonPrompt(template);
+        const content = renderTemplate(resolved.template, {
             slots: String(slots),
             index: renderIndex(records),
         }, { expand });
@@ -119,9 +130,10 @@ export const canonPick = {
         return {
             messages: [{ role: 'user', content }],
             maxTokens: CANON_MAX_TOKENS,
-            prompt: hashString(CANON_PROMPT),
+            prompt: hashString(resolved.template),
             slots,
             records: records.length,
+            fallback: resolved.fallback,
         };
     },
 
@@ -130,9 +142,8 @@ export const canonPick = {
 
 /**
  * Find the picked facts in a reply, or reject it. Caps are enforced here, not in the
- * store: a fact over its cap is dropped rather than cut, as a state value is
- * (docs/decisions.md D-0053), and every drop is counted so what the panel reports is
- * the applied change (CLAUDE.md §4.18).
+ * store: a fact past its hard cap is cut and marked `clipped` (D-0085), and every drop is
+ * counted, so what the panel reports is the applied change (CLAUDE.md §4.18).
  *
  * **An empty pick is a rejection, unlike P4's promotion pass.** `{"promote": null}` was
  * a real answer to "is anything here permanent"; there is no real answer to "choose the
@@ -145,7 +156,8 @@ export const canonPick = {
  *
  * @param {string} content
  * @param {{slots?: number, records?: number}} [limits] What `build` was given.
- * @returns {{ok: true, picked: Array<{text: string, entities: string[], from: number[]}>,
+ * @returns {{ok: true, picked: Array<{text: string, entities: string[], from: number[],
+ *            clipped?: true}>,
  *            dropped: Array<{reason: string}>, short: number}
  *          | {ok: false, reason: 'empty'|'refusal'|'format'|'truncated'|'no-facts'}}
  */
@@ -184,9 +196,9 @@ export function parseCanonReply(content, { slots = MAX_SLOTS, records = Infinity
 /** One entry of `canon`, or null with the reason recorded. */
 function readFact(entry, dropped, records) {
     if (!isObject(entry)) return drop(dropped, 'not-a-fact');
-    const text = typeof entry.fact === 'string' ? entry.fact.trim() : '';
-    if (!text) return drop(dropped, 'no-text');
-    if (text.length > MAX_FACT_CHARS) return drop(dropped, 'fact-too-long');
+    const raw = typeof entry.fact === 'string' ? entry.fact.trim() : '';
+    if (!raw) return drop(dropped, 'no-text');
+    const { text, clipped } = clip(raw, HARD_FACT_CHARS);
 
     const from = [];
     for (const row of Array.isArray(entry.from) ? entry.from : []) {
@@ -213,7 +225,8 @@ function readFact(entry, dropped, records) {
         }
     }
 
-    return { text, entities, from };
+    // Marked only when cut, so an ordinary fact keeps exactly the shape the store writes.
+    return clipped ? { text, entities, from, clipped } : { text, entities, from };
 }
 
 function drop(dropped, reason) {

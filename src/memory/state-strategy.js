@@ -17,7 +17,7 @@ import {
     validState,
 } from './state-schema.js';
 import { hashString } from '../util/hash.js';
-import { renderTemplate } from '../util/template.js';
+import { renderTemplate, resolvePrompt } from '../util/template.js';
 
 /** As for summaries: room for a reasoning model's thinking before a short record. */
 export const STATE_MAX_TOKENS = 2048;
@@ -29,10 +29,12 @@ export const STATE_MAX_MESSAGES = 6;
 export const STATE_MAX_EARLIER = 5;
 
 /**
- * Built in, not a setting (D-0044, D-0053): the field list and caps are the schema's,
- * so an edit could only break the parser. A value over its cap is dropped, not
- * cut, which is why the model is told the caps. It records stated facts only, so
- * the memory model never takes over telling the story (D-0043).
+ * Editable in the settings since D-0085 (it was built in under D-0044 and D-0053); an
+ * edit without `{{messages}}` and `{{state}}` falls back to this one. The field list and
+ * caps are still the schema's, so an edit that changes them only changes what the model
+ * is told. A value over its cap is dropped, not cut, which is why the model is told the
+ * caps. It records stated facts only, so the memory model never takes over telling the
+ * story (D-0043).
  */
 export const STATE_PROMPT = `You keep a short record of the hard facts of a roleplay scene: where it is, who is in it, and what each character's hair and outfit are right now. Character descriptions often fix these, so the record carries forward whatever the story has since changed. Below are the record as it stands and the messages that came after it. Reply with the complete record as it stands at the end of those messages.
 
@@ -69,6 +71,11 @@ New messages:
 
 Reply with the complete record as JSON, and nothing else.`;
 
+/** The template to send for a `statePrompt` setting (`resolvePrompt`). */
+export function resolveStatePrompt(setting) {
+    return resolvePrompt(setting, STATE_PROMPT, ['state', 'messages']);
+}
+
 export const stateRecord = {
     id: 'state-record-v1',
 
@@ -79,12 +86,13 @@ export const stateRecord = {
      *        at most STATE_MAX_MESSAGES.
      * @param {Array<string|{text: string}>} [request.earlier] Scenes before those messages,
      *        oldest first, at most STATE_MAX_EARLIER.
+     * @param {string} [request.template] The `statePrompt` setting, raw.
      * @param {(text: string) => string} [request.expand] ST's `substituteParams`
      *        (public/scripts/st-context.js:163), applied to the template only.
-     * @returns {{messages: Array<{role: string, content: string}>, maxTokens: number, prompt: string}}
-     *          `prompt` is stored as `state.prompt`.
+     * @returns {{messages: Array<{role: string, content: string}>, maxTokens: number, prompt: string,
+     *            fallback: boolean}} `prompt` is stored as `state.prompt`.
      */
-    build({ state = {}, messages, earlier = [], expand }) {
+    build({ state = {}, messages, earlier = [], template, expand }) {
         if (!validState(state)) throw new TypeError('A state request needs a valid current state');
         if (!Array.isArray(messages) || messages.length < 1 || messages.length > STATE_MAX_MESSAGES) {
             throw new RangeError(`A state request reads 1 to ${STATE_MAX_MESSAGES} messages`);
@@ -93,7 +101,8 @@ export const stateRecord = {
             throw new RangeError(`A state request takes at most ${STATE_MAX_EARLIER} earlier scenes`);
         }
 
-        const content = renderTemplate(STATE_PROMPT, {
+        const resolved = resolveStatePrompt(template);
+        const content = renderTemplate(resolved.template, {
             state: JSON.stringify(state),
             earlier: earlier.map((scene) => (typeof scene === 'string' ? scene : scene?.text ?? '')).join('\n'),
             messages: messages.map((message) => `${message?.name ?? ''}: ${message?.mes ?? ''}`).join('\n\n'),
@@ -102,7 +111,8 @@ export const stateRecord = {
         return {
             messages: [{ role: 'user', content }],
             maxTokens: STATE_MAX_TOKENS,
-            prompt: hashString(STATE_PROMPT),
+            prompt: hashString(resolved.template),
+            fallback: resolved.fallback,
         };
     },
 

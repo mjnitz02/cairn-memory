@@ -46,11 +46,12 @@ export function createStateJob({ getContext, send, save, discard, report, clock,
         givenUp: (chatId, job) => states.givenUp(key(chatId, job)),
 
         /** One update. Its outcome is only recorded: a failing state must not starve summaries. */
-        async run(context, { memoryProfileId }, job) {
+        async run(context, { memoryProfileId, statePrompt }, job) {
             const { chatId } = context;
             let request;
             try {
                 request = strategy.build({
+                    template: statePrompt,
                     state: job.state,
                     messages: job.messages,
                     earlier: job.earlier,

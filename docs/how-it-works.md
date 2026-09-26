@@ -102,7 +102,8 @@ Cairn separates the two:
 ### Two fidelities, so old scenes fade rather than vanish
 
 A summary pushed out of the block used to be gone. Now it is **demoted** first: the
-block keeps a fixed part of its budget for one-sentence versions of older summaries,
+block keeps part of its budget — at most a fifth by default, **Short-summary share** in
+the settings — for one-sentence versions of older summaries,
 so the oldest part of the chat is present in less detail instead of absent. Only when
 the compact tail is full as well does anything leave.
 
@@ -130,8 +131,8 @@ D-0075, D-0076).
 
 At most 35% of the prompt SillyTavern may send — the context window minus the
 reserved response — and less than that when the rest of the prompt does not leave
-that much (`docs/decisions.md` D-0038, D-0052). There is no setting for it, and
-Qvink's short-term limit no longer counts.
+that much (`docs/decisions.md` D-0038, D-0052). The 35% is **Memory share** in the
+settings (D-0085), and Qvink's short-term limit no longer counts.
 
 What is left over is what the rest of the prompt does not need:
 
@@ -139,7 +140,7 @@ What is left over is what the rest of the prompt does not need:
 |---|---|
 | The character card | The card fields that reach the prompt, and the system prompt SillyTavern would use |
 | The lorebook | SillyTavern's own World Info budget, or every enabled entry if they come to less |
-| The raw history | The heaviest nineteen messages in a row your chat has had — the widest the raw window ever gets |
+| The raw history | The heaviest run of messages your chat has had at the widest the raw window ever gets — **Recent messages kept in full** plus one **Summary step**, less one: fifteen by default |
 | The world state | Its largest possible size, or nothing while it is switched off |
 | Everything else | 5% of the prompt, for instruct wrappers, other extensions and the tokenizer's own error |
 
@@ -283,7 +284,8 @@ step is waiting for a summary.
 `memory_source`, `memory_cairn_scenes`, `memory_step_waiting`, and the `summary_*`
 fields. The counts, times and token totals are running totals for the chat since the page
 loaded, so the work between two generations is the difference between two lines.
-Reloading the same chat keeps them, and switching chats starts them again.
+Reloading the same chat keeps them, and switching chats starts them again. Each chat
+has its own log file, appended to across sessions (`docs/development.md`, "Reading a run").
 `summary_in_flight` is true when a summary request was still out as the prompt was
 built. That is how a run shows a summary overlapping a generation.
 
@@ -492,9 +494,9 @@ permanently won or lost, are necessarily rare — so a three-hundred-message cha
 about the same eight to twelve lines a short one does. Leftover room falls back to
 summaries rather than being held.
 
-**Canon's room is derived, not a setting.** It takes at most a fifth of the block,
-and never more than the block has left after reserving two see-saw steps for the
-summaries. That second term is a guard: canon takes its room from the scene budget,
+**Canon's room.** It takes at most a fifth of the block — **Canon share** in the
+settings — and never more than the block has left after reserving two see-saw steps
+for the summaries. That second term is a guard: canon takes its room from the scene budget,
 so it is the one thing that could collapse growth and eviction back into a single
 cadence. Reserving two steps makes that arithmetically impossible — canon is
 squeezed to nothing first, which is the right order of sacrifice, because the
@@ -510,16 +512,18 @@ share mid-cycle, bounded by what it held at that rebuild; the log carries both
 numbers as `memory_canon_cap` and `memory_canon_cap_applied`
 (`docs/decisions.md` D-0059).
 
-**The label on a record never decides what may be picked.** Each record carries a
-four-way kind — someone arriving or leaving, something large happening, description,
-filler — and the pick reads it as a hint it may overrule. A local label is not stable
-under hindsight: a purchase is filler until it turns out to be where they settled. On
-the chat this was measured against, the line the whole story rests on — where these two
-grew up and what they promised each other — was reachable only through rows the labeller
-had called *description*. Filtering on the kind would have thrown the premise away.
+**The label on a record never decides what may be picked — so the pick never sees it.**
+Each record carries a four-way kind — someone arriving or leaving, something large
+happening, description, filler — which the inspector and the log count. A local label is
+not stable under hindsight: a purchase is filler until it turns out to be where they
+settled. Told the kind was only a hint, lower-tier models obeyed it anyway: the promise
+the measured story rests on was labelled *filler* in twelve runs of fifteen and never
+picked. So the index the pick reads has no kind column at all (`docs/decisions.md` D-0084).
 
-**What the parser guarantees, and what it cannot.** A fact over its cap is dropped
-rather than shortened, a repeat is refused, a fact citing no row at all is refused —
+
+**What the parser guarantees, and what it cannot.** The prompt states a length; a fact
+that runs past it by half again is cut at a word rather than thrown away, a repeat is
+refused, a fact citing no row at all is refused —
 an uncitable fact would be a permanent one again — and every pick is shown in the chat
 under the message it was written on. What the panel reports is what was actually
 written, never what the model claimed. What no parser can check is whether the chosen

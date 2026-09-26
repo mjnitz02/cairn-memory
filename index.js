@@ -116,7 +116,7 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
             onKeepCanonChange: () => summarizer.drain(),
             // A newly chosen profile may have a backlog waiting for it.
             onMemoryProfileChange: () => summarizer.drain(),
-        }));
+        }), { canon: () => assembler.canonView });
         inspector.render(observer.latest);
         inspector.summaries(summarizer.status);
 

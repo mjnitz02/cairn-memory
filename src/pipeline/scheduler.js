@@ -98,6 +98,24 @@ export function createSeeSaw({ rawWindow = RAW_WINDOW, step = STEP } = {}) {
             summarisedThrough = null;
         },
 
+        /**
+         * Take new sizes from the settings (docs/decisions.md D-0085). A change starts the
+         * see-saw over, so the next turn is a first turn and rebuilds: the threshold it
+         * held was worked out for the old window.
+         *
+         * @param {{rawWindow?: number, step?: number}} sizes Unset or invalid keeps the current.
+         * @returns {boolean} Whether anything changed.
+         */
+        configure({ rawWindow: nextWindow, step: nextStep } = {}) {
+            const window = Number.isInteger(nextWindow) && nextWindow >= 1 ? nextWindow : rawWindow;
+            const stride = Number.isInteger(nextStep) && nextStep >= 0 ? nextStep : step;
+            if (window === rawWindow && stride === step) return false;
+            rawWindow = window;
+            step = stride;
+            summarisedThrough = null;
+            return true;
+        },
+
         get summarisedThrough() {
             return summarisedThrough;
         },

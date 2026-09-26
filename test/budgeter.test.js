@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     CAP_FRACTION, MARGIN_FRACTION, MIN_CAP_FRACTION,
-    canonCap, COMPACT_RATIO, COMPACT_SHARE, createBudget, deriveCap, FLOOR_FRACTION, recoupled, tierSplit,
+    CANON_FRACTION, canonCap, COMPACT_FRACTION, createBudget, deriveCap, FLOOR_FRACTION, fractionOr, recoupled, tierSplit,
 } from '../src/pipeline/budgeter.js';
 import { NEAR_LIMIT_FRACTION } from '../src/util/context-size.js';
 import { mulberry32 } from './helpers/random.js';
@@ -295,6 +295,29 @@ describe('fitting the block to the cap', () => {
     });
 });
 
+describe('the shares as settings (docs/decisions.md D-0085)', () => {
+    it('takes the block\'s share from the settings', () => {
+        const derived = deriveCap({ maxPromptTokens: 20_000, reserves: roomy, fraction: 0.25 });
+        expect(derived.share).toBe(5_000);
+        expect(deriveCap({ maxPromptTokens: 20_000, reserves: roomy, fraction: 'x' }).share)
+            .toBe(Math.floor(20_000 * CAP_FRACTION));
+    });
+
+    it('takes canon\'s share from the settings, and the guard still binds over it', () => {
+        expect(canonCap({ cap: 1_000, stepTokens: 0, fraction: 0.5 }).cap).toBe(500);
+        expect(canonCap({ cap: 1_000, stepTokens: 0 }).cap).toBe(Math.floor(1_000 * CANON_FRACTION));
+        // Two steps of 300 leave 400: a generous share cannot starve the see-saw.
+        expect(canonCap({ cap: 1_000, stepTokens: 300, fraction: 0.9 })).toMatchObject({ cap: 400, limitedBy: 'guard' });
+    });
+
+    it('accepts 0 and 1 as shares, and nothing outside them', () => {
+        expect(fractionOr(0, 0.2)).toBe(0);
+        expect(fractionOr(1, 0.2)).toBe(1);
+        expect(fractionOr(1.01, 0.2)).toBe(0.2);
+        expect(fractionOr(null, 0.2)).toBe(0.2);
+    });
+});
+
 describe('the two fidelities', () => {
     /** A summary the block holds in full, with or without a compact line. */
     const scene = (index, { line = `line ${index}` } = {}) => ({
@@ -304,31 +327,34 @@ describe('the two fidelities', () => {
     /** Sized the way the assembler sizes: over whatever text the tier renders. */
     const tokensOf = (list) => list.reduce((total, item) => total + Math.ceil(item.text.length / 4), 0);
 
-    it('derives the share from the measured ratio rather than choosing one (D-0075)', () => {
-        expect(COMPACT_SHARE).toBeCloseTo(1 / (1 + COMPACT_RATIO), 12);
-        // 1/(1+r) is the share at which the tail holds as many messages as the full tier.
+    it('takes the share as a fraction, from the settings or the default (D-0085)', () => {
+        expect(COMPACT_FRACTION).toBe(0.20);
         const cap = 10_000;
-        const { fullCap, compactCap } = tierSplit({ sceneCap: cap, available: cap });
-        expect(fullCap + compactCap).toBe(cap);
-        expect(Math.round(fullCap / COMPACT_RATIO)).toBeCloseTo(compactCap, -1);
+        const split = tierSplit({ sceneCap: cap, available: cap });
+        expect(split).toEqual({ fullCap: 8_000, compactCap: 2_000, share: 0.20 });
+        expect(tierSplit({ sceneCap: cap, available: cap, fraction: 0.3 }).compactCap).toBe(3_000);
+        // A setting that is not a share falls back rather than breaking the budget.
+        for (const bad of [NaN, -0.1, 1.5, undefined, '0.3']) {
+            expect(tierSplit({ sceneCap: cap, available: cap, fraction: bad }).compactCap).toBe(2_000);
+        }
     });
 
     it('is a ceiling and not a reservation: no lines, no split', () => {
         // The failure this prevents: a sixth of the budget held for a tail that cannot be
         // filled, on every chat, from the turn Cairn is installed.
         expect(tierSplit({ sceneCap: 6362, available: 0 })).toEqual({
-            fullCap: 6362, compactCap: 0, share: COMPACT_SHARE,
+            fullCap: 6362, compactCap: 0, share: COMPACT_FRACTION,
         });
         expect(tierSplit({ sceneCap: 6362, available: 200 }).compactCap).toBe(200);
         expect(tierSplit({ sceneCap: 6362, available: 99_999 }).compactCap)
-            .toBe(Math.floor(6362 * COMPACT_SHARE));
+            .toBe(Math.floor(6362 * COMPACT_FRACTION));
     });
 
     it('is deterministic: the same chat and caps give the same split', () => {
         for (const cap of [0, 1, 999, 6362, 23_040]) {
             expect(tierSplit({ sceneCap: cap, available: cap })).toEqual(tierSplit({ sceneCap: cap, available: cap }));
         }
-        expect(tierSplit({ sceneCap: 0, available: 500 })).toEqual({ fullCap: 0, compactCap: 0, share: COMPACT_SHARE });
+        expect(tierSplit({ sceneCap: 0, available: 500 })).toEqual({ fullCap: 0, compactCap: 0, share: COMPACT_FRACTION });
     });
 
     it('demotes before it evicts, and keeps the block chronological', () => {

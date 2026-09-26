@@ -6,6 +6,7 @@ import {
     STATE_MAX_TOKENS,
     STATE_PROMPT,
     parseStateReply,
+    resolveStatePrompt,
     stateRecord,
 } from '../src/memory/state-strategy.js';
 import { hashString } from '../src/util/hash.js';
@@ -298,5 +299,26 @@ describe('finding the record in a reply', () => {
         expect(parseStateReply(undefined)).toEqual({ ok: false, reason: 'empty' });
         expect(parseStateReply({ location: 'x' })).toEqual({ ok: false, reason: 'empty' });
         expect(parseStateReply('<think>nothing changed</think>\n  ')).toEqual({ ok: false, reason: 'empty' });
+    });
+});
+
+describe('an edited state prompt (docs/decisions.md D-0085)', () => {
+    const messages = [{ name: 'Wren', mes: 'Wren ties her hair back.' }];
+
+    it('is sent as written when it keeps the record and the messages', () => {
+        const edited = 'Record: {{state}}\nNew: {{messages}}';
+        const request = stateRecord.build({ state: {}, messages, template: edited });
+        expect(request.messages[0].content).toBe('Record: {}\nNew: Wren: Wren ties her hair back.');
+        expect(request.prompt).toBe(hashString(edited));
+        expect(request.fallback).toBe(false);
+    });
+
+    it('falls back to the built-in prompt when either is missing', () => {
+        for (const broken of ['New: {{messages}}', 'Record: {{state}}']) {
+            const request = stateRecord.build({ state: {}, messages, template: broken });
+            expect(request.prompt).toBe(hashString(STATE_PROMPT));
+            expect(request.fallback).toBe(true);
+        }
+        expect(resolveStatePrompt('   ')).toEqual({ template: STATE_PROMPT, edited: false, fallback: false });
     });
 });

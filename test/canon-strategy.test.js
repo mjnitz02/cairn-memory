@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { CANON_MAX_TOKENS, CANON_PROMPT, canonPick, parseCanonReply } from '../src/memory/canon-strategy.js';
+import {
+    CANON_MAX_TOKENS, CANON_PROMPT, HARD_FACT_CHARS, canonPick, parseCanonReply, resolveCanonPrompt,
+} from '../src/memory/canon-strategy.js';
 import {
     MAX_ENTITIES, MAX_ENTITY_CHARS, MAX_FACT_CHARS, MAX_SLOTS, MAX_SOURCES,
 } from '../src/memory/canon.js';
@@ -45,7 +47,9 @@ describe('building a canon pick', () => {
         expect(content).toContain(INDEX_HEADER);
         for (const record of RECORDS) expect(content).toContain(record.what);
         // Numbered from 1, because the rows are what the model cites back.
-        expect(content).toContain('4 | major | Aster | Aster rowed Wren across the water');
+        expect(content).toContain('4 | Aster | Aster rowed Wren across the water');
+        // The kind is never shown, so a modest model cannot treat it as a gate (D-0084).
+        for (const kind of ['major', 'filler', 'description', 'cast']) expect(content).not.toMatch(new RegExp(`\\| ${kind} \\|`));
         expect(request.maxTokens).toBe(CANON_MAX_TOKENS);
         expect(request.prompt).toBe(hashString(CANON_PROMPT));
         expect(request).toMatchObject({ slots: 3, records: 4 });
@@ -83,15 +87,29 @@ describe('building a canon pick', () => {
         for (const left of ['the weather', 'hair and outfit', 'How anyone felt', 'What might happen next']) {
             expect(CANON_PROMPT).toContain(left);
         }
-        // The two instructions the pick exists for: overrule the label, chain the cause.
-        expect(CANON_PROMPT).toContain('you may overrule it');
+        // The two instructions the pick exists for: read every row, chain the cause.
+        expect(CANON_PROMPT).toContain('Read every row');
         expect(CANON_PROMPT).toContain('Chain the causes');
     });
 
-    it('shows a filler row being picked, so the kind is visibly not a gate', () => {
-        // A local label is unstable under hindsight (D-0070). The worked example has to
-        // demonstrate that, or the prompt's own rule reads as decoration.
-        expect(CANON_PROMPT).toContain('Row 1 is marked filler and is still picked');
+    it('shows a quiet row being picked for its background', () => {
+        // What the kind used to make visible, made without a label (D-0070, D-0084): the
+        // worked example has to demonstrate it, or the rule reads as decoration.
+        expect(CANON_PROMPT).toContain('Row 1 is a question about a timetable and is still picked');
+        expect(CANON_PROMPT).not.toMatch(/\bkind\b/);
+    });
+
+    it('sends an edited prompt, and falls back when it has lost the index (D-0085)', () => {
+        const edited = 'Pick {{slots}} facts from:\n{{index}}';
+        const request = canonPick.build({ records: RECORDS, slots: 2, template: edited });
+        expect(request.messages[0].content).toMatch(/^Pick 2 facts from:\nn \| who/);
+        expect(request.prompt).toBe(hashString(edited));
+        expect(request.fallback).toBe(false);
+
+        const broken = canonPick.build({ records: RECORDS, slots: 2, template: 'Pick {{slots}} facts.' });
+        expect(broken.prompt).toBe(hashString(CANON_PROMPT));
+        expect(broken.fallback).toBe(true);
+        expect(resolveCanonPrompt('')).toEqual({ template: CANON_PROMPT, edited: false, fallback: false });
     });
 
     it('applies ST macros to the template and never to the chat\'s own text', () => {
@@ -213,11 +231,26 @@ describe('reading the replies a model actually sends', () => {
         expect(parsed.dropped).toEqual(Array(5 - MAX_SOURCES).fill({ reason: 'too-many-rows' }));
     });
 
-    it('drops a fact over its cap rather than cutting it, and keeps the rest', () => {
+    it('cuts a fact past its hard cap at a word and marks it, keeping the rest (D-0085)', () => {
         const parsed = parseCanonReply(badCanonOutputs.overlong(MEANT), limits);
 
-        expect(picked(parsed)).toEqual([MEANT[1].fact, MEANT[2].fact]);
-        expect(parsed.dropped).toEqual([{ reason: 'fact-too-long' }]);
+        expect(parsed.picked).toHaveLength(3);
+        const [cut, ...rest] = parsed.picked;
+        expect(cut.text.length).toBeLessThanOrEqual(HARD_FACT_CHARS);
+        expect(cut.text.startsWith('Wren\'s brother drowned in the spring flood')).toBe(true);
+        expect(cut.text.endsWith('\u2026')).toBe(true);
+        expect(cut.clipped).toBe(true);
+        expect(rest.map((fact) => fact.text)).toEqual([MEANT[1].fact, MEANT[2].fact]);
+        expect(rest.every((fact) => !('clipped' in fact))).toBe(true);
+        expect(parsed.dropped).toEqual([]);
+    });
+
+    it('keeps a fact past its soft cap as written', () => {
+        const fact = `${'Aster rowed Wren across the water '.repeat(6)}`.trim();
+        expect(fact.length).toBeGreaterThan(MAX_FACT_CHARS);
+        expect(fact.length).toBeLessThanOrEqual(HARD_FACT_CHARS);
+        const parsed = parseCanonReply(JSON.stringify({ canon: [{ fact, entities: [], from: [1] }] }), limits);
+        expect(parsed.picked[0]).toEqual({ text: fact, entities: [], from: [1] });
     });
 
     it('keeps a fact whose tags are the problem, dropping only the tags', () => {

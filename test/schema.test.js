@@ -22,6 +22,16 @@ describe('migrateSettings', () => {
         expect(migrateSettings({ version: SETTINGS_VERSION, worldState: false }).worldState).toBe(false);
     });
 
+    it('defaults the budget to the constants it replaced, and the prompts to the built-in ones (D-0085)', () => {
+        expect(DEFAULT_SETTINGS).toMatchObject({
+            memoryFraction: 0.35, canonFraction: 0.20, compactFraction: 0.20, rawWindow: 8, step: 8,
+            indexPrompt: '', canonPrompt: '', statePrompt: '',
+        });
+        // An install from before these existed gets them without a version bump.
+        const older = migrateSettings({ version: SETTINGS_VERSION, canonSlots: 12 });
+        expect(older).toMatchObject({ canonSlots: 12, compactFraction: 0.20, rawWindow: 8, indexPrompt: '' });
+    });
+
     it('keeps user values and fills in missing keys', () => {
         const stored = { version: SETTINGS_VERSION, memoryProfileId: 'profile-a' };
         const migrated = migrateSettings(stored);

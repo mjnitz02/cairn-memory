@@ -11,6 +11,19 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ### Changed
 
+- **The inspector log is one file per chat, and it keeps growing.** Each chat
+  writes to its own `cairn-<chat>-<id>.jsonl` and every session adds to it, so a
+  chat played over several evenings reads as one trail. It used to be a single file
+  that was rewritten from scratch whenever you switched chats. Every line now says
+  which chat and which session wrote it.
+- **A memory model that writes a little long no longer loses the line.** Index
+  records and canon facts used to be thrown away if they ran past the length the
+  prompt asks for, which cost some models half their index. Now anything up to half
+  again that length is kept as written, and anything longer is cut at a word.
+- **Canon is picked without the index's labels.** Lower-tier models treated a
+  record's kind as a rule even when told it was a hint, and passed over the facts
+  it had labelled as small. The pick now reads the records without it.
+
 - **Canon is now chosen from the whole story, not from what is about to be
   forgotten.** Cairn used to ask, just before old summaries were dropped, whether
   any of them said something permanent — which meant it only ever saw the handful
@@ -27,6 +40,16 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
   wants about the same number as a short one.
 
 ### Added
+
+- **The canon is shown as text in the panel.** What the prompt carries, what the
+  cap left out, and a newer pick waiting for the next rebuild.
+- **The budget is in the settings.** The memory block's share of the prompt,
+  canon's share of the block, the one-line summaries' share, how many recent
+  messages stay in full, and how many build up before they are summarised. The
+  defaults are the numbers Cairn used before.
+- **Every memory prompt is editable.** The index, canon and world-state prompts
+  join the summary prompt, each with **Reset to default**, and each falls back to
+  its default if an edit loses the placeholder it needs.
 
 - **The panel now shows the index and the two fidelities.** How many summaries have a
   compact record and what kinds they were read as; how much of the block is held in

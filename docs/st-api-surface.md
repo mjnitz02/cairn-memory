@@ -34,6 +34,8 @@ literally against the cited line.
 | `getRequestHeaders` | Auth headers for the file-upload call | `public/scripts/st-context.js` | 129 |
 | `/upload` | Data Bank write endpoint, for the inspector log | `src/endpoints/files.js` | 28 |
 | `validateAssetFileName` | What filenames the endpoint accepts | `src/endpoints/assets.js` | 21 |
+| `[a-zA-Z0-9_\-.]` | The characters a log's per-chat filename is flattened to | `src/endpoints/assets.js` | 22 |
+| `/user/files/*` | Reading a chat's log back, so a session appends to it rather than replacing it; 404 when there is none yet | `src/users.js` | 1218 |
 | `extension_prompt_types` | `NONE` / `IN_PROMPT` / `IN_CHAT` placement enum | `public/script.js` | 484 |
 | `GENERATE_AFTER_COMBINE_PROMPTS` | Text-completion prompt, read-only in P0 | `public/script.js` | 5243 |
 | `CHAT_COMPLETION_PROMPT_READY` | Chat-completion prompt, read-only in P0 | `public/scripts/openai.js` | 1619 |

@@ -10,7 +10,7 @@
  */
 import { looksLikeRefusal, straightQuotes, stripThinking, unfence } from './model-reply.js';
 import { hashString } from '../util/hash.js';
-import { hasMacro, renderTemplate } from '../util/template.js';
+import { renderTemplate, resolvePrompt } from '../util/template.js';
 
 /**
  * Matt's qvink prompt, verbatim, proven in play on the D-0036 model floor. It
@@ -47,10 +47,7 @@ export const MAX_SUMMARY_CHARS = 1500;
  * @returns {{template: string, edited: boolean, fallback: boolean}}
  */
 export function resolveSummaryPrompt(setting) {
-    const edited = typeof setting === 'string' && setting.trim() !== '';
-    if (!edited) return { template: DEFAULT_SUMMARY_PROMPT, edited: false, fallback: false };
-    if (!hasMacro(setting, 'message')) return { template: DEFAULT_SUMMARY_PROMPT, edited: true, fallback: true };
-    return { template: setting, edited: true, fallback: false };
+    return resolvePrompt(setting, DEFAULT_SUMMARY_PROMPT, ['message']);
 }
 
 export const perMessage = {

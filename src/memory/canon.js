@@ -42,7 +42,7 @@ export const MAX_SLOTS = 16;
 /** The fewest. One slot is a legitimate setting; zero means canon is off, which is `keepCanon`. */
 export const MIN_SLOTS = 1;
 
-/** A fact over this is dropped, not cut, as a state value is (docs/decisions.md D-0053). */
+/** A fact's soft cap, the one the prompt states; past `HARD_FACT_CHARS` it is cut (D-0085). */
 export const MAX_FACT_CHARS = 160;
 
 /**

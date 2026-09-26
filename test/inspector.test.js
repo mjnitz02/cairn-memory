@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderSnapshot, renderSummaries } from '../src/ui/inspector.js';
+import { renderCanonView, renderSnapshot, renderSummaries } from '../src/ui/inspector.js';
 
 /**
  * The inspector's rows, as plain strings. `createInspector` is the part that needs a
@@ -203,5 +203,34 @@ describe('the canon queue', () => {
     it('counts in the pick\'s vocabulary, not the promotion pass\'s', () => {
         expect(renderSummaries(status(pick()))).toContain('10 facts from 2 picks');
         expect(renderSummaries(status(pick()))).toContain('1 repeated');
+    });
+});
+
+describe('canon as text (docs/decisions.md D-0085)', () => {
+    const view = (over = {}) => ({ inPrompt: ['Her brother is dead.'], spilled: [], waiting: [], slots: 10, ...over });
+
+    it('lists what the prompt carries, open, against the slots asked for', () => {
+        const html = renderCanonView(view());
+        expect(html).toContain('<details class="cairn-details" open>');
+        expect(html).toContain('Canon in the prompt (1 of 10 lines)');
+        expect(html).toContain('<li>Her brother is dead.</li>');
+        expect(html).not.toContain('next rebuild');
+    });
+
+    it('says what is waiting for a rebuild and what the cap left out', () => {
+        const html = renderCanonView(view({ spilled: ['The lamp is broken.'], waiting: ['Aster owns a boat.'] }));
+        expect(html).toContain('Left out for want of room');
+        expect(html).toContain('<li>The lamp is broken.</li>');
+        expect(html).toContain('goes in at the next rebuild');
+        expect(html).toContain('<li>Aster owns a boat.</li>');
+    });
+
+    it('escapes a fact, which is model-written text', () => {
+        expect(renderCanonView(view({ inPrompt: ['<img src=x onerror=alert(1)>'] }))).toContain('&lt;img src=x');
+    });
+
+    it('says there is no canon yet, and nothing at all while canon is off', () => {
+        expect(renderCanonView(view({ inPrompt: [] }))).toContain('No canon yet');
+        expect(renderCanonView(null)).toBe('');
     });
 });

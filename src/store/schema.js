@@ -6,6 +6,8 @@
  * orphan someone's accumulated memory.
  */
 import { DEFAULT_SLOTS } from '../memory/canon.js';
+import { CANON_FRACTION, CAP_FRACTION, COMPACT_FRACTION } from '../pipeline/budgeter.js';
+import { RAW_WINDOW, STEP } from '../pipeline/scheduler.js';
 import { DEFAULT_LORE_CAP } from '../prompt/lore-cap.js';
 import { error } from '../util/log.js';
 
@@ -79,6 +81,14 @@ export const DEFAULT_SETTINGS = Object.freeze({
      * gets the default's improvements (docs/decisions.md D-0039).
      */
     summaryPrompt: '',
+    /**
+     * The index, canon and world-state prompts, on the same terms as `summaryPrompt`:
+     * empty means the built-in default, and an edit missing the macro the call needs
+     * falls back to it (docs/decisions.md D-0085).
+     */
+    indexPrompt: '',
+    canonPrompt: '',
+    statePrompt: '',
     /** Show the prompt inspector panel (DESIGN.md §10). */
     showInspector: true,
     /** Verbose console output. */
@@ -116,6 +126,17 @@ export const DEFAULT_SETTINGS = Object.freeze({
      * so the percentage budget never binds. 0 here means the same: leave it alone.
      */
     loreCap: DEFAULT_LORE_CAP,
+    /**
+     * The budget's shares, as fractions (docs/decisions.md D-0085). The block's ceiling
+     * share of the prompt, canon's of the block, and the compact tail's of what canon
+     * leaves. Each is a ceiling, so what is not used falls back to summaries.
+     */
+    memoryFraction: CAP_FRACTION,
+    canonFraction: CANON_FRACTION,
+    compactFraction: COMPACT_FRACTION,
+    /** Messages kept raw behind the summaries, and how far the see-saw steps (D-0068). */
+    rawWindow: RAW_WINDOW,
+    step: STEP,
 });
 
 /**

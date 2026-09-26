@@ -3,7 +3,7 @@ import {
     INDEX_MAX_TOKENS, INDEX_PROMPT, MAX_BATCH, indexBatch, parseIndexReply,
 } from '../src/memory/index-strategy.js';
 import {
-    DEFAULT_KIND, KINDS, MAX_SLOT_CHARS, MAX_WHO, MAX_WHO_CHARS,
+    DEFAULT_KIND, HARD_SLOT_CHARS, KINDS, MAX_SLOT_CHARS, MAX_WHO, MAX_WHO_CHARS,
 } from '../src/memory/index-record.js';
 import { hashString } from '../src/util/hash.js';
 import { badIndexOutputs } from './mocks/llm.js';
@@ -193,11 +193,26 @@ describe('parsing an index reply', () => {
         }
     });
 
-    it('drops a record whose what is the summary written back out', () => {
+    it('cuts a what that is the summary written back out, and keeps the record (D-0085)', () => {
         const parsed = ok(badIndexOutputs.overlong(MEANT));
 
-        expect(indexes(parsed)).toEqual([2, 3]);
-        expect(parsed.dropped).toEqual([{ slot: 'what', reason: 'too-long', n: 1 }]);
+        expect(indexes(parsed)).toEqual([1, 2, 3]);
+        expect(parsed.records[0].what.length).toBeLessThanOrEqual(HARD_SLOT_CHARS);
+        expect(parsed.records[0].what.startsWith('Aster went quiet for a while')).toBe(true);
+        expect(parsed.dropped).toEqual([]);
+        expect(parsed.clipped).toEqual([{ slot: 'what', n: 1 }]);
+    });
+
+    it('sends an edited prompt, and falls back when it has lost the summaries (D-0085)', () => {
+        const edited = 'Index these:\n{{summaries}}';
+        const request = indexBatch.build({ summaries: ['Wren waited.'], template: edited });
+        expect(request.messages[0].content).toBe('Index these:\n1. Wren waited.');
+        expect(request.prompt).toBe(hashString(edited));
+        expect(request.fallback).toBe(false);
+
+        const broken = indexBatch.build({ summaries: ['Wren waited.'], template: 'Index them.' });
+        expect(broken.prompt).toBe(hashString(INDEX_PROMPT));
+        expect(broken.fallback).toBe(true);
     });
 
     it('caps the names and counts what it left off', () => {

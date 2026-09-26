@@ -1398,3 +1398,106 @@ describe('the compact tier', () => {
         expect(plans.at(-1).compactMissing).toBe(0);
     });
 });
+
+/** docs/decisions.md D-0085: the budget's numbers are settings, read every turn. */
+describe('the budget from the settings', () => {
+    /** Records with lines on every Cairn summary, as the compact tier tests make them. */
+    function indexed(chat) {
+        chat.forEach((message, index) => {
+            const text = message.extra?.cairn?.scene?.text;
+            if (text) message.extra.cairn = cairnIndexStore(message, text, { line: `Wren settled matter ${index}.` });
+        });
+        return chat;
+    }
+
+    it('takes the block\'s share of the prompt from the settings', async () => {
+        const plain = harness({ maxPrompt: 10_000 });
+        const set = harness({ maxPrompt: 10_000, cairnSettings: { memoryFraction: 0.2 } });
+        expect((await plain.turn(40)).cap).toBe(3_500);
+        expect((await set.turn(40)).cap).toBe(2_000);
+    });
+
+    it('takes canon\'s share of the block from the settings', async () => {
+        const settings = { canonFraction: 0.05 };
+        const run = harness({ cap: 20_000, cairnSettings: settings });
+        run.context.chat = makeQvinkChat({ length: 40, summarisedThrough: 29 });
+        run.context.chat[5].extra.cairn = cairnCanonStore(['Her brother is dead.'], [0, 5]);
+        expect((await run.plan()).canonCap).toBe(1_000);
+    });
+
+    it('takes the compact tail\'s share from the settings', async () => {
+        const plans = {};
+        for (const fraction of [0.1, 0.4]) {
+            const run = harness({ cap: 3_000, cairnSettings: { compactFraction: fraction } });
+            run.context.chat = indexed(makeMixedChat({ length: 120, qvinkThrough: -1, cairnThrough: 109 }));
+            plans[fraction] = await run.plan();
+            expect(plans[fraction].compactCap).toBeLessThanOrEqual(Math.floor(plans[fraction].sceneCap * fraction));
+        }
+        expect(plans[0.4].compactCap).toBeGreaterThan(plans[0.1].compactCap);
+        expect(plans[0.4].included).toBeGreaterThan(plans[0.1].included);
+    });
+
+    it('lands a new raw window as a first turn, so it rebuilds rather than moving mid-cycle', async () => {
+        const settings = {};
+        const run = harness({ cairnSettings: settings });
+        await run.turn(40);
+        expect((await run.turn(41)).stepReason).not.toBe('first-turn');
+
+        settings.rawWindow = 12;
+        const changed = await run.turn(42);
+        expect(changed).toMatchObject({ stepReason: 'first-turn', rebuilt: true, rawWindow: 12 });
+        expect(changed.summarisedThrough).toBe(42 - 1 - 12);
+        // Held from then on: the setting is not re-applied every turn.
+        expect((await run.turn(43)).stepReason).toBe('held');
+    });
+
+    it('does not carry the last chat\'s compact split into a new one', async () => {
+        const run = harness({ cap: 3_000 });
+        run.context.chat = indexed(makeMixedChat({ length: 120, qvinkThrough: -1, cairnThrough: 109 }));
+        expect((await run.plan()).compactCap).toBeGreaterThan(0);
+
+        run.assembler.reset();
+        // A new chat with no records: there is nothing to put in a tail.
+        run.context.chat = makeMixedChat({ length: 120, qvinkThrough: -1, cairnThrough: 109 });
+        const fresh = await run.plan();
+        expect(fresh.compactCap).toBe(0);
+        expect(fresh.fullCap).toBe(fresh.sceneCap);
+    });
+});
+
+describe('canon as the inspector shows it', () => {
+    it('gives the text the block carries, and nothing while canon is off', async () => {
+        const settings = {};
+        const run = harness({ cap: 6_000, cairnSettings: settings });
+        run.context.chat = makeQvinkChat({ length: 40, summarisedThrough: 29 });
+        run.context.chat[5].extra.cairn = cairnCanonStore(['Her brother is dead.', 'Aster owns a boat.'], [0, 5]);
+        const { report, text } = await run.write();
+
+        expect(run.assembler.canonView).toEqual({
+            inPrompt: ['Her brother is dead.', 'Aster owns a boat.'], spilled: [], waiting: [], slots: 10,
+        });
+        // The report stays counts only: it is what the disk log writes.
+        expect(JSON.stringify(report)).not.toContain('Her brother');
+        expect(text).toContain('Her brother is dead.');
+
+        settings.keepCanon = false;
+        await run.plan();
+        expect(run.assembler.canonView).toBeNull();
+    });
+
+    it('shows a pick written between rebuilds as waiting, not as in the prompt', async () => {
+        const run = harness({ cap: 6_000 });
+        run.context.chat = makeQvinkChat({ length: 40, summarisedThrough: 29 });
+        run.context.chat[5].extra.cairn = cairnCanonStore(['Her brother is dead.'], [0, 5]);
+        await run.plan();
+        await run.turn(41);
+        run.context.chat = makeQvinkChat({ length: 42, summarisedThrough: 31 });
+        run.context.chat[5].extra.cairn = cairnCanonStore(['Her brother is dead.'], [0, 5]);
+        run.context.chat[9].extra.cairn = cairnCanonStore(['Her brother is dead.', 'Aster owns a boat.'], [0, 9]);
+        const report = await run.plan();
+
+        expect(report.rebuilt).toBe(false);
+        expect(run.assembler.canonView.inPrompt).toEqual(['Her brother is dead.']);
+        expect(run.assembler.canonView.waiting).toEqual(['Her brother is dead.', 'Aster owns a boat.']);
+    });
+});
