@@ -1,5 +1,8 @@
 import { EXTENSION_PATH, SLUG } from '../constants.js';
+import { CANON_PROMPT } from '../memory/canon-strategy.js';
+import { INDEX_PROMPT } from '../memory/index-strategy.js';
 import { DEFAULT_SUMMARY_PROMPT } from '../memory/scene-strategy.js';
+import { STATE_PROMPT } from '../memory/state-strategy.js';
 import { setDebugEnabled } from '../util/log.js';
 
 /**
@@ -13,7 +16,10 @@ import { setDebugEnabled } from '../util/log.js';
  * @param {{onEnabledChange?: (enabled: boolean) => void,
  *           onLogToDiskChange?: (enabled: boolean) => void,
  *           onHoldWorldInfoChange?: (enabled: boolean) => void,
+ *           onLoreCapChange?: (cap: number) => void,
  *           onOwnMemoryBlockChange?: (enabled: boolean) => void,
+ *           onWorldStateChange?: (enabled: boolean) => void,
+ *           onKeepCanonChange?: (enabled: boolean) => void,
  *           onMemoryProfileChange?: (profileId: string) => void}} [handlers]
  * @returns {Promise<HTMLElement>} The element the inspector renders into.
  */
@@ -27,12 +33,23 @@ export async function renderSettingsPanel(context, handlers = {}) {
     bindCheckbox(context, 'showInspector', (value) => toggleInspector(value));
     bindCheckbox(context, 'logToDisk', (value) => handlers.onLogToDiskChange?.(value));
     bindCheckbox(context, 'holdWorldInfo', (value) => handlers.onHoldWorldInfoChange?.(value));
+    bindNumber(context, 'loreCap', (value) => handlers.onLoreCapChange?.(value));
     bindCheckbox(context, 'ownMemoryBlock', (value) => handlers.onOwnMemoryBlockChange?.(value));
+    bindCheckbox(context, 'worldState', (value) => handlers.onWorldStateChange?.(value));
+    bindCheckbox(context, 'keepCanon', (value) => handlers.onKeepCanonChange?.(value));
+    bindNumber(context, 'canonSlots', (value) => handlers.onCanonSlotsChange?.(value));
+    // The budget is read afresh every generation, so these need no handler.
+    for (const key of ['memoryFraction', 'canonFraction', 'compactFraction']) bindPercent(context, key);
+    bindNumber(context, 'rawWindow', null, { min: 1 });
+    bindNumber(context, 'step');
     bindCheckbox(context, 'debugLogging', (value) => setDebugEnabled(value));
 
     populateProfiles(context, settings.memoryProfileId);
     bindSelect(context, 'memoryProfileId', (value) => handlers.onMemoryProfileChange?.(value));
-    bindSummaryPrompt(context);
+    bindPrompt(context, 'summaryPrompt', DEFAULT_SUMMARY_PROMPT);
+    bindPrompt(context, 'indexPrompt', INDEX_PROMPT);
+    bindPrompt(context, 'canonPrompt', CANON_PROMPT);
+    bindPrompt(context, 'statePrompt', STATE_PROMPT);
 
     toggleInspector(settings.showInspector);
     return document.getElementById(`${SLUG}_inspector`);
@@ -64,18 +81,18 @@ function populateProfiles(context, selectedId) {
  * Shows the default rather than an empty box, so there is something to edit, and
  * stores the default as empty, so an unedited prompt keeps following the default.
  */
-function bindSummaryPrompt(context) {
-    const input = field('summaryPrompt');
+function bindPrompt(context, key, fallback) {
+    const input = field(key);
     if (!input) return;
     const store = (value) => {
-        context.extensionSettings[SLUG].summaryPrompt = value.trim() === DEFAULT_SUMMARY_PROMPT.trim() ? '' : value;
+        context.extensionSettings[SLUG][key] = value.trim() === fallback.trim() ? '' : value;
         context.saveSettingsDebounced();
     };
 
-    input.value = context.extensionSettings[SLUG].summaryPrompt || DEFAULT_SUMMARY_PROMPT;
+    input.value = context.extensionSettings[SLUG][key] || fallback;
     input.addEventListener('input', () => store(input.value));
-    field('summaryPromptReset')?.addEventListener('click', () => {
-        input.value = DEFAULT_SUMMARY_PROMPT;
+    field(`${key}Reset`)?.addEventListener('click', () => {
+        input.value = fallback;
         store(input.value);
     });
 }
@@ -88,6 +105,40 @@ function bindCheckbox(context, key, onChange) {
         context.extensionSettings[SLUG][key] = input.checked;
         context.saveSettingsDebounced();
         onChange?.(input.checked);
+    });
+}
+
+/**
+ * A whole number of tokens, never negative and never NaN: a blanked box reads as
+ * 0, which is the same "no cap" ST's own field means (src/prompt/lore-cap.js).
+ */
+function bindNumber(context, key, onChange, { min = 0 } = {}) {
+    const input = field(key);
+    if (!input) return;
+    input.value = String(context.extensionSettings[SLUG][key] ?? 0);
+    input.addEventListener('change', () => {
+        const value = Math.max(min, Math.floor(Number(input.value)) || 0);
+        input.value = String(value);
+        context.extensionSettings[SLUG][key] = value;
+        context.saveSettingsDebounced();
+        onChange?.(value);
+    });
+}
+
+/**
+ * A share, shown as a whole percent and stored as a fraction, so the budget reads it as
+ * the constant it replaced. Held under 90%: a block that takes the whole prompt leaves
+ * nothing for the story.
+ */
+function bindPercent(context, key) {
+    const input = field(key);
+    if (!input) return;
+    input.value = String(Math.round((context.extensionSettings[SLUG][key] ?? 0) * 100));
+    input.addEventListener('change', () => {
+        const percent = Math.min(90, Math.max(0, Math.round(Number(input.value)) || 0));
+        input.value = String(percent);
+        context.extensionSettings[SLUG][key] = percent / 100;
+        context.saveSettingsDebounced();
     });
 }
 

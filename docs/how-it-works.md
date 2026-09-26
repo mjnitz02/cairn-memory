@@ -99,16 +99,73 @@ Cairn separates the two:
   then it drops to half the budget rather than shaving off the one summary that
   overflowed, so the next rebuild is half a budget of growth away.
 
-The block gets 35% of the prompt SillyTavern may send: the context window minus
-the reserved response. There is no setting for it, and Qvink's short-term limit
-no longer counts (`docs/decisions.md` D-0038). Cairn does not measure the rest
-of the prompt and adjust: the same chat always gets the same block, so nothing it
-saw last turn can change this one.
+### Two fidelities, so old scenes fade rather than vanish
 
-The fixed share cannot see a large card and lorebook on a small context. On text
-completion, SillyTavern then drops the oldest raw messages without saying so. The
-inspector warns, and the log sets `prompt_near_limit`, when a prompt is within 5% of
-its limit. A prompt that lost messages ends just under the limit, not at it.
+A summary pushed out of the block used to be gone. Now it is **demoted** first: the
+block keeps part of its budget — at most a fifth by default, **Short-summary share** in
+the settings — for one-sentence versions of older summaries,
+so the oldest part of the chat is present in less detail instead of absent. Only when
+the compact tail is full as well does anything leave.
+
+The one sentence is not a fresh summary of the message. It comes from the index
+record written beside each summary (below), which holds both the structure the canon
+pass reads and one plain sentence for this. Writing it there rather than as a second
+summary is why the longer memory costs no extra model call.
+
+Three things follow, and they are the ones worth knowing:
+
+- **The tail's share is a ceiling, not a reservation.** Until those sentences exist —
+  a fresh install, a chat Cairn has not caught up on — full summaries keep the whole
+  budget. Nothing is held back for a tail that cannot be filled.
+- **Demotion happens only on a turn that was rebuilding the block anyway.** Replacing
+  a summary with its sentence rewrites the same part of the prompt that dropping it
+  would, so it is done on the same turns and costs no extra cache miss.
+- **A summary with no sentence evicts exactly as it did before.** If the index has
+  fallen behind, the block is no worse than it was; it simply misses that line.
+
+On the measured chat this roughly doubles how much of the story the block holds —
+about 86 summaries where it held 51 — for the same tokens (`docs/decisions.md`
+D-0075, D-0076).
+
+### How much room the block gets
+
+At most 35% of the prompt SillyTavern may send — the context window minus the
+reserved response — and less than that when the rest of the prompt does not leave
+that much (`docs/decisions.md` D-0038, D-0052). The 35% is **Memory share** in the
+settings (D-0085), and Qvink's short-term limit no longer counts.
+
+What is left over is what the rest of the prompt does not need:
+
+| Reserved for | Worked out from |
+|---|---|
+| The character card | The card fields that reach the prompt, and the system prompt SillyTavern would use |
+| The lorebook | SillyTavern's own World Info budget, or every enabled entry if they come to less |
+| The raw history | The heaviest run of messages your chat has had at the widest the raw window ever gets — **Recent messages kept in full** plus one **Summary step**, less one: fifteen by default |
+| The world state | Its largest possible size, or nothing while it is switched off |
+| Everything else | 5% of the prompt, for instruct wrappers, other extensions and the tokenizer's own error |
+
+**None of it is measured from a prompt that went out.** Every number above comes
+from the chat and your settings, so the same chat always gets the same block,
+nothing Cairn saw last turn can change this one, and reloading the page costs no
+warm-up. Nothing is stored, either.
+
+That also means the cap holds still. It moves when one of its inputs moves — you
+edit the card or a lorebook, you change the context size or response length, or
+your chat writes a heavier run of messages than it ever has — and on no other
+turn. A cap that falls below the block costs one rebuild; a cap that rises costs
+nothing and never brings evicted summaries back. If a reserve cannot be read at
+all, the block keeps the flat 35% and the inspector says so.
+
+On a chat whose card, lorebook and history already fill the prompt, the block
+keeps a tenth of it and the inspector calls the chat starved: an empty block
+would lose all of the memory to save a few raw messages.
+
+Because every reserve is a ceiling, a full prompt should land under 95% of the
+limit. The inspector warns, and the log sets `prompt_near_limit`, when one does
+not — which now means a reserve missed something rather than that the block was
+too greedy. On text completion SillyTavern fills the history to the limit and
+then fits the card's example messages into what is left, so an overfull prompt
+loses the examples and the oldest messages without saying so.
 
 Two things the inspector says about this, because neither is visible in play:
 
@@ -147,8 +204,8 @@ turn on, the block only changes at its end until it outgrows the limit again.
 
 ## Writing summaries
 
-After each reply, Cairn summarises the messages waiting for a summary, one
-request at a time, oldest first, through the **Memory connection** profile. Each
+After each reply, and as soon as you edit a message, Cairn summarises the
+messages waiting for a summary, one request at a time, oldest first, through the **Memory connection** profile. Each
 request carries the message and the five summaries before it. A reply that
 arrives after you have switched or reloaded the chat, edited the message or
 deleted it is thrown away. The request is cancelled when the chat changes.
@@ -180,8 +237,20 @@ summaries fall behind, the memory step waits for them instead of moving past.
 **In the chat**, each summary appears under its message, where Qvink shows its
 own. While a request is out, the message being summarised says so, and the ones
 behind it say they're waiting. A failure shows its reason under the message and
-says whether Cairn will retry after the next reply or has given up. Only Cairn's
-summaries are shown: Qvink shows its own while it is enabled.
+says whether Cairn will retry after the next reply or has given up. Qvink's
+summaries are shown too, as `Qvink:`, while Qvink isn't loaded or has its own
+display turned off, and one excluded in Qvink is dimmed. The chat shows what the
+block reads: a message whose Cairn summary went stale after an edit shows neither.
+
+**Summarise with Cairn**, in a message's actions menu, sends that message to the
+memory model again. The request is the one the queue would send, and it goes
+next, after any state update. A new summary replaces the one there, Cairn's or
+Qvink's; a failure keeps it and says so every time. It works on any message long
+enough to summarise, including the last one and messages older than Qvink's newest
+summary, which the queue skips, and it gives a message Cairn gave up on a fresh
+start. It waits on the same switches as the queue and says which one is closed.
+Replacing a summary that is already in the memory block changes the block from
+that summary on, so the next prompt misses the cache from there, as an edit would.
 
 **The prompt** is the **Summary prompt** setting. `{{message}}` is the message as
 `Name: text`, and `{{history}}` is the summaries before it, one per line.
@@ -215,9 +284,76 @@ step is waiting for a summary.
 `memory_source`, `memory_cairn_scenes`, `memory_step_waiting`, and the `summary_*`
 fields. The counts, times and token totals are running totals for the chat since the page
 loaded, so the work between two generations is the difference between two lines.
-Reloading the same chat keeps them, and switching chats starts them again.
+Reloading the same chat keeps them, and switching chats starts them again. Each chat
+has its own log file, appended to across sessions (`docs/development.md`, "Reading a run").
 `summary_in_flight` is true when a summary request was still out as the prompt was
 built. That is how a run shows a summary overlapping a generation.
+
+## Keeping the world state
+
+Cairn keeps a short record of the scene's hard facts: where it is, the weather,
+who is there, and each character's hair and outfit. A character card fixes these
+("wears a combat uniform"), and when the story changes one, summaries tend to
+leave the change out, so the old fact creeps back. Mood, time and plot aren't
+recorded, because the roleplay model is the one telling the story. A typical
+state is about 55 tokens, and the largest the fields allow is about 330.
+
+**When it runs.** In the same run as the summaries, before them, because the next
+prompt carries it. After each reply, and as soon as you edit a message, Cairn sends
+the memory model the record as it stands and the messages since it (at most 6 of
+the newest), and asks for the whole record back, accurate as of the last message. A
+cold start on a long chat sends the summaries just before those 6 as background,
+so it is still one request.
+
+**Nothing is ever cleared.** A field the reply leaves out keeps the value it had,
+and so does one the model sends blank or too long. A filled field is the whole
+point of the tier — an empty one lets the character card's original wording win
+again — and nothing here can stop being true: a character always has hair, and is
+either wearing something or isn't. What the reply *does* decide is who is in the
+scene: the characters it lists are the characters present, so leaving someone out
+is how they leave. A reply that lists nobody at all is ignored.
+
+The
+state is stored on the newest message it read, in `message.extra.cairn.state`,
+with a hash of the messages it read. A reply that arrives after any of those
+messages changed, or after you left the chat, is thrown away. A failed state
+update writes nothing, warns once per run of failures, and doesn't stop the
+summaries. After three failures on the same messages Cairn stops trying until a
+new message arrives or one is edited.
+
+**Where it goes.** In the chat, directly after the newest message the state has
+read, with the system role. In normal play that is just above your newest
+message, so the model reads the scene as the reply you are answering left it.
+When the queue is behind, the state sits deeper, still after the message it read.
+The state is found by its message, not by position, so:
+
+- **a swipe** uses the state before the reply being replaced, and a new swipe gets
+  its own state. Swiping back brings the old swipe's state back with it;
+- **an edit, hide or deletion** inside what a state read makes that state stale, and
+  the one before it is used until it is rewritten. Later states stay valid;
+- **a branch** keeps the states on the messages it copies.
+
+A state older than the memory step, on a message the block already summarises, is
+left out, since the summaries are newer than it. While WTracker or WTrackerLite is
+loaded, Cairn neither updates nor places the state, so there is never a second
+state in the prompt.
+
+**In the chat**, each message that carries a usable state has a collapsed **World
+state** under it, holding the text as the prompt would carry it. Stale states are
+not shown. Nothing is shown while the switch is off or a WTracker is loaded.
+
+**The switch** is **Keep the world state**, on by default. It does nothing until a
+memory profile is chosen. Turned off, the state leaves the prompt at the next
+generation and no more state requests go out.
+
+**The panel** has a **World state** section: what the queue is doing (writing, up to
+date, waiting on WTrackerLite, or gave up), the state as the last prompt carried it,
+its depth, size and the kinds of its last change, then requests, failures, dropped
+fields, time and tokens for the open chat. **The log** records the same without the
+state's text: `state_injected`, `state_reason`, `state_depth`, `state_chars`,
+`state_tokens`, `state_changed`, `state_change_kinds`, and the queue's `state_*`
+running totals. `state_changed` says the text differs from last turn's, so the
+prefix should break inside `cairn_state`.
 
 ## Taking over the injection
 
@@ -266,7 +402,7 @@ different storage problems and Cairn treats them separately.
 | Tier | What | Update rule | Cost |
 |---|---|---|---|
 | 0 | Raw recent messages | ST's own — not ours | — |
-| 1 | World state | Overwritten as a diff, never summarised | ~300–600 tokens, fixed |
+| 1 | World state | Overwritten as a diff, never summarised | ~55 tokens typical, ~330 at most |
 | 2 | Scene summaries | Rolling, delta-written | Budgeted, compacted under pressure |
 | 3 | Canon | Append-only one-liners, entity-tagged | Negligible per item |
 | 4 | Episodes | Archived, entity-keyed | Off-prompt; retrieved on demand |
@@ -285,7 +421,8 @@ system / persona / character card      never changes
 canon + stable lorebook content        rarely
 scene summaries                        every N turns
   …raw chat history…
-  depth 2:  world state                every N turns
+  after the newest message it read:
+            world state                every reply
   depth 0:  retrieved episodes         per turn
 ```
 
@@ -303,16 +440,115 @@ D-0035).
 
 ## Compaction
 
-Under budget pressure, in this order: **promote** durable facts into canon and
-state, **merge** what remains about the same thread, **drop** texture with no
-forward relevance. Sources are archived to tier 4 rather than destroyed, so a
-bad pass is recoverable.
-
 Recursive summarisation produces holes because it destroys the source before
 extracting what must survive. Extraction goes first here, always.
 
+Cairn keeps a short **canon** at the head of the block: the few facts the rest of
+the story cannot be understood without.
+
+It is a **pick over the index**, not a promotion out of what is about to be evicted.
+Once every summary in the chat carries a compact record, Cairn sends the whole index
+— the story at about a fifth of the tokens, with its structure made explicit — and
+asks for *exactly* N facts. A fixed budget is the calibration: asked whether a thing
+is permanent, a small model says yes to everything; asked to choose ten rows out of
+a hundred and fifty, it has to rank them.
+
+```
+[Established facts]:
+
+* Her brother drowned in the spring flood.
+* They kissed on the lighthouse stair.
+
+[Following is a list of recent events]:
+
+* …
+```
+
+**A chat with no canon renders exactly the bytes it did before**, section and all.
+
+**Why the whole index and not the evicted summaries.** Eviction from the prompt has
+nothing to do with what is available on disk: the chat file holds every summary,
+including ones that scrolled out of the block long before Cairn was installed. A pass
+that reads only what is about to be dropped is a local window ranking global
+importance, and most of any window sampled by recency is description and scenery. The
+earlier design did exactly that, and the canon it produced read like a different,
+lighter story than the one being played. Reading the index end to end is what fixed it.
+
+**A wrong fact is no longer permanent.** Each fact cites the records it was picked
+from, so canon is *derived* rather than remembered: fix a summary, edit a message or
+branch away from a scene and the facts resting on it go with it, and the next pick
+fills the slots again over the index as it now stands. Nothing has to be rolled back,
+because nothing was ever stored except the answer.
+
+**Canon changes only at a rebuild.** Canon sits above every summary, so changing it
+rewrites the block's head — the expensive break. A rebuild rewrites the head anyway,
+so a pick written between rebuilds is held back until the turn eviction fires, and
+the two head-changes cost one break instead of two. Between rebuilds the canon text is
+byte-identical. The pick itself is the lowest-priority memory call: behind the world
+state, which the very next prompt carries, behind the summaries, one of which can hold
+the see-saw step, and behind the index records the pick reads.
+
+**How many lines is the one knob, and it is a count rather than a budget.** The spine
+of a story does not grow as the story does — someone arriving or leaving, something
+permanently won or lost, are necessarily rare — so a three-hundred-message chat wants
+about the same eight to twelve lines a short one does. Leftover room falls back to
+summaries rather than being held.
+
+**Canon's room.** It takes at most a fifth of the block — **Canon share** in the
+settings — and never more than the block has left after reserving two see-saw steps
+for the summaries. That second term is a guard: canon takes its room from the scene budget,
+so it is the one thing that could collapse growth and eviction back into a single
+cadence. Reserving two steps makes that arithmetically impossible — canon is
+squeezed to nothing first, which is the right order of sacrifice, because the
+summaries are the memory and canon is only what is left of the ones already gone.
+
+**And the room is settled at the rebuild, not every turn.** Both terms above move
+as a chat runs — the block's cap falls as the card, lorebook and raw window grow,
+and a see-saw step costs more as summaries lengthen — so a cap applied live would
+re-cut the block's head on ordinary turns. Canon is fitted to the cap that was in
+force at the last rebuild and held there until the next one, which is the only turn
+the head changes anyway. The cost is that canon can sit a little above its live
+share mid-cycle, bounded by what it held at that rebuild; the log carries both
+numbers as `memory_canon_cap` and `memory_canon_cap_applied`
+(`docs/decisions.md` D-0059).
+
+**The label on a record never decides what may be picked — so the pick never sees it.**
+Each record carries a four-way kind — someone arriving or leaving, something large
+happening, description, filler — which the inspector and the log count. A local label is
+not stable under hindsight: a purchase is filler until it turns out to be where they
+settled. Told the kind was only a hint, lower-tier models obeyed it anyway: the promise
+the measured story rests on was labelled *filler* in twelve runs of fifteen and never
+picked. So the index the pick reads has no kind column at all (`docs/decisions.md` D-0084).
+
+
+**What the parser guarantees, and what it cannot.** The prompt states a length; a fact
+that runs past it by half again is cut at a word rather than thrown away, a repeat is
+refused, a fact citing no row at all is refused —
+an uncitable fact would be a permanent one again — and every pick is shown in the chat
+under the message it was written on. What the panel reports is what was actually
+written, never what the model claimed. What no parser can check is whether the chosen
+facts are the *right* ones; that is read against the story itself.
+
+Two of the three operations `DESIGN.md` §8 declares are built: **pick**, which replaced
+promotion, and **drop**, which the budgeter already did. **Merge** is moot for a fixed
+slot count — the pick re-ranks rather than accumulating — and what it was for, making
+room once canon is full, is now a question the next pick answers on its own.
+
 ## Storage and branching
 
-Per-message data lives in `message.extra`, which branches and swipes correctly
-for free. Chat-global stores live in `chatMetadata` with explicit checkpoints
-keyed to message index, and roll back on a branch or swipe.
+Per-message data lives in `message.extra`, which branches and swipes correctly for
+free. Every tier uses it: a summary on the message it summarises, its compact record
+beside it, a world state on the newest message it read, and a canon pick on the newest
+record it read.
+
+Nothing records which of them is current. The newest valid state wins, the newest pick
+wins, and both are read fresh every turn — so a branch, a swipe or a deletion rolls the
+memory back by taking the messages with it, and there is no checkpoint to keep in step
+and no rollback code to get wrong. A pick lands on a message behind the raw window by
+construction, where swipes never reach. A record is hashed against the summary it was
+read from rather than the message, so re-summarising a message invalidates its record
+too — and the facts that cited it with it.
+
+**Cairn keeps nothing in `chatMetadata`.** The design once put canon there with
+checkpoints keyed to message index; per-message storage removed the need
+(`docs/decisions.md` D-0055).

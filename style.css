@@ -160,3 +160,27 @@
 .cairn-scene-given-up {
     color: var(--warning, #e0a030);
 }
+
+/* Excluded in Qvink, so the block leaves it out. */
+.cairn-scene-excluded {
+    opacity: 0.5;
+}
+
+/* The world state on its message, collapsed (src/ui/chat-marks.js). */
+
+.cairn-state {
+    margin: 0 0 5px 0;
+    font-size: small;
+    opacity: 0.85;
+}
+
+.cairn-state > summary {
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.cairn-state > pre {
+    margin: 4px 0 0 0;
+    white-space: pre-wrap;
+    font-family: inherit;
+}

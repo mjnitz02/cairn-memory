@@ -69,6 +69,53 @@ export function makeMessage({ name = 'Aster', isUser = false, mes = '', extra = 
 }
 
 /**
+ * What `getCharacterCardFields()` returns (public/script.js:3476-3493). Every
+ * field is present and a string, as ST's is; `version`, `creatorNotes`,
+ * `firstMessage` and `alternateGreetings` are on it too and never reach the
+ * story string (`storyStringParams`, :4703-4718).
+ *
+ * Content is invented — no real cards, ever (CLAUDE.md §3.13).
+ */
+export function makeCardFields(overrides = {}) {
+    return {
+        system: '',
+        mesExamples: '',
+        description: '',
+        personality: '',
+        persona: '',
+        scenario: '',
+        jailbreak: '',
+        version: '1.0',
+        charDepthPrompt: '',
+        creatorNotes: '',
+        firstMessage: '',
+        alternateGreetings: [],
+        ...overrides,
+    };
+}
+
+/**
+ * The slice of `power_user` the prompt's system-prompt choice reads
+ * (public/scripts/power-user.js:203, :267-272; the choice at
+ * public/script.js:4686-4696). Exposed as `powerUserSettings`
+ * (public/scripts/st-context.js:229).
+ */
+export function makePowerUser(overrides = {}) {
+    return {
+        prefer_character_prompt: true,
+        sysprompt: { enabled: true, name: 'Neutral - Chat', content: '', post_history: '' },
+        // Both ship off (public/scripts/power-user.js:121-122) and are the two
+        // halves of one three-way control: `#example_messages_behavior` sets
+        // normal / keep / strip (:3314-3331). `strip_examples` wins, because ST
+        // blanks the array at public/script.js:4738-4739 before it pins anything
+        // at :4861.
+        strip_examples: false,
+        pin_examples: false,
+        ...overrides,
+    };
+}
+
+/**
  * A synthetic chat. Names and content are invented — no real logs, ever
  * (CLAUDE.md §3.13).
  */
@@ -85,6 +132,111 @@ export function makeChat(turns = 6) {
         }));
     }
     return chat;
+}
+
+/**
+ * The generate interceptor's `chat` (public/script.js:4496-4527): hidden and system
+ * messages filtered out, the last popped on a swipe, each entry a fresh object that
+ * shares `extra` with the live message. Regex scripts and attachments are not
+ * modelled, so `mes` comes through unchanged.
+ */
+export function makeCoreChat(chat, { type = 'normal' } = {}) {
+    const core = chat.filter((message) => !message.is_system);
+    if (type === 'swipe') core.pop();
+    return core.map((message, index) => ({ ...message, index }));
+}
+
+/**
+ * A new swipe on a reply. The current swipe is saved first, `extra` cloned into its
+ * `swipe_info` (public/script.js:10340 → :6932-6939). The new reply then replaces
+ * `mes` and keeps the same `extra` object (:6671-6684).
+ */
+export function newSwipe(message, mes) {
+    saveSwipe(message);
+    message.swipes.push(mes);
+    message.swipe_id = message.swipes.length - 1;
+    message.mes = mes;
+    saveSwipe(message);
+}
+
+/**
+ * Swiping to an existing swipe: the current one is saved (:10340), then `mes` and a
+ * clone of that swipe's saved `extra` replace the message's own (:7012-7015).
+ */
+export function swipeTo(message, swipeId) {
+    saveSwipe(message);
+    message.swipe_id = swipeId;
+    message.mes = message.swipes[swipeId];
+    message.extra = structuredClone(message.swipe_info[swipeId]?.extra) ?? {};
+}
+
+function saveSwipe(message) {
+    message.swipe_info ??= [];
+    message.swipes[message.swipe_id] = message.mes;
+    message.swipe_info[message.swipe_id] = { send_date: message.send_date, extra: structuredClone(message.extra) };
+}
+
+/**
+ * `getExtensionPrompt` (public/script.js:3301-3330): keys sorted, filtered by position,
+ * depth and role, each value trimmed, joined, and wrapped in the separator when `wrap`.
+ * Macro substitution (:3326) is left out.
+ */
+export function getExtensionPrompt(extensionPrompts, position, depth, separator = '\n', role, wrap = true) {
+    let values = Object.keys(extensionPrompts)
+        .sort()
+        .map((key) => extensionPrompts[key])
+        .filter((x) => x.position == position && x.value)
+        .filter((x) => depth === undefined || x.depth === undefined || x.depth === depth)
+        .filter((x) => role === undefined || x.role === undefined || x.role === role)
+        .map((x) => x.value.trim())
+        .join(separator);
+    if (wrap && values.length && !values.startsWith(separator)) values = separator + values;
+    if (wrap && values.length && !values.endsWith(separator)) values = values + separator;
+    return values;
+}
+
+/**
+ * A text-completion prompt, as far as placement goes. The story string with the
+ * BEFORE_PROMPT and IN_PROMPT injections around it (public/script.js:4700-4701), then
+ * the history, with IN_CHAT injections spliced in by depth as `doChatInject` does
+ * (:5628-5676), each message formatted without instruct mode (:5833-5846). The
+ * interceptor's `coreChat` is copied first, since ST splices into its own. Trimming to
+ * the context is not modelled.
+ */
+export function assembleTextPrompt(context, coreChat, { isContinue = false, storyString = 'Story string.\n' } = {}) {
+    const prompts = context.extensionPrompts;
+    const messages = [...coreChat].reverse();
+    let inserted = 0;
+    // getExtensionPromptMaxDepth is MAX_INJECTION_DEPTH (:3281); nothing here goes deeper than the chat.
+    for (let i = 0; i <= messages.length; i++) {
+        const roleMessages = [];
+        for (const role of [0, 1, 2]) {
+            const text = getExtensionPrompt(prompts, extension_prompt_types.IN_CHAT, i, '\n', role, false).trimStart();
+            if (text) {
+                roleMessages.push({
+                    name: ['', context.name1, context.name2][role], is_user: role === 1, mes: text,
+                    extra: { type: role === 0 ? 'narrator' : null },
+                });
+            }
+        }
+        if (roleMessages.length) {
+            const depth = isContinue && i === 0 ? 1 : i;
+            messages.splice(Math.min(depth + inserted, messages.length), 0, ...roleMessages);
+            inserted += roleMessages.length;
+        }
+    }
+    messages.reverse();
+
+    const history = messages.map((item) => {
+        if (item.extra?.[Symbol.for('ignore')]) return '';
+        const prependName = item.name && item.extra?.type !== 'narrator';
+        return prependName ? `${item.name}: ${item.mes}\n` : `${item.mes}\n`;
+    }).join('');
+
+    return getExtensionPrompt(prompts, extension_prompt_types.BEFORE_PROMPT)
+        + storyString
+        + getExtensionPrompt(prompts, extension_prompt_types.IN_PROMPT)
+        + history;
 }
 
 /** Minimal eventSource: registration plus await-all emit, as ST's does. */
@@ -124,6 +276,8 @@ export function createContext({
     selectedProfile = null,
     requestService = null,
     extensions = [],
+    cardFields = makeCardFields(),
+    powerUser = makePowerUser(),
 } = {}) {
     const extensionPrompts = {};
     const context = {
@@ -145,7 +299,10 @@ export function createContext({
             WORLD_INFO_ACTIVATED: 'world_info_activated',
             WORLDINFO_FORCE_ACTIVATE: 'worldinfo_force_activate',
             WORLDINFO_UPDATED: 'worldinfo_updated',
+            /** public/scripts/events.js:8-10 */
+            MESSAGE_SENT: 'message_sent',
             MESSAGE_RECEIVED: 'message_received',
+            MESSAGE_EDITED: 'message_edited',
             CHAT_CHANGED: 'chat_id_changed',
         },
 
@@ -211,6 +368,12 @@ export function createContext({
         /** public/scripts/st-context.js:302 — the ignore flag's home. */
         symbols: { ignore: Symbol.for('ignore') },
 
+        /** public/scripts/st-context.js:232 — the card as the story string gets it. */
+        getCharacterCardFields: () => cardFields,
+
+        /** public/scripts/st-context.js:229 — `power_user` itself, not a copy. */
+        powerUserSettings: powerUser,
+
         saveSettingsDebounced: () => { context.saved.settings++; },
         saveMetadataDebounced: () => { context.saved.metadata++; },
         /** public/scripts/st-context.js:155 — saveChatConditional, which saves the *current* chat. */
@@ -235,6 +398,46 @@ export function createContext({
 export async function receiveMessage(context, message, type = 'normal') {
     context.chat.push(message);
     await context.eventSource.emit(context.eventTypes.MESSAGE_RECEIVED, context.chat.length - 1, type);
+}
+
+/**
+ * The user sending a message: ST pushes it, saves, then emits its index
+ * (public/script.js:5914-5917) before it is rendered.
+ */
+export async function sendMessage(context, message) {
+    context.chat.push(message);
+    await context.eventSource.emit(context.eventTypes.MESSAGE_SENT, context.chat.length - 1);
+}
+
+/**
+ * A new swipe on the last reply, generated: the reply replaces `mes` and keeps
+ * `extra` (public/script.js:6671-6684), then MESSAGE_RECEIVED fires with type
+ * `swipe` (:6691).
+ */
+export async function swipeReply(context, mes) {
+    newSwipe(context.chat.at(-1), mes);
+    await context.eventSource.emit(context.eventTypes.MESSAGE_RECEIVED, context.chat.length - 1, 'swipe');
+}
+
+/**
+ * A continue: the new text is appended to the last message's `mes` (public/script.js:6701),
+ * then MESSAGE_RECEIVED fires with type `continue` (:6716).
+ */
+export async function continueReply(context, text) {
+    context.chat.at(-1).mes += text;
+    await context.eventSource.emit(context.eventTypes.MESSAGE_RECEIVED, context.chat.length - 1, 'continue');
+}
+
+/**
+ * An edit through the message editor: `updateMessage` writes the new text to `mes`
+ * and to the current swipe (public/script.js:8178-8182), then `messageEditDone`
+ * emits the index and awaits every listener before re-rendering (:8405).
+ */
+export async function editMessage(context, index, mes) {
+    const message = context.chat[index];
+    message.mes = mes;
+    if (message.swipe_id !== undefined) message.swipes[message.swipe_id] = mes;
+    await context.eventSource.emit(context.eventTypes.MESSAGE_EDITED, index);
 }
 
 /**

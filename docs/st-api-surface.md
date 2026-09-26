@@ -34,11 +34,13 @@ literally against the cited line.
 | `getRequestHeaders` | Auth headers for the file-upload call | `public/scripts/st-context.js` | 129 |
 | `/upload` | Data Bank write endpoint, for the inspector log | `src/endpoints/files.js` | 28 |
 | `validateAssetFileName` | What filenames the endpoint accepts | `src/endpoints/assets.js` | 21 |
+| `[a-zA-Z0-9_\-.]` | The characters a log's per-chat filename is flattened to | `src/endpoints/assets.js` | 22 |
+| `/user/files/*` | Reading a chat's log back, so a session appends to it rather than replacing it; 404 when there is none yet | `src/users.js` | 1218 |
 | `extension_prompt_types` | `NONE` / `IN_PROMPT` / `IN_CHAT` placement enum | `public/script.js` | 484 |
 | `GENERATE_AFTER_COMBINE_PROMPTS` | Text-completion prompt, read-only in P0 | `public/script.js` | 5243 |
 | `CHAT_COMPLETION_PROMPT_READY` | Chat-completion prompt, read-only in P0 | `public/scripts/openai.js` | 1619 |
 | `WORLD_INFO_ACTIVATED` | Observe which WI entries fired | `public/scripts/world-info.js` | 902 |
-| `CHAT_CHANGED` | Drop the stability baseline on a new chat; abandon a summary request for the chat being left | `public/scripts/events.js` | 19 |
+| `CHAT_CHANGED` | Drop the stability baseline on a new chat; abandon a memory request for the chat being left | `public/scripts/events.js` | 19 |
 | `GENERATE_AFTER_COMBINE_PROMPTS` | Event name | `public/scripts/events.js` | 57 |
 | `WORLD_INFO_ACTIVATED` | Event name | `public/scripts/events.js` | 62 |
 | `CHAT_COMPLETION_PROMPT_READY` | Event name | `public/scripts/events.js` | 65 |
@@ -77,8 +79,32 @@ literally against the cited line.
 | `runGenerationInterceptors` | Our push runs here... | `public/script.js` | 4564 |
 | `getWorldInfoPrompt` | ...which is before the scan reads it | `public/script.js` | 4635 |
 | `if (!dryRun) {` | Dry runs skip interceptors, so they cannot pollute the held set | `public/script.js` | 4562 |
-| `getMaxPromptTokens` | What the memory cap is 35% of — context window minus the reserved response | `public/script.js` | 5981 |
+| `getMaxPromptTokens` | What the memory cap is a share of — context window minus the reserved response | `public/script.js` | 5981 |
 | `if (tokenCount < this_max_context) {` | Text completion stops adding history at the limit, so a prompt that dropped messages ends just under it — the near-limit flag | `public/script.js` | 4920 |
+| `if (tokenCount < this_max_context) {` | ...then fits unpinned example messages into what is left, so a full prompt loses the card's examples before anything of ours | `public/script.js` | 4964 |
+| `let this_max_context = getMaxPromptTokens();` | The same number ST works its own World Info budget out from | `public/script.js` | 4560 |
+| `getCharacterCardFields,` | The card fields, for the card reserve | `public/scripts/st-context.js` | 232 |
+| `export function getCharacterCardFields` | What it returns: `description`, `personality`, `scenario`, `persona`, `mesExamples`, `jailbreak`, `charDepthPrompt` and more | `public/script.js` | 3476 |
+| `const storyStringParams = {` | Which of those fields actually reach the prompt | `public/script.js` | 4703 |
+| `powerUserSettings: power_user,` | `sysprompt.enabled`, `sysprompt.content` and `prefer_character_prompt`, for the system prompt | `public/scripts/st-context.js` | 229 |
+| `system = power_user.prefer_character_prompt && system` | The system prompt ST uses: the character's own, else the instruct one, else nothing | `public/script.js` | 4689 |
+| `strip_examples: false,` | Ships off. **Cairn writes this** once summaries stand in for messages (D-0068) — the only `power_user` setting we set, and never persisted | `public/scripts/power-user.js` | 122 |
+| `if (power_user.strip_examples) {` | What it does: blanks the examples outright, after the story string is rendered — so the card reserve must drop `mesExamples` on the same turn | `public/script.js` | 4738 |
+| `mesExamplesArray = [];` | ...to nothing at all, which is why stripping wins over pinning below | `public/script.js` | 4739 |
+| `pin_examples: false,` | The other half of the same control. Left alone: stripping already blanked the array before this is read | `public/scripts/power-user.js` | 121 |
+| `$('#example_messages_behavior').on('change', function () {` | ST's own control is a three-way select (normal / keep / strip) that persists the choice, so our write does not move the dropdown | `public/scripts/power-user.js` | 3314 |
+| `export async function getSortedEntries` | Every lorebook entry ST scans — global, character, chat and persona | `public/scripts/world-info.js` | 4590 |
+| `await eventSource.emit(event_types.WORLDINFO_ENTRIES_LOADED` | Calling it emits this, so our call fires it a second time per generation | `public/scripts/world-info.js` | 4604 |
+| `export let world_info_budget = 25;` | The World Info budget, as a percentage of the max prompt | `public/scripts/world-info.js` | 73 |
+| `export let world_info_budget_cap = 0;` | An absolute cap on it, when set | `public/scripts/world-info.js` | 81 |
+| `export function updateWorldInfoSettings` | How Cairn sets that cap: it takes only the keys present, so one key is safe to pass | `public/scripts/world-info.js` | 819 |
+| `    saveSettingsDebounced();` | ...and it **persists**, which is why the cap is a setting the user owns rather than a derived value | `public/scripts/world-info.js` | 852 |
+| `$('#world_info_budget_cap').val(world_info_budget_cap);` | ST fills its own field on load and never again, so a write behind it leaves the number on screen stale | `public/scripts/world-info.js` | 989 |
+| `let budget = Math.round(world_info_budget * maxContext / 100)` | How the budget is worked out, and never zero | `public/scripts/world-info.js` | 4736 |
+| `if (!entry.ignoreBudget && (textToScanTokens` | ST stops adding entries at the budget, so lore cannot pass it | `public/scripts/world-info.js` | 5061 |
+| `ignoreBudget: entry.extensions?.ignore_budget ?? false,` | ...except an entry marked to ignore it, which is added on top | `public/scripts/world-info.js` | 5669 |
+| `newContent +=` | Each entry is joined on a newline *before* the budget test, so an overflow takes everything after it too | `public/scripts/world-info.js` | 5059 |
+| `if (world_info_recursive && !token_budget_overflowed` | Recursion stops once the budget overflows, so a trimmed entry is not pulled straight back in | `public/scripts/world-info.js` | 5097 |
 | `src="script.js"` | The URL ST loads it under, so `/script.js` is the same module however deeply we are installed | `public/index.html` | 8218 |
 | `setExtensionPrompt` | Park the memory block | `public/scripts/st-context.js` | 153 |
 | `setExtensionPrompt` | Signature: `(key, value, position, depth, scan, role, filter)` | `public/script.js` | 8926 |
@@ -91,6 +117,19 @@ literally against the cited line.
 | `let coreChat = chat.filter` | The interceptor's array is **filtered**, so its indexes are not the chat's | `public/script.js` | 4496 |
 | `...chatItem,` | Its entries are fresh objects that **share `extra` by reference** with the real chat | `public/script.js` | 4525 |
 | `index,` | The index they carry counts the *filtered* array — never use it as a chat index | `public/script.js` | 4527 |
+| `coreChat.pop();` | A swipe drops the reply being replaced, so the state used is the one before it | `public/script.js` | 4498 |
+| `doChatInject` | Places the world state: an `IN_CHAT` prompt goes in `depth` entries from the end of `coreChat` | `public/script.js` | 5628 |
+| `const injectIdx = Math.min(depth + totalInsertedMessages, messages.length);` | Depth counts prompt entries, so the state's depth is the number of entries after its message | `public/script.js` | 5666 |
+| `const depth = isContinue && i === 0 ? 1 : i;` | On a continue, a depth-0 state moves above the message being continued | `public/script.js` | 5665 |
+| `const roles = [extension_prompt_roles.SYSTEM, extension_prompt_roles.USER, extension_prompt_roles.ASSISTANT];` | At the same depth, a system prompt lands below a user or assistant one | `public/script.js` | 5636 |
+| `export const extension_prompt_roles = {` | The state is parked with the system role (`SYSTEM: 0`) | `public/script.js` | 494 |
+| `injectedIndices = await doChatInject(coreChat, isContinue);` | Text completion injects while blanked messages are still in `coreChat`; they are all older than a placed state | `public/script.js` | 4745 |
+| `oaiMessages = setOpenAIMessages(coreChat);` | Chat completion builds from the same `coreChat`, dropping blanked messages (`openai.js:584`)... | `public/script.js` | 4834 |
+| `? await getExtensionPrompt(extension_prompt_types.IN_CHAT, i, separator, roleTypes[role], wrap)` | ...before placing by depth, which still matches because no state behind the step is placed | `public/scripts/openai.js` | 856 |
+| `lastMessage.mes = getMessage;` | A new swipe replaces `mes` and keeps `extra`, so the state on it goes stale by its hash | `public/script.js` | 6676 |
+| `targetMessage.extra = structuredClone(targetSwipeInfo?.extra) ?? {};` | Swiping back restores that swipe's `extra`, state included, as a new object | `public/script.js` | 7015 |
+| `syncMesToSwipe(mesId);` | Swiping away saves the current `extra` into that swipe first, so a new swipe's copy made before its state was written is overwritten (`targetSwipeInfo.extra`, :6939) | `public/script.js` | 10340 |
+| `if (typeof globalThis[interceptorKey] === 'function') {` | An extension's interceptor is called by its manifest name, so a defined one means WTracker or WTrackerLite is running | `public/scripts/extensions.js` | 2035 |
 | `message.is_system = hide;` | Hiding a message sets `is_system`, so `summarisable()` skips hidden messages | `public/scripts/chats.js` | 157 |
 | `structuredClone(chat.slice(0, Number(mesId) + 1))` | A branch copies the messages it keeps, `extra` and all, so their scenes go with them | `public/scripts/bookmarks.js` | 173 |
 | `ConnectionManagerRequestService` | Profile-routed summary calls | `public/scripts/st-context.js` | 294 |
@@ -106,6 +145,11 @@ literally against the cited line.
 | `MESSAGE_RECEIVED` | Event name; the summarizer's trigger | `public/scripts/events.js` | 9 |
 | `event_types.MESSAGE_RECEIVED, chat_id, type` | Emitted for a new reply with its chat index, **before** the reply is rendered | `public/script.js` | 6781 |
 | `event_types.MESSAGE_RECEIVED, this.messageId, this.type` | ...and for a streamed one | `public/script.js` | 3799 |
+| `!fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);` | ...and for a generated swipe, so the state that read the replaced reply is redone | `public/script.js` | 6691 |
+| `!fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);` | ...and for a continue, whose text is appended to the reply first (:6701) | `public/script.js` | 6716 |
+| `MESSAGE_EDITED` | Event name; a trigger, so an edited message's summary and state are redone without waiting for a reply | `public/scripts/events.js` | 10 |
+| `mes.mes = text;` | `updateMessage` writes the edit to the message... | `public/script.js` | 8178 |
+| `await eventSource.emit(event_types.MESSAGE_EDITED, this_edit_mes_id);` | ...before the event, which is awaited before the message is re-rendered | `public/script.js` | 8405 |
 | `await listeners[i].apply(this, args);` | ST awaits every listener in turn, so the summarizer starts its work and returns | `public/lib/eventemitter.js` | 146 |
 | `chat.splice(0, chat.length, ...data);` | Opening or reloading a chat refills the same array with **new** message objects, so a late reply's message is no longer in it | `public/script.js` | 7658 |
 | `await reloadCurrentChat();` | A rename reloads the chat too | `public/script.js` | 10713 |
@@ -121,6 +165,9 @@ literally against the cited line.
 | `MESSAGE_UPDATED` | Event name; an edit can invalidate a summary, so its mark is redrawn | `public/scripts/events.js` | 12 |
 | `MESSAGE_DELETED` | Event name; a deletion renumbers the messages after it | `public/scripts/events.js` | 11 |
 | `MESSAGE_SWIPED` | Event name; a swipe changes the last message | `public/scripts/events.js` | 7 |
+| `const messageTemplate = $('#message_template .mes');` | Every message is cloned from the template, so the summarise button added to it once is on every message drawn after | `public/script.js` | 448 |
+| `<div class="extraMesButtons">` | The message's actions menu, where the summarise button goes | `public/index.html` | 7414 |
+| `'.mes_buttons .mes_button',` | A `mes_button` in that menu answers Enter like a click | `public/scripts/keyboard.js` | 17 |
 
 ## Verified, not yet called
 
@@ -135,7 +182,6 @@ does not rest on an unchecked claim; each moves up as its phase lands.
 | `outlet` | `world_info_position.outlet === 7` | `public/scripts/world-info.js` | 863 |
 | `outletName` | Declared WI entry field, editable in the WI UI | `public/scripts/world-info.js` | 4108 |
 | `outlet::` | The `{{outlet::key}}` macro that places parked content | `public/scripts/macros.js` | 668 |
-| `doChatInject` | Where `IN_CHAT` injections are spliced into the history | `public/script.js` | 5628 |
 | `flushWIInjections` | ST clears depth and outlet injections every generation | `public/script.js` | 5678 |
 | `getOutletPrompt` | Resolves `{{outlet::key}}` from the parked injection | `public/scripts/macros.js` | 597 |
 | `export function substituteParams(` | Signature; the legacy engine is the default | `public/script.js` | 2981 |
@@ -178,3 +224,11 @@ its repository clones into. Its `auto_summarize` (default on, `index.js:116`, re
 through `?? default_settings[key]` at `:655`) and `exclude_messages_after_threshold`
 (default on, `:136`) are read only while it is loaded. A disabled or uninstalled
 Qvink leaves both in the settings, and Cairn ignores them.
+
+WTrackerLite and upstream WTracker are looked for under `third-party/SillyTavern-WTrackerLite`
+and `third-party/SillyTavern-WTracker`, and by the interceptors their manifests name,
+`wtrackerliteGenerateInterceptor` and `wtrackerGenerateInterceptor`. Cairn reads nothing else
+from either, and no settings, since those outlive the extension.
+
+Qvink's summaries are shown under their messages only while Qvink isn't drawing its own: it
+isn't loaded, or its `display_memories` (default on, `index.js:160`, checked at `:1460`) is off.

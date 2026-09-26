@@ -79,6 +79,23 @@ Specific findings:
 - **WTrackerLite — `ConnectionManagerRequestService`.** ST's own profile-routed request service.
   Summaryception's 676-line `connectionutil.js` re-implements this by hand; do not repeat that.
 
+### What Cairn actually contributes
+
+"Build rather than extend" implies Cairn adds capability. Mostly it does not
+(`docs/decisions.md` D-0066). SillyTavern already ships the levers that keep a prompt stable and
+recapture its tokens — `world_info_position.outlet`, `power_user.strip_examples`,
+`world_info_budget_cap`, ordered World Info trimming — and every one of them ships off, static,
+or dependent on per-card configuration that authors never do.
+
+**Cairn's contribution is the *when*: pulling levers ST already has, at the moments that matter,
+in a chat where nobody configured anything.** It decides how many raw messages to keep, when a
+summary stands in for a message, when example dialogue has been superseded by real ones, when
+lore may be reprioritised, and what becomes of a summary when the room runs out. In a normal
+roleplay none of that ever fires.
+
+This is why §2.5 of `CLAUDE.md` reads the way it does. Before inventing a mechanism, check
+whether ST has the lever — and if it does, the work is the timing.
+
 ---
 
 ## 3. Hard requirements
@@ -132,13 +149,15 @@ compaction under budget pressure.
 ST's own recent messages. Not ours. Carries the flavour that state deliberately omits.
 
 ### Tier 1 — World state
-Small, structured, **continuously rewritten**. Location, time, who is present, per-character mood
-/ intent / physical condition, relationship axes, open threads, last significant shift.
-~300-600 tokens. Bounded **by design**, not by eviction. Never grows.
+Small, structured, **continuously rewritten**. Only the hard facts a character's description
+fixes and the story then changes: location, weather, who is present, and each one's hair and
+outfit, as WTrackerLite keeps them. Mood, time and plot stay with the roleplay model, because
+tracking them gridlocks it into narrating a dictated lane (`docs/decisions.md` D-0043).
+At most ~330 tokens. Bounded **by design**, not by eviction. Never grows.
 
 Generated as a **diff against the previous state** plus the new messages, not regenerated from
-scratch — cheaper, more stable, and a small model can do it. Stored per-message in `extra` so it
-branches correctly.
+scratch — cheaper, and fields the diff leaves out keep their exact wording. Stored per-message in
+`extra` so it branches correctly (`docs/decisions.md` D-0044, D-0045).
 
 This is the piece no existing extension has in combination with the others, and it is what
 actually kills the holes: state is always current, so it cannot have gaps.
@@ -148,11 +167,27 @@ The see-saw layer. Rolling prose summarisation of messages falling out of the ra
 delta-style (Summaryception's good idea). Bounded by token budget, evicted by recency.
 Compacted under pressure, never silently rolled up.
 
+**Two consumers, one artefact** (`docs/decisions.md` D-0070). The roleplay model wants a
+readable narrative bridge for recent history; a canon deriver wants comparable structure across
+every summary in the chat. Prose carries structure only implicitly, which is why condensing a
+summary far enough destroys the ability to read an *arc* across a run of them. So each summary
+also carries a compact **index record** — the four-way kind (D-0064) plus who, what, what
+lastingly changed, and *because* — bounded at ~20 tokens, stored per-message beside the prose.
+The index is off-prompt: it is the canon deriver's input, never the roleplay model's.
+
 ### Tier 3 — Canon
-Things that became permanently true. One-liners, append-only, tagged with entities.
-"Her brother is dead." "They kissed at the lighthouse." Absurdly cheap per item. This is the
-store that *receives* promotions, and long-term it is where generated lorebook entries would
-come from.
+Things that became permanently true. "Her brother is dead." "They kissed at the lighthouse."
+Absurdly cheap per item, and by a wide margin the highest-value content in the prompt — roughly
+20× the story per token that a scene summary carries (`docs/decisions.md` D-0065).
+
+**A fixed number of derived slots, not an append-only bag** (D-0071, superseding the bag of
+D-0055). The durable artefacts are the tier 2 index records; canon is a forced-budget *pick*
+over them — "fill exactly N slots" — re-derived on a rebuild turn (D-0067) and folded fresh
+every turn, so branches and swipes roll back with no code. A wrong fact is therefore removable
+by fixing the record it came from. The slot count is fixed because the spine does not grow
+linearly with chat length: introductions and major occurrences are necessarily rare.
+
+Long-term this is still where generated lorebook entries would come from.
 
 ### Tier 4 — Episodes
 The long tail. Compacted events with entity keys. **Off-prompt by default**, retrieved on demand.
@@ -171,9 +206,13 @@ Target prompt shape:
 [ canon block + stable WI (via outlet) ]       volatility: rarely
 [ scene summaries ]                            volatility: every N turns (see-saw)
 [ ...... raw chat history ...... ]
-   depth 2:  [ world state ]                   volatility: every N turns
+   depth 1:  [ world state ]                   volatility: every reply
    depth 0:  [ retrieved episodes + dynamic WI ]  volatility: per turn
 ```
+
+The world state sits just after the newest message it has read, which is depth 1 in normal play.
+It moves forward one reply each turn, so it costs a re-read of itself and the user's message:
+about 1.6 points of prefix stability, measured (`docs/decisions.md` D-0042, D-0049).
 
 In ST terms this maps directly onto injection depth: stable content high/early via
 `extension_prompt_types.IN_PROMPT`, volatile content late via `IN_CHAT` at low depth. Per-turn
@@ -260,6 +299,16 @@ output: { promote: [{fact, entities}],
 Deterministic to apply, auditable, and reversible because the source items are archived to
 Tier 4 rather than destroyed.
 
+**Corrected by P5** (`docs/decisions.md` D-0070, D-0071). "Triggered by budget pressure per
+tier" is wrong for promotion, and it is the mistake that made P4's canon worthless: pressure
+selects what is about to be *evicted from the prompt*, while every summary in the chat is on
+disk and readable at any time (`src/memory/scenes.js` `readScenes`). Eviction from the prompt
+has nothing to do with availability on disk. Promotion is a ranked pick over the whole index,
+not a salvage operation on the eviction stream, and the pressure trigger is deleted.
+
+Pressure still drives **drop** — that is the budgeter doing its job on the prompt — and merge
+is still not built.
+
 ---
 
 ## 9. Branching, swipes and durability
@@ -268,10 +317,14 @@ ST branches and swipes freely. A linear memory log breaks under both.
 
 - **Per-message data in `message.extra`** branches for free. WTrackerLite already proves this.
   Everything that can be per-message should be.
-- **Anything genuinely global** (canon, episode archive, entity index) lives in `chatMetadata`
-  and needs **explicit checkpointing keyed to message index**, with rollback on branch/swipe.
-  This is the single most likely source of quiet wrongness in the whole system. Design it in
-  from turn one; do not bolt it on.
+- **Nothing is genuinely global.** Canon was to live in `chatMetadata` with explicit
+  checkpoints keyed to message index, and that was called the single most likely source of
+  quiet wrongness in the whole system. It is not built. A canon batch is stored per-message
+  like a state, on the newest summary its pass read, and the canon set is a fold over the chat
+  read fresh every turn — so branches, swipes and deletions roll back with no checkpoint, no
+  rollback code and no event wiring (`docs/decisions.md` D-0045, D-0055). The episode archive and
+  the entity index (tier 4, P5) inherit the same requirement: find a per-message shape, or
+  argue why this one does not apply.
 - **Never clone chat messages in an interceptor.** Mutate in place, collect target indexes first,
   splice highest-to-lowest. Symbol-keyed flags from other extensions do not survive cloning and
   the failure is silent.
@@ -317,6 +370,8 @@ src/
   memory/
     state.js              tier 1
     scenes.js             tier 2
+    index-record.js       tier 2 — the per-summary index record (P5)
+    examples.js           the derived example-dialogue latch (P5)
     canon.js              tier 3
     episodes.js           tier 4
   pipeline/
@@ -404,33 +459,104 @@ after P4 or P5.
 
 **P3 — State.** Structured, diffed, per-message. Replaces WTrackerLite.
 
-**P4 — Canon + compactor.** Promote / merge / drop under budget pressure. Fixes symptom B.
+*Landed:* WTrackerLite's fields and nothing more, so the memory model never steers the story
+(`docs/decisions.md` D-0043). One update per reply, from a built-in prompt (D-0044), which asks
+for the whole record back and never clears a field, so a hole heals instead of persisting
+(D-0053, superseding the merge patch of D-0044 and the first build of D-0048). A full
+snapshot on the newest message read, valid while what it read hashes the same, so swipes,
+edits, deletions and branches roll back with no code (D-0045). Placed just after that message
+(D-0042), independent of the handover gate (D-0047), and never while WTracker is loaded
+(D-0046). *Measured* (D-0049): on a branch of Esin with real-length user messages, held turns at
+95.9% with the state against 97.5% without, steps still breaking at the block's tail, 13
+updates with no failures, and the state at a median of 57 tokens.
 
-**P5 — Episodes + entity retrieval.** The long tail.
+**Order after P3: P6, then P4 and P5** (`docs/decisions.md` D-0051). On a real-length chat the
+fixed cap is bigger than the room the prompt leaves, so P4 would never see budget pressure
+before ST trims the prompt.
 
-**P6 — A budget worked out from the chat.** Until P6, the block's cap is a fixed 35% of the max
-prompt (`docs/decisions.md` D-0038). P6 works the cap out from the chat's own parts, so the
-block uses the room the chat actually leaves, and P4 and P5 get more space to work with. The
-prompt splits into four parts:
+**P4 — Canon + compactor.** Promote and drop under budget pressure. Fixes symptom B.
+*Built and measured* (`docs/decisions.md` D-0055 to D-0058, closed by D-0060).
 
-- **Fixed:** system prompt, card, persona and example messages. These can be counted directly,
-  and they only change when the user edits them.
-- **World Info:** a reserve that starts at a floor, with no reserve for a chat that has no
-  lorebook. It is raised only when observed lore goes past it.
-- **Raw window:** the see-saw's most messages times the measured average message length, plus
-  a buffer, with a floor it never goes below.
-- **Memory block:** whatever is left, minus a safety margin.
+*Landed:* one step before each rebuild, the memory model is asked what in the summaries about to
+be dropped became permanently true, and those one-liners sit at the block's head under
+`[Established facts]:` (D-0056). A batch is stored per-message on `extra.cairn.canon` — store v3
+— so branches and swipes roll back with no code, and no edit unmakes a fact (D-0055). A pass is
+due under budget pressure, once per cycle, derived and never stored, and fails to nothing
+(D-0057). Canon's room is `min(20% of the cap, cap − 2 × stepTokens)`, the second term a guard
+against recoupling the see-saw. Admission is frozen to the cap in force at the last rebuild
+(D-0059). Merge is not built: the budgeter already drops, and the originals stay on their
+messages, so nothing is destroyed.
 
-If a check shows the next turn would overflow, Cairn pauses and works the budget out again.
+*Measured* (D-0060): the mechanics hold — one pass per cycle, the evict-set matching what the
+rebuild drops, no failures, a clean v3 migration — but the run found the chat **starved**, with
+the cap on its 10% floor, canon's room squeezed from 613 tokens to 72 by the guard, and
+`sceneCap − floor` clearing `stepTokens` by six. The regime P4's own table predicted never
+arrived. **P5 inherits that, not canon's fill rate.**
+
+**P5 — Strong canon, reliably, from a modest model** (`docs/decisions.md` D-0065, redefining
+this phase). Canon carries roughly **20× the story per token** that a scene summary does, which
+makes it the highest-value content in the prompt and the thing worth spending on. P4 proved the
+plumbing and D-0062 proved the selection is wrong: promotion keyed to eviction pressure only
+ever reads the newest material about to be dropped, and never sees what left the prompt before
+Cairn was watching. D-0064 says why that is structural — description and filler are most of the
+volume, so any recency window is almost entirely them.
+
+So P5's question is **how to select and compress what matters without a model that can ingest
+the whole story**. Episodes and the entity index are candidate mechanisms, not the goal; both
+answer capacity, and capacity is not the binding constraint.
+
+*Planned* (`docs/p5-plan.md`, D-0066 to D-0071). Two halves that pay for each other.
+
+**Reclaim.** The prompt spends 41.7% on nineteen raw messages and 0.3% on the whole story's
+canon, measured. Three levers move that and all three are ST settings that ship off: example
+dialogue is dropped for good once summaries stand in for messages (`power_user.strip_examples`,
+latched on a derived trigger); the lorebook is capped (`world_info_budget_cap`) and
+reprioritised only at a rebuild, staying add-only between; and the raw window narrows to
+`RAW_WINDOW` / `STEP` 8, a window of 8 to 15 messages. Together the block goes 2,440 → ~7,953
+and canon's room goes **72 → ~1,591, up 22×** — so the starvation question (D-0060) is answered
+by configuration, and `CANON_FRACTION` becomes a real number for the first time.
+
+**Derive.** Every summary carries a compact index record (tier 2, §5). Canon is a forced-budget
+pick over the whole index — ~3,200 tokens, one call — so the model ingests the *index* rather
+than the story, the kind is a sort key rather than a gate, and the eviction trigger is deleted
+outright. Canon becomes a fixed number of derived slots, which makes a wrong fact removable.
+
+**Selection is fixed first, and the budget priority is re-derived after** — reordering the
+sacrifice while canon is still bad would protect the bad canon invisibly (D-0065). The window
+narrows to 8/8 rather than 6/6 precisely so the cap lands just *under* D-0038's 35% share and
+that re-derivation stays out of this phase.
+
+**P6 — A budget worked out from the chat.** *Built and measured* (`docs/decisions.md` D-0052,
+closed by D-0054). The block's cap is the smaller of
+D-0038's fixed 35% of the max prompt and the room the rest of the prompt leaves, never below
+10%. Each reserve is worked out from the chat and the settings — no watching the prompt, so
+neither the lore floor nor the pause first sketched here is needed — and each is an upper
+bound:
+
+- **Card:** the card fields that reach the story string, plus the system prompt ST would use.
+  Counted directly; they change only when the user edits them.
+- **World Info:** ST's own budget (`world_info_budget` of the max prompt, capped), or every
+  enabled entry in the books ST scans if they come to less. No lorebook, no reserve.
+- **Raw window:** the heaviest `RAW_WINDOW + STEP − 1` consecutive visible messages the chat
+  has had — the widest the window ever gets, with no guess about message length.
+- **World state:** its schema bound, 0 while it is off or a WTracker is loaded.
+- **Margin:** 5% of the max prompt, the same line `prompt_near_limit` watches.
 
 **How this differs from what D-0033 removed** (D-0028, D-0030 to D-0032). Those budgets were
 measured again every turn and fed the plan straight away. Every turn had a different cap, each
-piece had its own cold start, and the patches piled up. In P6, each reserve changes only at a
-discrete event, when a ceiling is crossed. Each change is at most one rebuild, and in between,
-the cap holds still. Raising the cap costs nothing, because the block simply has more room to
-grow. Lowering it costs a rebuild only if the block is already bigger than the new cap. P6 has
-to show, with a trace, that the cap holds still between those events. If it can't, D-0033
-stands.
+piece had its own cold start, and the patches piled up. Here each reserve changes only at a
+discrete event — a card or book edit, a context change, a heavier run of messages. Each change
+is at most one rebuild, and in between the cap holds still. Raising the cap costs nothing,
+because the block simply has more room to grow. Lowering it costs a rebuild only if the block is
+already bigger than the new cap.
+
+**The gate is met** (D-0054). Over 36 generations on a branch of Esin the cap moved seven times,
+every move a heavier 19-message run and nothing else, and it held at 3,463 for 28 generations
+across three steps, one eviction and a reload — the same cap either side of that reload. The
+prompt peaked at 82.7% of its limit against D-0049's 95% under the fixed share, `prompt_near_limit`
+never fired, and the derived reserves came within 13–18 tokens of the real prompt at its widest.
+Held turns averaged 95.5%, unchanged; the cost lands on step turns, which under P6's smaller
+block break earlier in the prompt than P3's did.
 
 ---
 

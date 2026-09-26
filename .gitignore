@@ -5,3 +5,6 @@ coverage/
 
 # Claude Code
 .claude/
+
+# Local secrets (scripts/run-tier.mjs reads NANOGPT_API_KEY from here)
+.env

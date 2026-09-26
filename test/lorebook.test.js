@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assessOrdering, createRememberedSet, entryKey, findOrderTies } from '../src/prompt/lorebook.js';
+import { assessOrdering, createRememberedSet, entryKey, findOrderTies, trimToBudget } from '../src/prompt/lorebook.js';
 
 /**
  * The shape measured on Esin (docs/decisions.md D-0022): 31 entries, 29 of them
@@ -177,5 +177,125 @@ describe('createRememberedSet', () => {
 
         expect(set.size).toBe(0);
         expect(set.entries()).toEqual([]);
+    });
+});
+
+/**
+ * The trim (docs/decisions.md D-0069). Sizes are exact so the budget boundary is
+ * a fact rather than an approximation: `sizeOf` returns the entry's declared
+ * weight, and ST's own check is `running >= budget` counting the entry being
+ * tested (world-info.js:5059-5061).
+ */
+describe('trimToBudget', () => {
+    const weighed = (uid, order, weight, extra = {}) => ({
+        world: 'A', uid, order, content: 'x'.repeat(weight), ...extra,
+    });
+    // ST joins each entry on a newline before counting it (:5059).
+    const sizeOf = async (text) => String(text).length - 1;
+
+    it('drops the lowest order first', async () => {
+        const entries = [weighed(1, 10, 100), weighed(2, 30, 100), weighed(3, 20, 100)];
+
+        const { kept, dropped } = await trimToBudget({ entries, budget: 250, sizeOf });
+
+        expect(dropped.map((e) => e.uid)).toEqual([1]);
+        expect(kept.map((e) => e.uid)).toEqual([2, 3]);
+    });
+
+    it('keeps what survives in first-activation order, not in order order', async () => {
+        // The kept list is what gets forced, and forcing order is the tiebreak ST
+        // falls back to (:5002). It must not be reshuffled by the trim.
+        const entries = [weighed(1, 10, 10), weighed(2, 30, 10), weighed(3, 20, 10)];
+
+        const { kept } = await trimToBudget({ entries, budget: 1000, sizeOf });
+
+        expect(kept.map((e) => e.uid)).toEqual([1, 2, 3]);
+    });
+
+    it('takes everything after the entry that overflowed, as ST does', async () => {
+        // :5059-5061 — the content is added to the running count *before* the
+        // test, so a pass that overflows can never fit anything smaller later.
+        const entries = [weighed(1, 30, 100), weighed(2, 20, 500), weighed(3, 10, 1)];
+
+        const { kept } = await trimToBudget({ entries, budget: 300, sizeOf });
+
+        expect(kept.map((e) => e.uid)).toEqual([1]);
+    });
+
+    it('keeps an ignoreBudget entry however heavy it is, and does not charge for it', async () => {
+        // :5061 and :5669 — it is added on top of the budget, not out of it.
+        const entries = [
+            weighed(1, 5, 10_000, { ignoreBudget: true }),
+            weighed(2, 30, 100),
+            weighed(3, 20, 100),
+        ];
+
+        const { kept, dropped } = await trimToBudget({ entries, budget: 250, sizeOf });
+
+        expect(dropped).toEqual([]);
+        expect(kept.map((e) => e.uid)).toEqual([1, 2, 3]);
+    });
+
+    it('is a no-op when the set is already under the budget', async () => {
+        const entries = [weighed(1, 10, 100), weighed(2, 20, 100)];
+
+        const { kept, dropped, tokens } = await trimToBudget({ entries, budget: 10_000, sizeOf });
+
+        expect(dropped).toEqual([]);
+        expect(kept).toHaveLength(2);
+        expect(tokens).toBe(200);
+    });
+
+    it('trims nothing rather than everything when the budget is unusable', async () => {
+        // CLAUDE.md §4.17: a missing number degrades to "leave the lore alone".
+        const entries = [weighed(1, 10, 100)];
+
+        for (const budget of [0, -1, NaN, undefined, null]) {
+            const { kept } = await trimToBudget({ entries, budget, sizeOf });
+            expect(kept).toHaveLength(1);
+        }
+    });
+
+    it('reports what the kept set weighs, not what the overflowing one did', async () => {
+        const entries = [weighed(1, 30, 100), weighed(2, 20, 100), weighed(3, 10, 900)];
+
+        const { tokens } = await trimToBudget({ entries, budget: 500, sizeOf });
+
+        expect(tokens).toBe(200);
+    });
+
+    it('is empty-safe', async () => {
+        await expect(trimToBudget({ entries: [], budget: 100, sizeOf }))
+            .resolves.toMatchObject({ kept: [], dropped: [] });
+        await expect(trimToBudget({ entries: undefined, budget: 100, sizeOf }))
+            .resolves.toMatchObject({ kept: [], dropped: [] });
+    });
+});
+
+describe('the held set, trimmed', () => {
+    const weighed = (uid, order, weight) => ({ world: 'A', uid, order, content: 'x'.repeat(weight) });
+    const sizeOf = async (text) => String(text).length - 1;
+
+    it('stops holding what it dropped', async () => {
+        const set = createRememberedSet();
+        set.observe([weighed(1, 10, 100), weighed(2, 30, 100), weighed(3, 20, 100)]);
+
+        const result = await set.trim({ budget: 250, sizeOf });
+
+        expect(result).toMatchObject({ dropped: 1, kept: 2 });
+        expect(set.has('A.1')).toBe(false);
+        expect(set.entries().map((e) => e.uid)).toEqual([2, 3]);
+    });
+
+    it('re-holds an entry it dropped if the scan activates it again', async () => {
+        // The trim is not a blocklist. D-0023's add-only rule still governs: what
+        // the book says is relevant comes back in, and waits for the next rebuild.
+        const set = createRememberedSet();
+        set.observe([weighed(1, 10, 100), weighed(2, 30, 100), weighed(3, 20, 100)]);
+        await set.trim({ budget: 250, sizeOf });
+
+        set.observe([weighed(1, 10, 100)]);
+
+        expect(set.has('A.1')).toBe(true);
     });
 });

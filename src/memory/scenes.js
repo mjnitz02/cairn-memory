@@ -36,6 +36,8 @@ export const QVINK_DEFAULTS = Object.freeze({
     excludeAfterThreshold: true,
     /** its index.js:116 */
     autoSummarize: true,
+    /** its index.js:160 */
+    displayMemories: true,
 });
 
 /**
@@ -212,4 +214,17 @@ export function qvinkSummarising(context, { key = QVINK_KEY } = {}) {
     if (!qvinkRunning(context)) return false;
     const settings = context.extensionSettings?.[key];
     return Boolean(settings?.auto_summarize ?? QVINK_DEFAULTS.autoSummarize);
+}
+
+/**
+ * Whether qvink draws its own summaries under messages — its `display_memories`
+ * (its index.js:160, :1460), read the way `qvinkSummarising` reads its switch.
+ * Cairn shows qvink's summaries only when qvink doesn't, so none shows twice.
+ *
+ * @param {object} context SillyTavern.getContext()
+ */
+export function qvinkDisplaying(context, { key = QVINK_KEY } = {}) {
+    if (!qvinkRunning(context)) return false;
+    const settings = context.extensionSettings?.[key];
+    return Boolean(settings?.display_memories ?? QVINK_DEFAULTS.displayMemories);
 }

@@ -9,10 +9,160 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ## [Unreleased]
 
+### Changed
+
+- **The inspector log is one file per chat, and it keeps growing.** Each chat
+  writes to its own `cairn-<chat>-<id>.jsonl` and every session adds to it, so a
+  chat played over several evenings reads as one trail. It used to be a single file
+  that was rewritten from scratch whenever you switched chats. Every line now says
+  which chat and which session wrote it.
+- **A memory model that writes a little long no longer loses the line.** Index
+  records and canon facts used to be thrown away if they ran past the length the
+  prompt asks for, which cost some models half their index. Now anything up to half
+  again that length is kept as written, and anything longer is cut at a word.
+- **Canon is picked without the index's labels.** Lower-tier models treated a
+  record's kind as a rule even when told it was a hint, and passed over the facts
+  it had labelled as small. The pick now reads the records without it.
+
+- **Canon is now chosen from the whole story, not from what is about to be
+  forgotten.** Cairn used to ask, just before old summaries were dropped, whether
+  any of them said something permanent — which meant it only ever saw the handful
+  of scenes on their way out, and most of those are scenery. It now reads the
+  compact record of *every* summary in the chat at once and asks for exactly N
+  facts: the few the rest of the story cannot be understood without. Choosing a
+  fixed number is what stops a smaller model calling everything important.
+- **A canon fact is no longer permanent.** Each fact records which summaries it
+  came from, so re-summarising a message, editing it, or branching away removes the
+  facts that rested on it, and the next pick fills the slots again. Facts you have
+  already accumulated keep working and simply cannot be removed that way.
+- **New setting: Canon lines** (default 10). How many facts to keep at the head of
+  the block. The spine of a story does not grow as the story does, so a long chat
+  wants about the same number as a short one.
+
 ### Added
 
-- Cairn writes its own summaries. After each reply it summarises the messages
-  waiting for one, one request at a time, through the **Memory connection**
+- **The canon is shown as text in the panel.** What the prompt carries, what the
+  cap left out, and a newer pick waiting for the next rebuild.
+- **The budget is in the settings.** The memory block's share of the prompt,
+  canon's share of the block, the one-line summaries' share, how many recent
+  messages stay in full, and how many build up before they are summarised. The
+  defaults are the numbers Cairn used before.
+- **Every memory prompt is editable.** The index, canon and world-state prompts
+  join the summary prompt, each with **Reset to default**, and each falls back to
+  its default if an edit loses the placeholder it needs.
+
+- **The panel now shows the index and the two fidelities.** How many summaries have a
+  compact record and what kinds they were read as; how much of the block is held in
+  full against shortened, and how many were shortened this turn; how many canon slots
+  the pick filled; and whether example dialogue has been dropped yet. Anything that has
+  not happened yet shows nothing at all, so a chat that has never indexed looks exactly
+  as it did.
+
+- **The memory block now holds two fidelities, so old scenes fade instead of
+  vanishing.** A fixed part of the block is kept for one-sentence versions of older
+  summaries: when a summary no longer fits in full it is shortened rather than
+  dropped, and only when the compact tail is also full does anything leave the block
+  at all. On the chat this was measured against it roughly doubles how much of the
+  story the block carries — about 86 summaries where it held 51 — for the same
+  tokens. The short version comes from the compact record Cairn writes beside each
+  summary, so the longer memory costs no extra call to your memory model. Until
+  those records exist, full summaries keep the whole block, and a summary with no
+  record behind it is dropped exactly as it was before.
+- **Cairn reads each summary into a compact record.** One small record per summary,
+  written on the same message, holding who it was about, what happened, what
+  lastingly changed, why, anything the summary says was already true, and the
+  one-sentence version the block uses. It rides the same queue as summaries, in
+  batches, after them, and a failed batch changes nothing at all. These records are
+  what the next release derives long-term canon from.
+
+- **Lorebook cap.** A new setting, in tokens, for the most of the prompt your
+  lorebook may take. SillyTavern has always had this cap and ships it at 0 — no
+  cap — so only its 25% budget binds, and on a large book that is more than the
+  character card costs and more than the whole memory block gets. Cairn defaults
+  it to **3,500** and hands the difference to memory. Set it to 0 to leave
+  SillyTavern's budget exactly as it was. It is SillyTavern's own setting, so it
+  applies to every chat and is saved with the rest of your settings — that is why
+  it is a number you can see and change rather than something Cairn decides.
+
+### Changed
+
+- **Your stored memory moves to version 4.** Older chats are read and carried
+  forward exactly as they were — nothing is re-summarised and nothing is lost —
+  and a chat written by a newer Cairn than yours is left alone rather than
+  overwritten. The new version holds one compact record per summary. A record is
+  tied to the summary it was read from, so re-summarising a message or editing it
+  clears the record too, and it is written again from the new summary.
+- **Example dialogue is dropped once summaries stand in for messages.** A card's
+  example messages say how a character *would* speak in a situation that never
+  happened, and they do not move as the character develops — thirty turns of
+  someone growing into confidence are contradicted by examples that still show
+  them meek. Once any message behind the raw window carries a summary, the real
+  messages say it better, so Cairn switches SillyTavern's own **Strip Examples**
+  behaviour on and the card's examples leave the prompt for good. On the run's
+  card that is about 2,176 tokens, 49% of the card, handed back to memory. It
+  latches: it happens once per chat, never flips back while you play forward, and
+  a branch taken before the first summary correctly gets its examples again.
+  **Your saved setting is not changed** — the switch lasts for the session, so a
+  brand-new chat still opens with its examples, which is the one place they earn
+  their tokens. SillyTavern's own dropdown still shows what you chose; Cairn's
+  inspector says when it is stripping.
+- **The raw window is narrower: 8 messages behind the threshold, advancing in
+  8s.** It was 10 and 10. The window swings between 8 and 15 messages instead of
+  10 and 19, which is the six-to-ten-message lag that reads correctly in play,
+  and it hands the memory block about 1,855 tokens it was reserving to carry
+  prose the summaries already carry.
+- **The held World Info set is re-checked against SillyTavern's lorebook budget,
+  and only on a rebuild turn.** Cairn holds every lorebook entry that has ever
+  fired so a missed keyword scan cannot make the block vanish, which means the
+  set only ever grows. Once it outgrows the budget SillyTavern drops the tail
+  itself, and it picks where the tail starts from a count taken mid-scan — so the
+  entry on the boundary moves turn to turn and the prompt below it is rewritten
+  each time. Cairn now trims the held set to the budget itself, lowest priority
+  first, on the turn the memory block is being rebuilt anyway. Between rebuilds
+  nothing is ever dropped, so a keyword miss still cannot evict an entry, and an
+  entry that was trimmed comes straight back if the lorebook activates it again.
+  Entries set to ignore the budget are never trimmed.
+
+## [0.10.0] — 2026-09-18
+
+### Added
+
+- **Keep canon.** Before the oldest summaries are dropped from the prompt to make
+  room, Cairn asks the memory model which of them said something permanent — a
+  death, a kinship, a promise made, a place learned, something broken or given —
+  and keeps those one-liners under **Established facts** at the top of the memory
+  block. It runs one see-saw step before the rebuild that would drop them, so the
+  facts and the rebuild change the block together and cost one break instead of
+  two, and it is the last of the three memory calls: the world state and every
+  waiting summary come first. Each batch of facts is stored on the newest summary
+  it read, so branches and swipes carry it correctly, and each is shown in the chat
+  under that message. Canon takes at most a fifth of the memory block, and always
+  less than that if the summaries would otherwise be left with under two steps of
+  room. That share is settled when the block is rebuilt and held until the next
+  rebuild, so the facts at the top of the block never move on an ordinary turn.
+  A chat with no canon yet has exactly the memory block it had before.
+  **A fact kept this way cannot be removed**, so the prompt errs towards keeping
+  fewer, and a fact longer than 160 characters is thrown away rather than shortened.
+  On by default, and inert until a memory connection profile is chosen.
+- New log fields: `memory_canon_facts`, `memory_canon_admitted`,
+  `memory_canon_tokens`, `memory_canon_cap`, `memory_canon_limited_by`,
+  `memory_canon_full`, `memory_canon_spilled`, `memory_canon_through`,
+  `memory_canon_cap_applied`, `memory_scene_cap`, `memory_step_tokens`, and the
+  `compaction_*` group for the pass queue.
+- The inspector gains a **Canon** line in the memory block section, a **Scene
+  budget** line saying what the summaries were fitted to, and a **Canon** section
+  under the summaries with the pass tally: facts promoted, facts canon already
+  held, and facts the parser refused.
+
+### Changed
+
+- **Stored data is now version 3.** A canon batch is written to
+  `message.extra.cairn.canon` alongside the summary and the world state. Chats
+  written by an earlier version are read unchanged and upgraded by the next write —
+  nothing is lost and nothing needs converting.
+
+- Cairn writes its own summaries. After each reply, and as soon as you edit a
+  message, it summarises the messages waiting for one, one request at a time, through the **Memory connection**
   profile, and stores each summary on its message in `message.extra.cairn`. It
   starts after the newest summary your existing extension wrote, and waits while
   Qvink Memory is enabled with Auto Summarize on. A failed summary writes nothing and warns
@@ -27,11 +177,39 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 - Cairn's summaries appear under their messages, as Qvink's do. The message being
   summarised shows that a request is out, the ones behind it show they're
   waiting, and a failed summary shows why and whether it will be retried.
+- **Summarise with Cairn** in each message's actions menu writes that message's
+  summary again, replacing Cairn's or Qvink's. A failure keeps the old one. It
+  also works on the newest message and on a message Cairn gave up on.
+- Qvink's summaries appear under their messages as `Qvink:` while Qvink isn't
+  drawing its own.
+- Each message that carries a world state shows it under the message, in a
+  collapsed **World state** section.
 - The inspector has a **Summaries** section that updates as summaries are written.
   It shows what Cairn is doing or waiting on, what the open chat has cost
   (summaries, requests, failures, time, estimated tokens), and any message it gave
   up on. The memory block section says who wrote the summaries in it and whether
   a step is waiting.
+- **Cairn keeps the world state**: where the scene is, the weather, who is there,
+  and each character's hair and outfit. After each reply, and as soon as you edit a
+  message, it updates the state through the **Memory connection**, before the
+  summaries, and stores it on the newest message it read, in
+  `message.extra.cairn.state`. Each update asks for the whole record back, so a
+  field that was missed once is asked for again every turn until it is filled. A
+  field is never cleared: what the model leaves out, sends blank or writes too long
+  keeps the value it had. The characters the model lists are the ones present, so a
+  character leaves by being left out. The state goes into the prompt just above your
+  newest message. Swipes, edits, deletions and branches fall back to the previous
+  state on their own. A failed update writes nothing and warns once per run of
+  failures. Cairn does nothing with the state while WTracker or WTrackerLite is
+  loaded.
+- **Keep the world state** setting, on by default. It does nothing until a memory
+  profile is chosen.
+- The inspector has a **World state** section: what the state queue is doing, the
+  state as the last prompt carried it, its depth and size, and the open chat's
+  requests, failures, dropped fields, time and tokens.
+- Log fields `state_*`: whether a state went in and why not, its depth, size,
+  whether it changed and the kinds of change, and the state queue's gate, in
+  flight, pending, given up and running totals. The state's text is never logged.
 - Log fields `memory_source` (now `qvink`, `cairn` or `mixed`),
   `memory_cairn_scenes`, `memory_step_waiting`, `prompt_near_limit`, and
   `summary_*`: gate, in flight, pending, given up, and running totals of calls,
@@ -51,11 +229,23 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
   `unplaced` are gone. Log fields `memory_placement`,
   `memory_placement_defaulted`, `memory_fidelity`, `memory_fidelity_resolved`,
   `memory_fidelity_diverge_at` and `memory_live_chars` are gone.
-- **The memory block's cap is 35% of the max prompt**, with no setting. It
-  replaces Qvink's short-term limit, which Cairn no longer reads. With a
-  7,500-token Qvink limit on a 22,016-token prompt, the cap moves to 7,705 tokens.
-  That costs one rebuild on the first turn after updating. The log field
-  `memory_cap_type` is gone.
+- **The memory block's cap is 35% of the max prompt, or less when the rest of the
+  prompt needs the room.** It replaces Qvink's short-term limit, which Cairn no
+  longer reads, and there is still no setting. Cairn now reserves what your
+  character card, lorebook, raw history and world state can cost — each worked out
+  from the chat and your settings, never measured from a prompt that went out —
+  and the block gets what is left, down to a floor of 10% of the prompt. On a
+  chat with a large card and lorebook on a small context this is about half the
+  old cap, which is the space SillyTavern was already taking from the card's
+  example messages and the oldest raw messages without saying so. The cap changes
+  only when one of those inputs does; a fall costs one rebuild at most and a rise
+  costs nothing. The first turn after updating rebuilds the block and may drop a
+  lot of summaries. The log field `memory_cap_type` is gone.
+- The inspector's memory section says where the cap came from and what each
+  reserve costs, and warns when a chat is starved — its card, lorebook and history
+  leave the block less than a tenth of the prompt.
+- Log fields `budget_*`: `limited_by`, `share`, `room`, `minimum`, `margin`,
+  `card`, `lore`, `lore_bound`, `window`, `window_now` and `state`.
 - A memory step now waits for a missing summary. The block stays where it is
   instead of moving past a message with no summary, so no message leaves the
   history without a summary to replace it. This can't happen while your

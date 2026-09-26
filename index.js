@@ -6,12 +6,15 @@ import { DISPLAY_NAME, SLUG } from './src/constants.js';
 import { createDiskLog } from './src/util/disk-log.js';
 import { createAssembler } from './src/prompt/assembler.js';
 import { createInjector } from './src/prompt/injector.js';
+import { createLoreCap } from './src/prompt/lore-cap.js';
 import { createObserver } from './src/prompt/observer.js';
+import { createStatePlacement } from './src/prompt/state-placement.js';
 import { createSummarizer } from './src/pipeline/summarizer.js';
 import { migrateSettings } from './src/store/schema.js';
 import { createChatMarks } from './src/ui/chat-marks.js';
 import { createInspector } from './src/ui/inspector.js';
 import { renderSettingsPanel } from './src/ui/panel.js';
+import { installResummariseButton } from './src/ui/resummarise-button.js';
 import { error, info, setDebugEnabled } from './src/util/log.js';
 
 (async function init() {
@@ -30,31 +33,47 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
         const diskLog = createDiskLog();
         diskLog.setEnabled(settings.logToDisk);
 
+        // The lorebook's ceiling, which is ST's own setting and ships at no cap
+        // (src/prompt/lore-cap.js, docs/decisions.md D-0069). Applied before the
+        // first plan, so the reserve and the holder read the same number.
+        const loreCap = createLoreCap();
+        await loreCap.apply(settings.loreCap);
+
         // Plans the memory block every turn. Whether the plan is written is the
         // handover gate's call (src/prompt/handover.js, docs/decisions.md D-0027).
-        const assembler = createAssembler(getContext, { own: settings.ownMemoryBlock });
+        // `settings` is read for the world state's reserve, which is 0 while the
+        // state is off (src/prompt/reserves.js).
+        const assembler = createAssembler(getContext, {
+            own: settings.ownMemoryBlock,
+            settings: () => settings,
+        });
 
         // ST resolves the manifest's `generate_interceptor` off globalThis
         // (extensions.js:2035), so the name here must match manifest.json. It is
-        // the only hook still ahead of prompt assembly, so both writes happen in
-        // it: the World Info hold and the memory block.
-        const injector = createInjector(getContext, { memory: assembler });
+        // the only hook still ahead of prompt assembly, so every write happens in
+        // it: the World Info hold, the memory block and the world state.
+        const statePlacement = createStatePlacement(getContext, { settings: () => settings });
+        const injector = createInjector(getContext, { memory: assembler, state: statePlacement });
         injector.setHoldEnabled(settings.holdWorldInfo);
         globalThis.cairn_intercept = injector.intercept;
 
-        // Writes Cairn's own summaries after each reply. It gates itself on a memory
-        // profile and a quiet qvink (src/pipeline/summarizer.js), so only `enabled`
-        // starts and stops it here.
+        // Writes Cairn's own summaries and world state after each reply. Each kind gates
+        // itself (src/pipeline/gates.js), so only `enabled` starts and stops it here.
         let inspector;
         const summarizer = createSummarizer(getContext, {
             settings: () => settings,
+            // The budget a compaction pass needs lives in the assembler, so the pass it
+            // works out each turn comes through rather than being derived twice
+            // (docs/p4-plan.md decision 6).
+            memory: () => assembler.pendingPass,
             onUpdate: () => {
                 inspector?.summaries(summarizer.status);
                 marks.refresh();
             },
         });
-        // The summaries under their messages, and the only in-chat sign one is being written.
-        const marks = createChatMarks(getContext, { status: () => summarizer.status });
+        // The summaries and states under their messages, and the only in-chat sign one is being written.
+        const marks = createChatMarks(getContext, { status: () => summarizer.status, settings: () => settings });
+        installResummariseButton(summarizer);
 
         const observer = createObserver(getContext, {
             onSnapshot: (snapshot) => {
@@ -62,10 +81,12 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
                 diskLog.append(snapshot, getContext);
             },
             holding: () => (settings.holdWorldInfo ? injector.remembered.size : null),
+            trimmed: () => injector.lastTrim,
             // The plan the interceptor already acted on. Nothing measured here
             // flows back into the next plan (docs/decisions.md D-0033).
             memory: () => assembler.latest,
             summaries: () => summarizer.status,
+            state: () => statePlacement.latest,
         });
 
         inspector = createInspector(await renderSettingsPanel(context, {
@@ -84,10 +105,18 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
             },
             onLogToDiskChange: (enabled) => diskLog.setEnabled(enabled),
             onHoldWorldInfoChange: (enabled) => injector.setHoldEnabled(enabled),
+            onLoreCapChange: (cap) => loreCap.apply(cap),
             onOwnMemoryBlockChange: (enabled) => assembler.setOwnEnabled(enabled),
+            // Off takes effect at the next generation; on may have a state to bring up to date.
+            onWorldStateChange: () => {
+                summarizer.drain();
+                marks.refresh();
+            },
+            // Off takes effect at the next generation; on waits for the next pressure.
+            onKeepCanonChange: () => summarizer.drain(),
             // A newly chosen profile may have a backlog waiting for it.
             onMemoryProfileChange: () => summarizer.drain(),
-        }));
+        }), { canon: () => assembler.canonView });
         inspector.render(observer.latest);
         inspector.summaries(summarizer.status);
 
@@ -105,6 +134,7 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
             observer.resetBaseline();
             injector.reset();
             assembler.reset();
+            statePlacement.reset();
             diskLog.reset();
             inspector.render(null);
             inspector.summaries(summarizer.status);

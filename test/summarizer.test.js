@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MAX_ATTEMPTS, assessSummarizing, createSummarizer } from '../src/pipeline/summarizer.js';
+import { MAX_ATTEMPTS, createSummarizer } from '../src/pipeline/summarizer.js';
 import { DEFAULT_SUMMARY_PROMPT, SUMMARY_MAX_TOKENS, perMessage } from '../src/memory/scene-strategy.js';
 import { QVINK_EXTENSION, pendingScenes } from '../src/memory/scenes.js';
 import { readScene } from '../src/store/chat-store.js';
+import { STORE_VERSION } from '../src/store/schema.js';
 import { hashString } from '../src/util/hash.js';
 import { resetToasts } from '../src/util/log.js';
 import { badOutputs, createRequestService, deferred } from './mocks/llm.js';
@@ -35,9 +36,16 @@ function harness({ responses = [], settings = {}, chat, service, context: contex
         ...contextOptions,
     });
     const summarizer = createSummarizer(() => context, {
-        settings: () => ({ memoryProfileId: MEMORY.id, ...settings }),
+        // The state tier has its own tests (test/state-queue.test.js); these are the summaries'.
+        settings: () => ({ memoryProfileId: MEMORY.id, worldState: false, ...settings }),
         clock,
         onUpdate,
+        // The block is qvink's in these tests, which shuts the index gate the way
+        // `worldState: false` shuts the state's: a record nothing would read is not
+        // written (pipeline/gates.js, docs/decisions.md D-0075). The index batch has its
+        // own tests in test/index-queue.test.js.
+        memory: () => ({ writing: false }),
+
         ...(strategy ? { strategy } : {}),
     });
     return { context, service: requests, summarizer };
@@ -63,66 +71,6 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
-describe('whether Cairn may summarise', () => {
-    const context = (overrides = {}) => createContext({ profiles: [MEMORY, ROLEPLAY], requestService: createRequestService(), ...overrides });
-
-    it('is ready with a memory profile, a single-character chat and a quiet qvink', () => {
-        expect(assessSummarizing(context(), { memoryProfileId: MEMORY.id })).toEqual({ ready: true, reason: 'ready', sameProfile: false });
-    });
-
-    it('never calls a model without a memory profile (D-0006)', () => {
-        expect(assessSummarizing(context(), { memoryProfileId: '' }).reason).toBe('no-profile');
-        expect(assessSummarizing(context(), {}).reason).toBe('no-profile');
-    });
-
-    it('stays out of group chats and away from no chat at all (DESIGN.md §3.5)', () => {
-        const group = context();
-        group.groupId = 'a-group';
-        const none = context();
-        none.chatId = undefined;
-
-        expect(assessSummarizing(group, { memoryProfileId: MEMORY.id }).reason).toBe('group-chat');
-        expect(assessSummarizing(none, { memoryProfileId: MEMORY.id }).reason).toBe('no-chat');
-    });
-
-    it('needs Connection Manager, which sendRequest itself refuses without (extensions/shared.js:427)', () => {
-        const disabled = context();
-        disabled.extensionSettings.disabledExtensions.push('connection-manager');
-        const absent = context({ requestService: null });
-
-        expect(assessSummarizing(disabled, { memoryProfileId: MEMORY.id }).reason).toBe('no-connection-manager');
-        expect(assessSummarizing(absent, { memoryProfileId: MEMORY.id }).reason).toBe('no-connection-manager');
-    });
-
-    it('notices a memory profile that has since been deleted', () => {
-        expect(assessSummarizing(context(), { memoryProfileId: 'gone' }).reason).toBe('profile-missing');
-    });
-
-    it('waits while qvink is still summarising the same messages', () => {
-        const busy = context({ extensions: [QVINK_EXTENSION] });
-        busy.extensionSettings.qvink_memory = { auto_summarize: true };
-
-        expect(assessSummarizing(busy, { memoryProfileId: MEMORY.id }).reason).toBe('qvink-summarising');
-    });
-
-    it('does not wait on a disabled or uninstalled qvink\'s leftover Auto Summarize', () => {
-        // ST keeps an extension's settings after it is disabled or removed.
-        const disabled = context({ extensions: [QVINK_EXTENSION] });
-        disabled.extensionSettings.disabledExtensions.push(QVINK_EXTENSION);
-        const uninstalled = context();
-        for (const leftover of [disabled, uninstalled]) leftover.extensionSettings.qvink_memory = { auto_summarize: true };
-
-        expect(assessSummarizing(disabled, { memoryProfileId: MEMORY.id }).reason).toBe('ready');
-        expect(assessSummarizing(uninstalled, { memoryProfileId: MEMORY.id }).reason).toBe('ready');
-    });
-
-    it('flags a memory profile that is the chat\'s own', () => {
-        const same = context({ selectedProfile: MEMORY.id });
-
-        expect(assessSummarizing(same, { memoryProfileId: MEMORY.id })).toEqual({ ready: true, reason: 'ready', sameProfile: true });
-    });
-});
-
 describe('summarising the queue', () => {
     it('writes one scene per waiting message, oldest first, and saves the chat', async () => {
         const { context, service, summarizer } = harness({ responses: [summary(10), summary(11), summary(12)] });
@@ -132,7 +80,7 @@ describe('summarising the queue', () => {
 
         expect(written(context.chat)).toEqual([10, 11, 12]);
         expect(context.chat[11].extra.cairn).toEqual({
-            v: 1,
+            v: STORE_VERSION,
             scene: {
                 text: summary(11),
                 hash: hashString(context.chat[11].mes),

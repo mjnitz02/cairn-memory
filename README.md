@@ -72,17 +72,24 @@ message and read the inspector.
 
 Point **Memory connection** at a profile that is *not* your roleplay model.
 Without one, Cairn never calls a model. Each summary appears under its message,
-and Cairn never blocks sending, so you can keep chatting while it works.
+with a collapsed **World state** below it, and Cairn never blocks sending, so you
+can keep chatting while it works. To redo a summary, choose **Summarise with
+Cairn** (the stacked-stones icon) in the message's actions menu.
 
 | Setting | What it does |
 |---|---|
 | Enabled | Turns Cairn off without uninstalling. Existing memory is kept. |
-| Memory connection | The profile Cairn uses to write summaries. Must not be your roleplay model. |
-| Summary prompt | The instructions the memory model gets for each message. `{{message}}` is the message, and `{{history}}` is the summaries before it. **Reset to default** restores the built-in prompt. |
-| Show inspector | Shows what was injected, from where, and how stable the prompt is. |
-| Write inspector log to disk | Appends each generation to `user/files/cairn-inspector.jsonl`. |
+| Memory connection | The profile Cairn uses to write summaries, the index, canon and the world state. Must not be your roleplay model. |
+| Show inspector | Shows what was injected, from where, how stable the prompt is, and the canon in the prompt. |
+| Write inspector log to disk | Appends each generation to one file per chat, `user/files/cairn-<chat>-<id>.jsonl`, across sessions. |
 | Hold World Info entries | Keeps a lorebook entry in the prompt once it has activated, instead of letting it drop out when the keyword scan misses it. On by default; off restores stock SillyTavern behaviour. |
+| Lorebook cap | The most tokens your lorebook may take. Written into SillyTavern's own setting, so it applies to every chat. **0** leaves SillyTavern's budget alone. |
 | Write the memory block | Lets Cairn inject the summaries and keep the messages they cover out of the history. On by default, but Cairn waits until your existing memory extension is silent — see below. |
+| Keep the world state | Tracks where the scene is, the weather, who is there, and each character's hair and outfit, and puts it just above your newest message. On by default. Waits while WTracker or WTrackerLite is loaded. |
+| Keep canon | Picks the few facts the story cannot be understood without from the whole index, and keeps them at the top of the memory block. Picked again as the story grows. |
+| Canon lines | How many canon facts to pick. |
+| **Budget** | The memory block's share of the prompt, canon's share of the block, the one-line summaries' share of what is left, how many recent messages stay in full, and how many build up before they are summarised. The defaults work; changing the last two rebuilds the block once. |
+| **Memory prompts** | The summary, index, canon and world-state prompts. Each has **Reset to default**, and falls back to its default if an edit loses the placeholder it needs. |
 | Debug logging | Verbose browser-console output. Only needed for bug reports. |
 
 ### Handing over from Qvink Memory

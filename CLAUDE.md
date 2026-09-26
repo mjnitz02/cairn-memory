@@ -35,8 +35,11 @@ edit — do not quietly work around it.**
 
 ## 2. SillyTavern first
 
-5. Before inventing a mechanism, check whether ST already has it. `world_info_position.outlet`
-   is the cautionary tale — it existed the whole time.
+5. Before inventing a mechanism, check whether ST already has the **lever** — and if it does,
+   the work is the *timing*, not the mechanism (`docs/decisions.md` D-0066).
+   `world_info_position.outlet` was the cautionary tale; `strip_examples`,
+   `world_info_budget_cap` and ordered World Info trimming make it four. ST ships these off,
+   static, or needing per-card configuration nobody does. That gap is the product.
 6. **Every claim about ST internals cites `file:line` from the pinned checkout**, in the code
    comment or the doc that relies on it. An uncited claim about an ST API is an unverified
    claim. DESIGN.md §7 is the format to follow.
@@ -64,8 +67,12 @@ edit — do not quietly work around it.**
     guess. So: read the real chats locally, confirm the shape against them, then write the
     fixture fresh. The corpus lives outside the repo (`~/workspaces/cairn-corpus`) and a fixture
     derived from it says in a comment which real shape it mirrors.
-14. Nothing writes to the corpus. Before installing anything that touches `message.extra`,
-    check the backup is current — those chats are not reproducible.
+14. Nothing in the corpus is modified or deleted — not a chat, not a card, not a run log; those
+    chats are not reproducible. Before installing anything that touches `message.extra`, check
+    the backup is current. A calibration pass *may add* derived files under a directory of their
+    own (`scripts/calibrate-tier.mjs` writes `~/workspaces/cairn-corpus/p5-stage0`, reading the
+    chat read-only), because that is where the plan already says its output belongs and the
+    alternative is content in a public repo.
 
 ## 4. Settings and failure behaviour
 
@@ -117,6 +124,11 @@ edit — do not quietly work around it.**
 32. **Breaking = the stored data shape changed**, not the API. Any change to what we write into
     `message.extra` or `chatMetadata` bumps `store/schema.js`'s version, ships a migration, and
     adds a fixture of the *old* shape to the test suite. We never orphan someone's memory.
+    **Suspended while we are pre-release** (`docs/decisions.md` D-0077): a shape change may simply
+    invalidate what is stored, because the artefacts at risk are derived and a backfill rebuilds
+    them. Existing migrations and fixtures stay, a future store is still refused rather than
+    overwritten, and the rule applies as written again the moment Matt says a chat is one he means
+    to keep.
 
 ## 9. Automation
 

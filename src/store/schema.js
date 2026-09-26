@@ -5,13 +5,67 @@
  * migration, and gains a fixture of the old shape in the test suite. We never
  * orphan someone's accumulated memory.
  */
+import { DEFAULT_SLOTS } from '../memory/canon.js';
+import { CANON_FRACTION, CAP_FRACTION, COMPACT_FRACTION } from '../pipeline/budgeter.js';
+import { RAW_WINDOW, STEP } from '../pipeline/scheduler.js';
+import { DEFAULT_LORE_CAP } from '../prompt/lore-cap.js';
 import { error } from '../util/log.js';
 
 /** Bump on any change to the settings shape. */
 export const SETTINGS_VERSION = 1;
 
 /** Bump on any change to what we write into message.extra / chatMetadata. */
-export const STORE_VERSION = 1;
+export const STORE_VERSION = 4;
+
+/**
+ * `extra.cairn` migrations, keyed by the version being left. They run on read and
+ * are never written back on their own: the next write to the message stores the
+ * current shape.
+ *
+ * @type {Record<number, (store: object) => object>}
+ */
+export const STORE_MIGRATIONS = {
+    // v2 adds `state` (docs/decisions.md D-0045). A v1 store has none, so it is already a v2 one.
+    1: (store) => ({ ...store, v: 2 }),
+    // v3 adds `canon` (docs/p4-plan.md decision 1). Same shape: a v2 store has none.
+    2: (store) => ({ ...store, v: 3 }),
+    // v4 adds `index` (docs/decisions.md D-0070). A v3 store has none, and a record is
+    // re-derived from the summary it sits beside, so there is nothing to backfill here:
+    // `pendingIndex` finds a summary without one and the queue writes it.
+    3: (store) => ({ ...store, v: 4 }),
+};
+
+/**
+ * Bring a stored `extra.cairn` up to the current version. Pure; never mutates input.
+ *
+ * @param {unknown} stored
+ * @param {Record<number, (store: object) => object>} [migrations] Injected for tests.
+ * @param {number} [targetVersion]
+ * @returns {{status: 'none'|'invalid'|'future'|'ok', store: object|null}}
+ */
+export function migrateStore(stored, migrations = STORE_MIGRATIONS, targetVersion = STORE_VERSION) {
+    if (stored === undefined) return { status: 'none', store: null };
+    if (typeof stored !== 'object' || stored === null || Array.isArray(stored)
+        || !Number.isInteger(stored.v) || stored.v < 1) {
+        return { status: 'invalid', store: null };
+    }
+    // A newer Cairn's shape is not ours to interpret, and not ours to overwrite.
+    if (stored.v > targetVersion) return { status: 'future', store: null };
+
+    let store = stored;
+    while (store.v < targetVersion) {
+        const migrate = migrations[store.v];
+        // Unlike settings there is nothing to merge a gap into: an unreadable store
+        // costs one message its summary or state, which the queue rewrites.
+        if (!migrate) return { status: 'invalid', store: null };
+        const next = migrate(store);
+        if (!(next.v > store.v)) {
+            throw new Error(`Store migration from v${store.v} did not advance the version`);
+        }
+        store = next;
+    }
+    return { status: 'ok', store };
+}
 
 /**
  * Defaults must produce a working, inert extension: enabled but doing nothing
@@ -27,6 +81,14 @@ export const DEFAULT_SETTINGS = Object.freeze({
      * gets the default's improvements (docs/decisions.md D-0039).
      */
     summaryPrompt: '',
+    /**
+     * The index, canon and world-state prompts, on the same terms as `summaryPrompt`:
+     * empty means the built-in default, and an edit missing the macro the call needs
+     * falls back to it (docs/decisions.md D-0085).
+     */
+    indexPrompt: '',
+    canonPrompt: '',
+    statePrompt: '',
     /** Show the prompt inspector panel (DESIGN.md §10). */
     showInspector: true,
     /** Verbose console output. */
@@ -41,6 +103,40 @@ export const DEFAULT_SETTINGS = Object.freeze({
      * injecting, Cairn plans and measures without writing anything.
      */
     ownMemoryBlock: true,
+    /**
+     * Keep the world state and put it in the prompt (docs/decisions.md D-0044).
+     * Inert until a memory profile is chosen, and held while WTracker is loaded.
+     */
+    worldState: true,
+    /**
+     * Pick the story's spine out of the index and keep it at the head of the block
+     * (docs/decisions.md D-0071). Inert until a memory profile is chosen, and held
+     * while qvink is still writing the block.
+     */
+    keepCanon: true,
+    /**
+     * How many facts that pick fills. A count rather than a token cap: the spine does
+     * not grow with the chat, so a long chat wants the same eight to twelve lines a
+     * short one does, and leftover tokens fall back to summaries (D-0071).
+     */
+    canonSlots: DEFAULT_SLOTS,
+    /**
+     * The most tokens the lorebook may take in the prompt (docs/decisions.md D-0069).
+     * Written into ST's own `world_info_budget_cap`, which ships at 0 — no cap —
+     * so the percentage budget never binds. 0 here means the same: leave it alone.
+     */
+    loreCap: DEFAULT_LORE_CAP,
+    /**
+     * The budget's shares, as fractions (docs/decisions.md D-0085). The block's ceiling
+     * share of the prompt, canon's of the block, and the compact tail's of what canon
+     * leaves. Each is a ceiling, so what is not used falls back to summaries.
+     */
+    memoryFraction: CAP_FRACTION,
+    canonFraction: CANON_FRACTION,
+    compactFraction: COMPACT_FRACTION,
+    /** Messages kept raw behind the summaries, and how far the see-saw steps (D-0068). */
+    rawWindow: RAW_WINDOW,
+    step: STEP,
 });
 
 /**

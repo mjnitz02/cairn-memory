@@ -1,7 +1,17 @@
 /**
  * The write side: everything Cairn puts into someone else's prompt goes through
- * here (DESIGN.md §11). Two writes, both in the generate interceptor: the World
- * Info holder (P1 step 1) and the memory block (P1 step 3).
+ * here (DESIGN.md §11). Three writes, all in the generate interceptor: the World
+ * Info holder (P1 step 1), the memory block (P1 step 3) and the world state (P3).
+ *
+ * **The memory block is planned before the hold runs, though it is written after
+ * it.** The holder may only re-evaluate what it holds on a rebuild turn (D-0067),
+ * and "is this a rebuild turn" is the assembler's own arithmetic — it does not
+ * exist until the plan does. Trimming on last turn's plan would instead land the
+ * lore change one turn after the rebuild and cost a second prefix break, which is
+ * the thing D-0067 exists to prevent. The reorder is safe because both writes
+ * complete inside the interceptor and the scan reads them afterwards
+ * (public/script.js:4564 against :4635), so their order relative to each other
+ * cannot change what activates.
  *
  * ST re-derives the activated set from a two-message keyword scan every turn.
  * When that scan happens to seed nothing the whole lore block vanishes and comes
@@ -35,6 +45,8 @@
  */
 import { SLUG } from '../constants.js';
 import { createRememberedSet } from './lorebook.js';
+import { STATE_INJECTION } from './state-placement.js';
+import { countTokens } from '../util/tokens.js';
 import { debug, toastOnce, warn } from '../util/log.js';
 
 /**
@@ -50,21 +62,26 @@ export const MEMORY_INJECTION = `${SLUG}_memory`;
  * (docs/st-api-surface.md, Hazards).
  *
  * @param {() => object} getContext Returns a fresh SillyTavern.getContext()
- * @param {{remembered?: object, memory?: {plan: () => Promise<object>}}} [options]
+ * @param {{remembered?: object, memory?: {plan: () => Promise<object>},
+ *          state?: {plan: (chat: Array<object>, step: object) => Promise<object>}}} [options]
  *        `memory` is the assembler. It is asked for a plan every turn and the
- *        plan says whether Cairn may write it (prompt/handover.js).
+ *        plan says whether Cairn may write it (prompt/handover.js). `state` is the
+ *        world state's placement (prompt/state-placement.js).
  */
-export function createInjector(getContext, { remembered = createRememberedSet(), memory = null } = {}) {
+export function createInjector(getContext, { remembered = createRememberedSet(), memory = null, state = null } = {}) {
     let running = false;
     let enabled = true;
-    /** Whether our block is parked right now, so it is cleared exactly once. */
+    /** Whether our block and our state are parked right now, so each is cleared exactly once. */
     let parked = false;
+    let stateParked = false;
     /**
      * The `extra` objects we set the ignore flag on last turn. Identity, not
      * index: it survives a branch, and it is what makes clearing our own flags
      * different from clearing everyone's.
      */
     let flagged = new Set();
+    /** This turn's lore trim, for the log. Null on every turn that is not a rebuild. */
+    let lastTrim = null;
 
     /** Add-only: learn every entry ST activated, including ones we forced. */
     function onWorldInfoActivated(entries) {
@@ -88,10 +105,10 @@ export function createInjector(getContext, { remembered = createRememberedSet(),
 
     /**
      * ST's generate interceptor — `(chat, contextSize, abort, type)`,
-     * extensions.js:2037. We read nothing from `chat` and write nothing to it:
-     * the no-clone rule (DESIGN.md §9) is satisfied by not touching it at all.
+     * extensions.js:2037. `chat` is read to place the state and never written to or
+     * copied, which is how the no-clone rule (DESIGN.md §9) is kept.
      */
-    async function intercept(_chat, _contextSize, _abort, type) {
+    async function intercept(chat, _contextSize, _abort, type) {
         // `running` is checked here and not only at registration: ST resolves the
         // interceptor off globalThis for the life of the page (extensions.js:2035),
         // so switching Cairn off has to be honoured at call time or it keeps
@@ -101,13 +118,24 @@ export function createInjector(getContext, { remembered = createRememberedSet(),
         // whose prefix we are protecting (vectors does the same, its index.js:778).
         if (!running || type === 'quiet') return;
 
-        await holdWorldInfo();
-        await applyMemory();
+        // Planned first, written second: see the note on ordering in the header.
+        const plan = await applyMemory();
+        await holdWorldInfo(plan);
+        await applyState(chat, plan);
     }
 
-    /** P1 step 1 — push the held lore back in before ST's scan reads it. */
-    async function holdWorldInfo() {
+    /**
+     * P1 step 1 — push the held lore back in before ST's scan reads it, having
+     * first re-evaluated what we are holding if this turn is a rebuild.
+     *
+     * @param {object|null} plan This turn's memory plan, for its `rebuilt` flag
+     *        and ST's own World Info budget.
+     */
+    async function holdWorldInfo(plan) {
+        lastTrim = null;
         if (!enabled || remembered.size === 0) return;
+
+        await reprioritise(plan);
 
         try {
             const { eventSource, eventTypes } = getContext();
@@ -122,6 +150,36 @@ export function createInjector(getContext, { remembered = createRememberedSet(),
     }
 
     /**
+     * Trim the held set to ST's budget, on a rebuild turn and no other
+     * (docs/decisions.md D-0069, D-0067). Between rebuilds the set is add-only,
+     * so a keyword-scan miss still cannot evict anything (D-0023).
+     *
+     * Its own degrade: a failed trim leaves the set exactly as it was and the
+     * hold still happens. Holding too much costs ST's own budget stop, which is
+     * what would have happened without Cairn at all.
+     */
+    async function reprioritise(plan) {
+        if (!plan?.report?.rebuilt) return;
+
+        const budget = plan.report.budget?.loreBudget;
+        if (!Number.isFinite(budget) || budget <= 0) return;
+
+        try {
+            const context = getContext();
+            const result = await remembered.trim({
+                budget,
+                sizeOf: (text) => countTokens(context, text),
+            });
+            lastTrim = { ...result, budget };
+            if (result.dropped) {
+                debug(`World Info: trimmed ${result.dropped} held entries to the ${budget}-token budget.`);
+            }
+        } catch (err) {
+            warn('Failed to re-evaluate the held World Info set; keeping it as it was.', err);
+        }
+    }
+
+    /**
      * P1 step 3 — the handover. Park the block and hold back the messages it
      * speaks for, or park nothing and hold back nothing.
      *
@@ -130,23 +188,52 @@ export function createInjector(getContext, { remembered = createRememberedSet(),
      * a turn's worth of staleness is a stale sentence, where clearing half of it
      * would be a prompt that says the model has not seen messages it is also not
      * being shown (CLAUDE.md §4.17).
+     *
+     * @returns {Promise<object|null>} The plan, written or not; null when there is none.
      */
     async function applyMemory() {
-        if (!memory) return;
+        if (!memory) return null;
 
         try {
             const plan = await memory.plan();
 
             if (!plan?.writing) {
-                release();
-                return;
+                releaseMemory();
+                return plan ?? null;
             }
 
             park(plan);
             blank(plan.blank);
+            return plan;
         } catch (err) {
             warn('Failed to assemble the memory block; leaving the prompt as it was.', err);
             toastOnce('Cairn could not rebuild the memory block this turn. The previous one is still in the prompt.');
+            return null;
+        }
+    }
+
+    /**
+     * P3 — the world state, just after the newest message it read. It follows the
+     * see-saw even while the handover gate leaves the block to qvink, since the state
+     * stands on its own. With no plan to read the step from, no state counts as behind
+     * it. A failure leaves last turn's state in place, as `applyMemory` does.
+     */
+    async function applyState(chat, plan) {
+        if (!state) return;
+
+        try {
+            const placed = await state.plan(chat, { summarisedThrough: plan?.report?.summarisedThrough ?? -1 });
+            if (!placed?.text) {
+                releaseState();
+                return;
+            }
+            const { position, scan, role } = placed.placement;
+            getContext().setExtensionPrompt(STATE_INJECTION, placed.text, position, placed.depth, scan, role);
+            stateParked = true;
+            debug(`World state: parked ${placed.text.length} chars at depth ${placed.depth}.`);
+        } catch (err) {
+            warn('Failed to place the world state; leaving the prompt as it was.', err);
+            toastOnce('Cairn could not place the world state this turn. The previous one is still in the prompt.');
         }
     }
 
@@ -199,8 +286,14 @@ export function createInjector(getContext, { remembered = createRememberedSet(),
         flagged = next;
     }
 
-    /** Un-write both halves: no block of ours in the prompt, no message held back. */
+    /** Un-write everything: no block or state of ours in the prompt, no message held back. */
     function release() {
+        releaseMemory();
+        releaseState();
+    }
+
+    /** Both halves of the block: no block in the prompt, no message held back. */
+    function releaseMemory() {
         try {
             if (parked) {
                 getContext().setExtensionPrompt(MEMORY_INJECTION, '');
@@ -210,6 +303,18 @@ export function createInjector(getContext, { remembered = createRememberedSet(),
             blank([]);
         } catch (err) {
             warn('Failed to release the memory block.', err);
+        }
+    }
+
+    function releaseState() {
+        try {
+            if (stateParked) {
+                getContext().setExtensionPrompt(STATE_INJECTION, '');
+                stateParked = false;
+                debug('World state: released the injection.');
+            }
+        } catch (err) {
+            warn('Failed to release the world state.', err);
         }
     }
 
@@ -250,11 +355,17 @@ export function createInjector(getContext, { remembered = createRememberedSet(),
         /** A new chat is a new set — another character's lore is not ours to hold. */
         reset() {
             remembered.clear();
+            lastTrim = null;
             release();
         },
 
         intercept,
         remembered,
+
+        /** What the last rebuild's trim did, for the observer. Null between rebuilds. */
+        get lastTrim() {
+            return lastTrim;
+        },
 
         get parked() {
             return parked;
