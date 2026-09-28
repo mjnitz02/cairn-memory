@@ -366,6 +366,9 @@ function summaryFields(status) {
         summary_tokens_in: status.tokensIn,
         summary_tokens_out: status.tokensOut,
         summary_prompt_default: status.promptDefault ?? null,
+        // The memory profile's model, and the reasoning effort Cairn asked of it (D-0086).
+        memory_model: status.model ?? null,
+        memory_reasoning: status.reasoning ?? null,
     };
 }
 

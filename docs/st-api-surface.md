@@ -135,6 +135,13 @@ literally against the cited line.
 | `ConnectionManagerRequestService` | Profile-routed summary calls | `public/scripts/st-context.js` | 294 |
 | `ConnectionManagerRequestService` | Class definition and `sendRequest` contract | `public/scripts/extensions/shared.js` | 392 |
 | `static async sendRequest` | Summary calls; takes `ChatCompletionMessage[]`, which is what `perMessage.build` returns | `public/scripts/extensions/shared.js` | 423 |
+| `...overridePayload,` | The fifth argument goes into a chat completion request as it is: Cairn's `reasoning_effort` (D-0086) | `public/scripts/extensions/shared.js` | 460 |
+| `return this.createRequestData({ ...payload, ...overridePayload });` | ...after the profile's preset, so it wins over the preset's own reasoning setting | `public/scripts/custom-request.js` | 605 |
+| `bodyParams['reasoning']['effort'] = request.body.reasoning_effort;` | OpenRouter's backend sends it as `reasoning.effort` | `src/endpoints/backends/chat-completions.js` | 2349 |
+| `return 'none';` | `none` is what ST itself sends OpenRouter for "Minimum" with thoughts hidden | `public/scripts/openai.js` | 2620 |
+| `generate_data.custom_include_body = substituteParams(settings.custom_include_body);` | A preset's include-body YAML only reaches a Custom source, so an OpenRouter profile's only reasoning lever is the effort | `public/scripts/openai.js` | 2924 |
+| `'openrouter': {` | A profile's `api` of `openrouter` resolves to the OpenRouter chat completion source | `public/scripts/slash-commands.js` | 191 |
+| `CONNECT_API_MAP,` | The map is on the context, so Cairn resolves a profile's source as ST does | `public/scripts/st-context.js` | 285 |
 | `disabledExtensions.includes('connection-manager')` | `sendRequest` refuses outright without Connection Manager, so the summarizer checks first | `public/scripts/extensions/shared.js` | 427 |
 | `throw new Error('API request failed', { cause: error });` | Every transport error, an abort included, arrives wrapped | `public/scripts/extensions/shared.js` | 490 |
 | `ExtractedData` | `{ content, reasoning }`, the non-streaming return shape | `public/scripts/custom-request.js` | 60 |

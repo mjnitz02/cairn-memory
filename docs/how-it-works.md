@@ -210,6 +210,14 @@ request carries the message and the five summaries before it. A reply that
 arrives after you have switched or reloaded the chat, edited the message or
 deleted it is thrown away. The request is cancelled when the chat changes.
 
+Every memory request asks the model not to reason. Summaries, records, the
+state and the canon pick are short readings of short text, and a reasoning model
+spends its reply budget thinking about them and returns nothing (D-0086). For an
+**OpenRouter** profile Cairn sends `reasoning_effort: none`, which is what
+SillyTavern sends for **Minimum**. It asks nothing of other sources, which pass the
+value on unchecked; turn reasoning off in that profile's own preset. An empty or
+cut-off reply says so in its toast.
+
 Cairn does nothing without a memory profile, in group chats, or while Qvink
 Memory is running with **Auto Summarize** on. Two extensions summarising the same
 message would pay for it twice and race each other to store it. A disabled or

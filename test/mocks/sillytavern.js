@@ -326,6 +326,19 @@ export function createContext({
         /** public/scripts/st-context.js:294 — a class with a static `sendRequest`. */
         ConnectionManagerRequestService: requestService,
 
+        /**
+         * public/scripts/slash-commands.js:142, exposed at public/scripts/st-context.js:285.
+         * A profile's `api` names an entry; OpenRouter's is special-cased (:191) and every
+         * other chat completion source maps to itself (:213-220). A subset.
+         */
+        CONNECT_API_MAP: {
+            openrouter: { selected: 'openai', source: 'openrouter' },
+            'openrouter-text': { selected: 'textgenerationwebui', type: 'openrouter' },
+            custom: { selected: 'openai', source: 'custom' },
+            openai: { selected: 'openai', source: 'openai' },
+            generic: { selected: 'textgenerationwebui', type: 'generic' },
+        },
+
         extensionPrompts,
         /** public/script.js — setExtensionPrompt(key, value, position, depth, scan, role, filter) */
         setExtensionPrompt(key, value, position, depth, scan = false, role = 0, filter = null) {

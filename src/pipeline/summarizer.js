@@ -26,6 +26,7 @@ import { assessCompaction, assessIndexing, assessStateUpdates, assessSummarizing
 import { createCanonJob } from './canon-job.js';
 import { createIndexJob } from './index-job.js';
 import { createStateJob } from './state-job.js';
+import { memoryProfile, requestOverrides } from './request-options.js';
 import { MAX_ATTEMPTS, createTally } from './tally.js';
 
 export { MAX_ATTEMPTS };
@@ -34,6 +35,14 @@ const NO_CONNECTION_MANAGER = 'Cairn needs the Connection Manager extension enab
 const PROFILE_MISSING = 'Cairn\'s memory connection profile no longer exists. Choose another in Cairn\'s settings.';
 const SAME_PROFILE = 'Cairn\'s memory connection is the profile this chat uses. Memory summaries should come from a separate model.';
 const PROMPT_FALLBACK = 'Cairn\'s summary prompt has no {{message}}, so the default prompt is being used.';
+/** An empty or cut-off reply is nearly always a budget spent reasoning (docs/decisions.md D-0086). */
+const REASONING_HINT = 'The memory model most likely spent its reply budget reasoning: turn reasoning off in the memory profile\'s preset.';
+const BUDGET_REASONS = new Set(['empty', 'truncated']);
+
+/** A failure's toast text, with the likely cause when the reason points at one. */
+export function failureDetail(detail, reason) {
+    return BUDGET_REASONS.has(reason) ? `${detail} ${REASONING_HINT}` : detail;
+}
 
 /**
  * @param {() => object} getContext Returns a fresh SillyTavern.getContext()
@@ -205,6 +214,7 @@ export function createSummarizer(getContext, {
             const reply = await context.ConnectionManagerRequestService.sendRequest(
                 memoryProfileId, request.messages, request.maxTokens,
                 { stream: false, signal, includePreset: true, includeInstruct: true },
+                requestOverrides(context, memoryProfile(context, memoryProfileId)),
             );
             counting.tokensOut += await countTokens(context, `${reply?.content ?? ''}${reply?.reasoning ?? ''}`);
             return { reply, signal };
@@ -289,7 +299,7 @@ export function createSummarizer(getContext, {
     function failSummary(chatId, message, index, reason, err, byUser = false) {
         const outcome = summaries.fail(sceneKey(chatId, message), reason);
         if (byUser) {
-            toast(`Summarising message #${index} failed (${reason}). Nothing was changed.`);
+            toast(failureDetail(`Summarising message #${index} failed (${reason}). Nothing was changed.`, reason));
             if (err) warn(err);
             return false;
         }
@@ -300,8 +310,8 @@ export function createSummarizer(getContext, {
         return false;
     }
 
-    function report({ first }, detail, err) {
-        if (first) toast(`${detail} Cairn will try again after the next reply.`);
+    function report({ first, reason }, detail, err) {
+        if (first) toast(failureDetail(`${detail} Cairn will try again after the next reply.`, reason));
         else warn(detail);
         if (err) warn(err);
     }
@@ -382,6 +392,7 @@ export function createSummarizer(getContext, {
             summaries.resetStats();
             state.tally.resetStats();
             canon.tally.resetStats();
+            indexer.tally.resetStats();
             statsChat = chatId;
         }
         notify();
@@ -435,15 +446,22 @@ export function createSummarizer(getContext, {
         get status() {
             const status = {
                 ...summaries.stats, gate: summaryGate, streak: summaries.streak, inFlight: summaries.inFlight,
-                pending: null, failed: [], givenUp: [], promptDefault: null,
+                pending: null, failed: [], givenUp: [], promptDefault: null, model: null, reasoning: null,
                 state: state.status(stateGate), canon: canon.status(canonGate),
                 index: indexer.status(indexGate),
             };
             try {
                 // The default is what goes out when the prompt is unedited *or* unusable.
-                const prompt = resolveSummaryPrompt(settings?.()?.summaryPrompt);
+                const config = settings?.() ?? {};
+                const prompt = resolveSummaryPrompt(config.summaryPrompt);
                 status.promptDefault = !prompt.edited || prompt.fallback;
-                status.pending = pendingScenes(getContext().chat).length;
+                // Which model the calls went to, and what Cairn asked of it: a run that
+                // switches models mid-chat is otherwise read off latency (D-0086).
+                const context = getContext();
+                const profile = memoryProfile(context, config.memoryProfileId);
+                status.model = profile?.model ?? null;
+                status.reasoning = requestOverrides(context, profile).reasoning_effort ?? null;
+                status.pending = pendingScenes(context.chat).length;
                 status.failed = failed();
                 status.givenUp = status.failed.filter((entry) => entry.attempts >= MAX_ATTEMPTS).map((entry) => entry.index);
             } catch (err) {

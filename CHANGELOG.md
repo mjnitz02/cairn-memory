@@ -11,6 +11,20 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ### Changed
 
+- **Memory calls ask the model not to reason.** On an OpenRouter memory profile a
+  reasoning model spent its whole reply budget thinking, came back empty, and was
+  billed for it: in one chat GLM-5.3 cost ten times what GLM-4.7 did for worse
+  results. Cairn now asks for no reasoning on OpenRouter; on other sources, turn it
+  off in the profile's preset. An empty or cut-off reply now says this in its toast.
+- **A failing index batch gives up after three tries.** It used to be retried after
+  every reply, because each new summary made it count as a new batch.
+- **The inspector log names the memory model** (`memory_model`) and whether Cairn
+  asked it not to reason (`memory_reasoning`).
+
+### Fixed
+
+- Switching chats now resets the index counters, as it already did the others.
+
 - **The inspector log is one file per chat, and it keeps growing.** Each chat
   writes to its own `cairn-<chat>-<id>.jsonl` and every session adds to it, so a
   chat played over several evenings reads as one trail. It used to be a single file

@@ -41,8 +41,8 @@ export function createTally(counters = {}) {
         },
 
         /**
-         * @returns {{count: number, first: boolean, givenUp: boolean}} `first` is the
-         *          streak's first failure, the one that toasts.
+         * @returns {{count: number, first: boolean, givenUp: boolean, reason: string}} `first`
+         *          is the streak's first failure, the one that toasts.
          */
         fail(key, reason) {
             const count = (attempts.get(key)?.count ?? 0) + 1;
@@ -50,7 +50,7 @@ export function createTally(counters = {}) {
             stats.failures++;
             stats.lastReason = reason;
             streak++;
-            return { count, first: streak === 1, givenUp: count >= MAX_ATTEMPTS };
+            return { count, first: streak === 1, givenUp: count >= MAX_ATTEMPTS, reason };
         },
 
         succeed(key) {
