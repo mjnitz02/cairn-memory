@@ -17,6 +17,7 @@
  * does today. Nothing here may reach ST's event path (CLAUDE.md §4.17).
  */
 import { pendingScenes, sceneHistory } from '../memory/scenes.js';
+import { stateJobAt } from '../memory/state.js';
 import { perMessage, resolveSummaryPrompt } from '../memory/scene-strategy.js';
 import { readScene, summarisable, writeScene } from '../store/chat-store.js';
 import { hashString } from '../util/hash.js';
@@ -99,6 +100,10 @@ export function createSummarizer(getContext, {
     }
     /** Messages the user asked to have summarised, by object, since indexes shift. */
     const asked = [];
+    /** Messages the user asked to have their world state rebuilt on, likewise (D-0089). */
+    const askedStates = [];
+    /** The message a rebuild is out for, so a second click while it is out changes nothing. */
+    let restating = null;
     /** The message a summary request is out for. */
     let writing = null;
 
@@ -179,6 +184,22 @@ export function createSummarizer(getContext, {
             if (gates.summary.sameProfile || gates.state.sameProfile) toastOnce(SAME_PROFILE);
 
             const { chat, chatId } = context;
+            // A rebuild the user asked for goes first, as the state does: they are waiting on it.
+            const rebuildAt = nextIn(askedStates, chat);
+            if (rebuildAt !== undefined) {
+                const job = gates.state.ready ? stateJobAt(chat, rebuildAt) : null;
+                if (job) {
+                    state.forget(chatId, job);
+                    restating = job.message;
+                    try {
+                        await state.run(context, config, job);
+                    } finally {
+                        restating = null;
+                    }
+                    notify();
+                }
+                continue;
+            }
             if (!stateTried) {
                 stateTried = true;
                 const job = gates.state.ready ? state.pending(chat) : null;
@@ -304,8 +325,13 @@ export function createSummarizer(getContext, {
 
     /** The oldest asked-for message still in the chat, or undefined. */
     function nextAsked(chat) {
-        while (asked.length) {
-            const index = chat.indexOf(asked.shift());
+        return nextIn(asked, chat);
+    }
+
+    /** Take the oldest message in `list` that is still in the chat, and return its index. */
+    function nextIn(list, chat) {
+        while (list.length) {
+            const index = chat.indexOf(list.shift());
             if (index >= 0) return index;
         }
         return undefined;
@@ -484,6 +510,34 @@ export function createSummarizer(getContext, {
         return { queued: true };
     }
 
+    /**
+     * Rebuild the world state on a message, on the user's word (D-0089): it reads every
+     * visible message since the state before it and replaces any state already there.
+     * Only the newest state reaches the prompt, so this matters most on the newest
+     * message, but any visible one may be rebuilt.
+     *
+     * @param {number} index
+     * @returns {{queued: boolean, reason?: string}} `reason` is a state gate's, or
+     *          `disabled`, `no-message`, `hidden` or `future`.
+     */
+    function restate(index) {
+        const refused = (reason) => ({ queued: false, reason });
+        if (!running) return refused('disabled');
+        const context = getContext();
+        const message = context.chat?.[index];
+        if (!message || typeof message.mes !== 'string') return refused('no-message');
+        if (message.is_system) return refused('hidden');
+        const gate = assessStateUpdates(context, settings?.() ?? {});
+        if (!gate.ready) return refused(gate.reason);
+        if (!stateJobAt(context.chat, index)) return refused('future');
+
+        if (message !== restating && !askedStates.includes(message)) {
+            askedStates.push(message);
+            act(`a world state rebuild of #${index}`);
+        }
+        return { queued: true };
+    }
+
     /** A request for the chat being left is abandoned; the new chat's queue starts. */
     function onChatChanged() {
         controller?.abort();
@@ -523,12 +577,15 @@ export function createSummarizer(getContext, {
             running = false;
             again = false;
             asked.length = 0;
+            askedStates.length = 0;
             controller?.abort();
         },
 
         drain,
 
         resummarise,
+
+        restate,
 
         /** Resolves when no run is under way. */
         idle() {

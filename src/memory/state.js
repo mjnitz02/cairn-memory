@@ -98,11 +98,27 @@ export function pendingStateJob(chat) {
     let index = list.length - 1;
     while (index >= 0 && !visible(list[index])) index--;
     if (index < 0) return null;
+    if (newestState(list, index)?.index === index) return null;
+    return stateJobAt(list, index);
+}
+
+/**
+ * The state update that ends at `index`, built on the newest valid state *before* it,
+ * so a state already on that message is replaced rather than read. What a manual
+ * rebuild asks for (D-0089); the queue asks for it only at the newest message.
+ *
+ * @param {Array<object>} chat The live chat. Read only.
+ * @param {number} index
+ * @returns {ReturnType<typeof pendingStateJob>} Null for a hidden or missing message,
+ *          or one a newer Cairn wrote.
+ */
+export function stateJobAt(chat, index) {
+    const list = chat ?? [];
+    if (!visible(list[index])) return null;
     // A newer Cairn's store is not ours to overwrite (store/chat-store.js).
     if (readState(list, index).status === 'future') return null;
 
-    const base = newestState(list, index);
-    if (base?.index === index) return null;
+    const base = index > 0 ? newestState(list, index - 1) : null;
 
     const unread = [];
     for (let at = (base?.index ?? -1) + 1; at <= index; at++) {

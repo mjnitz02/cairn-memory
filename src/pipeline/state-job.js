@@ -45,6 +45,9 @@ export function createStateJob({ getContext, send, save, discard, report, clock,
         /** Whether this job has failed too often to try again this session. */
         givenUp: (chatId, job) => states.givenUp(key(chatId, job)),
 
+        /** Forget a job's failures, so a rebuild the user asked for is tried at all. */
+        forget: (chatId, job) => states.forget(key(chatId, job)),
+
         /** One update. Its outcome is only recorded: a failing state must not starve summaries. */
         async run(context, { memoryProfileId, statePrompt }, job) {
             const { chatId } = context;

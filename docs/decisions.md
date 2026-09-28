@@ -8,6 +8,26 @@ what we believed and why it changed.
 
 ---
 
+## D-0089 — The world state can be rebuilt by hand
+**2026-09-28.** The Shaerra chat has no state on messages 2, 6 and 14: one failed (5.3's reasoning)
+and two were discarded because the messages they read changed while they were out (now counted in
+the log, `state_discarded`). The next reply's update reads everything since the last saved state, so
+the gaps heal, but nothing let the user redo one, and a gap on the newest message costs the next
+reply its state.
+
+**Decided.** A second button in each message's actions menu, **Rebuild the world state**
+(`fa-boxes-stacked`), beside **Summarise with Cairn** (`fa-cubes-stacked`), which keeps redoing the
+summary and its index record. A rebuild is the state job ending at that message, built on the newest
+valid state *before* it (`stateJobAt`), so it replaces a state already there rather than reading it;
+later states are untouched, since each is its own snapshot. It waits on the state's own gate, is
+activity in the chat (D-0088), goes ahead of the queue as a resummarise does, gives a given-up job a
+fresh count, and ignores a second click while one is out.
+
+**Reopens if:** a rebuild in the middle of the chat is shown to mislead — a state rebuilt from fewer
+messages than the one after it read, say — which would argue for rebuilding forward from there.
+
+---
+
 ## D-0088 — Opening a chat makes no memory call, and a refused effort is latched
 **2026-09-28.** Two things from the Shaerra replay, both traced with the queue's new debug log
 (`Queue: run started by …`, `Queue: sending …`).

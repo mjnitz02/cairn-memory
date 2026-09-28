@@ -75,7 +75,8 @@ Point **Memory connection** at a profile that is *not* your roleplay model.
 Without one, Cairn never calls a model. Each summary appears under its message,
 with a collapsed **World state** below it, and Cairn never blocks sending, so you
 can keep chatting while it works. To redo a summary, choose **Summarise with
-Cairn** (the stacked-stones icon) in the message's actions menu.
+Cairn** (the stacked-cubes icon) in the message's actions menu; to redo the world
+state on a message, choose **Rebuild the world state** (the stacked-boxes icon).
 
 | Setting | What it does |
 |---|---|

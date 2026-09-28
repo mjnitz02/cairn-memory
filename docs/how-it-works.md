@@ -272,6 +272,15 @@ summary, which the queue skips, and it gives a message Cairn gave up on a fresh
 start. It waits on the same switches as the queue and says which one is closed.
 Replacing a summary that is already in the memory block changes the block from
 that summary on, so the next prompt misses the cache from there, as an edit would.
+The same click redoes the summary's index record, so it costs two calls.
+
+**Rebuild the world state**, beside it (the stacked-boxes icon), redoes the world
+state on that message (D-0089). It reads every message since the state before it,
+builds on that state, and replaces any state already on the message; a failure
+keeps what is there. Only the newest state reaches the prompt, so a message in the
+middle of the chat without a state costs nothing once a later one exists, and the
+button matters most on the newest message, when its update failed or was thrown
+away. Rebuilding one state leaves the others alone: each is its own snapshot.
 
 **The prompt** is the **Summary prompt** setting. `{{message}}` is the message as
 `Name: text`, and `{{history}}` is the summaries before it, one per line.
