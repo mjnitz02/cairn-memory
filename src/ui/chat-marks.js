@@ -3,8 +3,9 @@
  * own (its index.js:1445-1511), so switching between them reads the same — with the
  * world state and any canon batch stored on each message collapsed beneath them.
  *
- * Also the only feedback that summarising is happening at all: the message being
- * summarised says so while its request is out. Nothing here waits on it, and
+ * Also the only feedback that memory work is happening at all: the message being
+ * summarised says so while its request is out, and so does the message a world state
+ * is being written for, whether the queue or the rebuild button asked (D-0089). Nothing here waits on it, and
  * nothing here blocks the chat (docs/how-it-works.md, "Writing summaries").
  *
  * `markMessages` and `renderMark` are pure. `createChatMarks` is the DOM glue.
@@ -67,6 +68,20 @@ export function stateTexts(chat) {
     return texts;
 }
 
+/**
+ * The message a world state is being written for right now, or null. One at a time, so
+ * there is no queue to show: the state is brought up to date after each reply.
+ *
+ * @param {object|null} status The summarizer's `status`.
+ * @returns {number|null}
+ */
+export function stateWriting(status) {
+    const index = status?.state?.inFlight;
+    return Number.isInteger(index) ? index : null;
+}
+
+export const STATE_WRITING_HTML = '<i class="fa-solid fa-spinner fa-spin"></i> Cairn is updating the world state…';
+
 /** @returns {string} The mark's inner HTML. Scene text is escaped, never formatted. */
 export function renderMark(mark) {
     switch (mark.state) {
@@ -113,6 +128,7 @@ export function createChatMarks(getContext, { status, settings }) {
             // Hidden where no state goes in the prompt: switched off, or a WTracker keeps its own.
             const showStates = running && settings?.()?.worldState !== false && !wtrackerLoaded(context);
             const states = showStates ? stateTexts(context.chat) : new Map();
+            const updating = showStates ? stateWriting(status()) : null;
             // Hidden where no canon goes in the prompt. Unlike a summary or a state, a
             // fact cannot be taken back, so seeing it is the only check there is.
             const showCanon = running && settings?.()?.keepCanon !== false;
@@ -120,6 +136,7 @@ export function createChatMarks(getContext, { status, settings }) {
             for (const element of root.querySelectorAll('.mes[mesid]')) {
                 const index = Number(element.getAttribute('mesid'));
                 draw(element, marks.get(index));
+                drawStateWriting(element, index === updating);
                 drawState(element, states.get(index));
                 drawCanon(element, facts.get(index));
             }
@@ -147,6 +164,25 @@ export function createChatMarks(getContext, { status, settings }) {
         drawn.set(node, html);
     }
 
+    /**
+     * Its own line, above the state it will replace, so an open World state section is
+     * never redrawn and closed by the spinner coming and going.
+     */
+    function drawStateWriting(element, writing) {
+        let node = element.querySelector(`.${SLUG}-state-writing`);
+        if (!writing) {
+            node?.remove();
+            return;
+        }
+        if (node) return;
+        const body = element.querySelector('.mes_text');
+        if (!body) return;
+        node = document.createElement('div');
+        node.className = `${SLUG}-state-writing`;
+        node.innerHTML = STATE_WRITING_HTML;
+        (element.querySelector(`.${SLUG}-scene`) ?? body).after(node);
+    }
+
     /** Below the summary if there is one. Only the text is rewritten, so an open section stays open. */
     function drawState(element, text) {
         let node = element.querySelector(`.${SLUG}-state`);
@@ -161,7 +197,7 @@ export function createChatMarks(getContext, { status, settings }) {
             node.className = `${SLUG}-state`;
             node.innerHTML = '<summary>World state</summary><pre></pre>';
             // A summary drawn later goes directly after the body, so it still lands above this.
-            (element.querySelector(`.${SLUG}-scene`) ?? body).after(node);
+            (element.querySelector(`.${SLUG}-state-writing`) ?? element.querySelector(`.${SLUG}-scene`) ?? body).after(node);
         }
         const pre = node.querySelector('pre');
         if (pre.textContent !== text) pre.textContent = text;

@@ -281,6 +281,9 @@ keeps what is there. Only the newest state reaches the prompt, so a message in t
 middle of the chat without a state costs nothing once a later one exists, and the
 button matters most on the newest message, when its update failed or was thrown
 away. Rebuilding one state leaves the others alone: each is its own snapshot.
+While a state is being written, after a reply or from this button, its message
+says so with a spinner, **Cairn is updating the world state…**, which goes when
+the state lands or fails.
 
 **The prompt** is the **Summary prompt** setting. `{{message}}` is the message as
 `Name: text`, and `{{history}}` is the summaries before it, one per line.

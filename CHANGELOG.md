@@ -33,6 +33,8 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
   which kind of call, and the reasoning effort asked for.
 - **A button to rebuild the world state on a message** (stacked boxes), beside
   **Summarise with Cairn** (stacked cubes), for a state that failed or went missing.
+- **The world state shows a spinner while it is written**, after a reply or from
+  the rebuild button, instead of appearing silently.
 - **The inspector log counts thrown-away replies.** A reply that arrives after its
   messages changed is discarded rather than stored; each kind now logs how many it
   discarded and why (`state_discarded`, `state_last_discard`, and the same for
