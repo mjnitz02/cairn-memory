@@ -10,7 +10,7 @@ import { resetToasts } from '../src/util/log.js';
 import { badStateOutputs, createRequestService, deferred } from './mocks/llm.js';
 import { makeMixedChat } from './mocks/cairn.js';
 import {
-    continueReply, createContext, editMessage, makeChat, makeMessage, openChat, receiveMessage, sendMessage, swipeReply, swipeTo,
+    continueReply, createContext, editMessage, makeChat, makeMessage, openChat, receiveMessage, sendMessage, swipeReply, swipeTo, startActive, startGeneration,
 } from './mocks/sillytavern.js';
 
 /**
@@ -75,6 +75,7 @@ function harness({ responses = [], chat, settings = {}, context: contextOptions 
 
         ...(stateStrategy ? { stateStrategy } : {}),
     });
+    startActive(summarizer, context);
     return { context, service, summarizer };
 }
 
@@ -393,13 +394,15 @@ describe('a state reply that arrives after the chat moved on', () => {
         return { ...setup, answer };
     }
 
-    it('is discarded when you have left the chat, and the new chat gets its own', async () => {
+    it('is discarded when you have left the chat, and the new chat gets its own once you act in it', async () => {
         const { context, summarizer, answer } = await outFor();
         const left = context.chat[7];
 
         await openChat(context, { chatId: 'another-chat', messages: makeChat(2) });
         answer.resolve(reply(TO_PIER));
         await summarizer.idle();
+        await startGeneration(context);
+        await summarizer.drain('a reply');
 
         expect(left.extra.cairn).toBeUndefined();
         expect(stateOf(context.chat, 1).value).toEqual(TO_DECK);
@@ -418,6 +421,8 @@ describe('a state reply that arrives after the chat moved on', () => {
         expect(service.calls[1].prompt[0].content).toContain('from the deck');
         expect(stateOf(context.chat, 7).value.location).toBe(TO_DECK.location);
         expect(summarizer.status.state).toMatchObject({ written: 1, failures: 0 });
+        // Not a failure, but counted with its reason, so a missing write can be explained.
+        expect(summarizer.status.state).toMatchObject({ discarded: 1, lastDiscard: 'a message it read changed' });
     });
 
     it('is discarded when the reply it read is swiped, and the new swipe is read next', async () => {
@@ -443,6 +448,7 @@ describe('a state reply that arrives after the chat moved on', () => {
 
             expect(target.extra.cairn).toBeUndefined();
             expect(summarizer.status.state.failures).toBe(0);
+            expect(summarizer.status.state.discarded).toBe(1);
         }
     });
 });
@@ -618,7 +624,8 @@ describe('what it reports about the state', () => {
         expect(summarizer.status.state).toMatchObject({ calls: 1, written: 1 });
 
         await openChat(context, { chatId: 'another-chat', messages: makeChat(2) });
-        await summarizer.idle();
+        await startGeneration(context);
+        await summarizer.drain('a reply');
         expect(summarizer.status.state).toMatchObject({ calls: 1, written: 1, ms: 0 });
         expect(stateOf(context.chat, 1).value).toEqual(TO_DECK);
     });

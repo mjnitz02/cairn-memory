@@ -109,13 +109,13 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
             onOwnMemoryBlockChange: (enabled) => assembler.setOwnEnabled(enabled),
             // Off takes effect at the next generation; on may have a state to bring up to date.
             onWorldStateChange: () => {
-                summarizer.drain();
+                summarizer.drain('the world state setting');
                 marks.refresh();
             },
             // Off takes effect at the next generation; on waits for the next pressure.
-            onKeepCanonChange: () => summarizer.drain(),
+            onKeepCanonChange: () => summarizer.drain('the keep canon setting'),
             // A newly chosen profile may have a backlog waiting for it.
-            onMemoryProfileChange: () => summarizer.drain(),
+            onMemoryProfileChange: () => summarizer.drain('the memory profile setting'),
         }), { canon: () => assembler.canonView });
         inspector.render(observer.latest);
         inspector.summaries(summarizer.status);

@@ -46,6 +46,11 @@ export async function renderSettingsPanel(context, handlers = {}) {
 
     populateProfiles(context, settings.memoryProfileId);
     bindSelect(context, 'memoryProfileId', (value) => handlers.onMemoryProfileChange?.(value));
+    // A new choice is a fresh start: what a provider refused before is asked again (D-0088).
+    bindSelect(context, 'memoryReasoning', () => {
+        context.extensionSettings[SLUG].reasoningRefused = {};
+        context.saveSettingsDebounced();
+    });
     bindPrompt(context, 'summaryPrompt', DEFAULT_SUMMARY_PROMPT);
     bindPrompt(context, 'indexPrompt', INDEX_PROMPT);
     bindPrompt(context, 'canonPrompt', CANON_PROMPT);
@@ -145,6 +150,7 @@ function bindPercent(context, key) {
 function bindSelect(context, key, onChange) {
     const input = field(key);
     if (!input) return;
+    if (input.options.length && context.extensionSettings[SLUG][key] !== undefined) input.value = context.extensionSettings[SLUG][key];
     input.addEventListener('change', () => {
         context.extensionSettings[SLUG][key] = input.value;
         context.saveSettingsDebounced();

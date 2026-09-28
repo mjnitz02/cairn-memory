@@ -303,6 +303,8 @@ export function createContext({
             MESSAGE_SENT: 'message_sent',
             MESSAGE_RECEIVED: 'message_received',
             MESSAGE_EDITED: 'message_edited',
+            /** public/scripts/events.js:23; emitted with (type, params, dryRun), public/script.js:4299 */
+            GENERATION_STARTED: 'generation_started',
             CHAT_CHANGED: 'chat_id_changed',
         },
 
@@ -458,6 +460,29 @@ export async function editMessage(context, index, mes) {
  * (public/script.js:7658), then emits the new chat id (:7700). Reloading the
  * current chat takes the same path with the same id (:1710-1717).
  */
+/**
+ * The user starts a generation — a send, swipe, continue or impersonate. ST emits it
+ * with the type, the params and whether it is a dry run (public/script.js:4299).
+ */
+export function startGeneration(context, { type = 'normal', dryRun = false } = {}) {
+    return context.eventSource.emit(context.eventTypes.GENERATION_STARTED, type, {}, dryRun);
+}
+
+/**
+ * Tests that begin where the user is already playing: opening a chat makes no memory
+ * call (docs/decisions.md D-0088), so `start` is followed by a generation in the chat,
+ * which unlocks the queue, and a run, as the reply landing would start.
+ */
+export function startActive(summarizer, context) {
+    const start = summarizer.start;
+    summarizer.start = () => {
+        start();
+        startGeneration(context);
+        summarizer.drain('the test');
+    };
+    return summarizer;
+}
+
 export async function openChat(context, { chatId, messages }) {
     context.chatId = chatId;
     context.chat.splice(0, context.chat.length, ...messages);

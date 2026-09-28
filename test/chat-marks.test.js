@@ -7,7 +7,7 @@ import { MAX_ATTEMPTS, createSummarizer } from '../src/pipeline/summarizer.js';
 import { resetToasts } from '../src/util/log.js';
 import { cairnStore, cairnSummary, makeMixedChat } from './mocks/cairn.js';
 import { badOutputs, createRequestService, deferred } from './mocks/llm.js';
-import { createContext, makeChat } from './mocks/sillytavern.js';
+import { createContext, makeChat, startActive } from './mocks/sillytavern.js';
 
 const MEMORY = { id: 'memory-profile', name: 'GLM (memory)' };
 
@@ -181,6 +181,7 @@ describe('following a summarizer run', () => {
             settings: () => ({ memoryProfileId: MEMORY.id, worldState: false }),
             onUpdate: () => seen.push(states(markMessages(context.chat, summarizer.status))),
         });
+        startActive(summarizer, context);
         return { context, summarizer, seen };
     }
 

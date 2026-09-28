@@ -15,7 +15,8 @@ export const MAX_ATTEMPTS = 3;
  */
 export function createTally(counters = {}) {
     const fresh = () => ({
-        calls: 0, written: 0, failures: 0, lastReason: null, lastMs: null, ms: 0, tokensIn: 0, tokensOut: 0, ...counters,
+        calls: 0, written: 0, failures: 0, lastReason: null, lastMs: null, ms: 0, tokensIn: 0, tokensOut: 0,
+        discarded: 0, lastDiscard: null, ...counters,
     });
     /** Job key → `{count, reason}`. Keys carry the chat id, so they outlive a chat change. */
     const attempts = new Map();
@@ -51,6 +52,15 @@ export function createTally(counters = {}) {
             stats.lastReason = reason;
             streak++;
             return { count, first: streak === 1, givenUp: count >= MAX_ATTEMPTS, reason };
+        },
+
+        /**
+         * A reply thrown away because the chat moved on while it was out: not a failure,
+         * so no streak and no toast, but counted, or a missing write has no explanation.
+         */
+        discard(reason) {
+            stats.discarded++;
+            stats.lastDiscard = reason;
         },
 
         succeed(key) {

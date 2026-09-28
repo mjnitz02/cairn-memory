@@ -625,12 +625,12 @@ describe('the fields a run is read from', () => {
     const summaries = {
         canon: {
             gate: 'ready', reason: 'covered', inFlight: null, pending: null, givenUp: false,
-            calls: 2, picked: 10, duplicates: 1, refused: 0, clipped: 1, failures: 0, lastReason: 'none',
+            calls: 2, picked: 10, duplicates: 1, refused: 0, clipped: 1, failures: 0, lastReason: 'none', discarded: 0, lastDiscard: null,
             ms: 9_000, lastMs: 4_400, tokensIn: 10_600, tokensOut: 800,
         },
         index: {
             gate: 'ready', inFlight: null, pending: null, waiting: 0, givenUp: false,
-            calls: 6, records: 85, dropped: 0, clipped: 3, missed: 0, failures: 0, lastReason: 'none',
+            calls: 6, records: 85, dropped: 0, clipped: 3, missed: 0, failures: 0, lastReason: 'none', discarded: 0, lastDiscard: null,
             ms: 26_000, lastMs: 4_100, tokensIn: 18_000, tokensOut: 6_400,
         },
     };

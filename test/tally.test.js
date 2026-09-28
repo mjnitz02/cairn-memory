@@ -38,7 +38,8 @@ describe('one kind\'s tally', () => {
 
         expect(tally.stats).not.toBe(before);
         expect(tally.stats).toEqual({
-            calls: 0, written: 0, failures: 0, lastReason: null, lastMs: null, ms: 0, tokensIn: 0, tokensOut: 0, dropped: 0,
+            calls: 0, written: 0, failures: 0, lastReason: null, lastMs: null, ms: 0, tokensIn: 0, tokensOut: 0,
+            discarded: 0, lastDiscard: null, dropped: 0,
         });
         expect(tally.streak).toBe(1);
         expect(tally.record('a')).toMatchObject({ count: 1 });

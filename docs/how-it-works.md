@@ -204,6 +204,11 @@ turn on, the block only changes at its end until it outgrows the limit again.
 
 ## Writing summaries
 
+Opening a chat, or loading the page on one, makes no memory call. A chat's work
+waits until you act in it: a reply, an edit or a resummarise starts it, and a
+generation you start lets it run once the reply lands (D-0088). A chat opened by
+mistake costs nothing.
+
 After each reply, and as soon as you edit a message, Cairn summarises the
 messages waiting for a summary, one request at a time, oldest first, through the **Memory connection** profile. Each
 request carries the message and the five summaries before it. A reply that
@@ -214,9 +219,17 @@ Every memory request asks the model not to reason. Summaries, records, the
 state and the canon pick are short readings of short text, and a reasoning model
 spends its reply budget thinking about them and returns nothing (D-0086). For an
 **OpenRouter** profile Cairn sends `reasoning_effort: none`, which is what
-SillyTavern sends for **Minimum**. It asks nothing of other sources, which pass the
-value on unchecked; turn reasoning off in that profile's own preset. An empty or
-cut-off reply says so in its toast.
+SillyTavern sends for **Minimum**. The **Memory model reasoning** setting can start
+it at `low` instead, or leave reasoning to the preset. Some OpenRouter providers
+cannot turn reasoning off and refuse the request; Cairn then asks for `low`, then
+for nothing, and saves that against the profile and model, so later page loads
+start there (D-0087, D-0088). It asks nothing of other sources, which
+pass the value on unchecked; turn reasoning off in that profile's own preset. An
+empty or cut-off reply says so in its toast.
+
+A profile's preset should be one made for the same source. A preset made for a
+Custom endpoint, used on an OpenRouter profile, loses its provider list on the way
+out, and OpenRouter picks any provider it likes.
 
 Cairn does nothing without a memory profile, in group chats, or while Qvink
 Memory is running with **Auto Summarize** on. Two extensions summarising the same

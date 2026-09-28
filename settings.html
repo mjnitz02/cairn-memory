@@ -22,6 +22,19 @@
                 world state.
             </div>
 
+            <label for="cairn_memoryReasoning">Memory model reasoning</label>
+            <select id="cairn_memoryReasoning" class="text_pole">
+                <option value="none">None</option>
+                <option value="low">Low</option>
+                <option value="preset">As the profile's preset says</option>
+            </select>
+            <div class="cairn-hint">
+                How much the memory model may think before it answers: summarising needs none,
+                and thinking is slow and billed. Asked of OpenRouter profiles; if a provider
+                refuses None, Cairn uses Low for that model from then on, and changing this
+                setting tries None again.
+            </div>
+
             <label class="checkbox_label" for="cairn_showInspector">
                 <input id="cairn_showInspector" type="checkbox">
                 <span>Show inspector</span>

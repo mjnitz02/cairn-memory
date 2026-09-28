@@ -8,6 +8,54 @@ what we believed and why it changed.
 
 ---
 
+## D-0088 — Opening a chat makes no memory call, and a refused effort is latched
+**2026-09-28.** Two things from the Shaerra replay, both traced with the queue's new debug log
+(`Queue: run started by …`, `Queue: sending …`).
+
+**1. The queue waits for activity in the chat.** It ran on page load and on every chat change, so
+opening a chat with work left over — a state behind its newest reply, a summary a reload
+interrupted — made calls at once, and clicking the wrong character cost money. Worse, ST re-emits
+`MESSAGE_RECEIVED` with type `first_message` every time a greeting-only chat is opened
+(`script.js:7703-7706`), which read as a reply. Now a chat's queue is locked until the user acts in
+it: a reply, an edit or a resummarise runs it; a generation the user starts (`GENERATION_STARTED`,
+`script.js:4299`, not a dry run and not `quiet`) unlocks it without running it, so work still
+starts when the reply lands and never races the prompt being built. A greeting, a chat change, a
+page load and a settings change run only a queue already unlocked. The cost is that the first reply
+after opening is built with the stored state, as it is whenever a state update is still in flight.
+
+**2. `memoryReasoning` is a setting, and a refusal is saved** (supersedes D-0087's per-session
+memory). None (the default), Low, or the preset's own. D-0087's ladder starts where the setting
+says, and a refused effort is written to `reasoningRefused` under the profile and model, so a reload
+starts past it instead of paying a refused call on every page load. Changing the setting clears
+the latch. It is a knob because "none" and "low" are a real trade on a provider that must reason,
+and the one sentence it needs is plain (CLAUDE.md §4.15).
+
+**Reopens if:** a state or summary left from the last session turns out to matter on the first reply
+after opening (then run the state alone on the first generation), or an extension's ordinary
+generations arrive without `quiet` and unlock the queue.
+
+---
+
+## D-0087 — An endpoint that must reason refuses `none`, so the ask steps down
+**2026-09-28.** D-0086's first play test failed every call: OpenRouter answered GLM-5.3 with
+`400 Reasoning is mandatory for this endpoint and cannot be disabled.` The profile's preset was
+written for a Custom source, so its provider list never went out (ST sends it only when the
+preset's own source is OpenRouter, `openai.js:2890-2892`) and OpenRouter routed to an endpoint
+that cannot stop thinking. D-0086 assumed an unsupported ask would be ignored; it is refused.
+
+**Decided.** On a `Bad Request` to a request that carried an effort, Cairn asks again one step
+down — `none`, then `low`, then nothing, which is the preset's own setting — and remembers the
+refusal for that profile and model for the session, so it is paid for once. The browser sees only
+the status text (`chat-completions.js:2705-2710`), so the test is the 400 itself, and only a
+request that carried an effort is retried: any other failure costs one request, as before. One
+toast names the refused effort and the real fix, a provider that allows reasoning off.
+
+**Reopens if:** a 400 turns out to be common for another reason on an OpenRouter profile (the
+retry then doubles its cost), or OpenRouter starts returning its reason to the browser, which
+would let the test read it instead of the status.
+
+---
+
 ## D-0086 — Memory calls ask for no reasoning, and a growing index batch still gives up
 **2026-09-28.** The first chain played entirely on Cairn (18 real messages, long on both sides) ran
 its memory profile on GLM-5.3 through OpenRouter, then GLM-4.7 through a custom endpoint with

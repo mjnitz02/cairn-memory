@@ -69,7 +69,10 @@ export function createStateJob({ getContext, send, save, discard, report, clock,
             // hide, deletion, swipe, continue or chat change meanwhile discards the reply.
             const now = getContext();
             const index = jobStillCurrent(now.chat, job);
-            if (index < 0) return discard('state', job.index, 'the messages it read changed');
+            if (index < 0) {
+                const why = now.chat?.includes(job.message) ? 'a message it read changed' : 'its message is no longer in the chat';
+                return discard('state', job.index, why);
+            }
 
             const parsed = strategy.parse(sent.reply?.content);
             if (!parsed.ok) return fail(chatId, job, index, parsed.reason);

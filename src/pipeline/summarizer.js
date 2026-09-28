@@ -26,7 +26,7 @@ import { assessCompaction, assessIndexing, assessStateUpdates, assessSummarizing
 import { createCanonJob } from './canon-job.js';
 import { createIndexJob } from './index-job.js';
 import { createStateJob } from './state-job.js';
-import { memoryProfile, requestOverrides } from './request-options.js';
+import { isBadRequest, memoryProfile, refusalKey, requestOverrides } from './request-options.js';
 import { MAX_ATTEMPTS, createTally } from './tally.js';
 
 export { MAX_ATTEMPTS };
@@ -38,6 +38,8 @@ const PROMPT_FALLBACK = 'Cairn\'s summary prompt has no {{message}}, so the defa
 /** An empty or cut-off reply is nearly always a budget spent reasoning (docs/decisions.md D-0086). */
 const REASONING_HINT = 'The memory model most likely spent its reply budget reasoning: turn reasoning off in the memory profile\'s preset.';
 const BUDGET_REASONS = new Set(['empty', 'truncated']);
+const EFFORT_REFUSED = (effort) => `The memory model's provider refused reasoning effort "${effort}", so Cairn asks it for `
+    + 'less from now on. Changing Cairn\'s reasoning setting tries again.';
 
 /** A failure's toast text, with the likely cause when the reason points at one. */
 export function failureDetail(detail, reason) {
@@ -71,6 +73,30 @@ export function createSummarizer(getContext, {
     let controller = null;
     let active = null;
     let again = false;
+    /**
+     * The chat the user has acted in since it was opened. Opening a chat, or loading the
+     * page on one, makes no memory call: the queue waits for a send, a generation, an
+     * edit or a resummarise there, so a chat opened by mistake costs nothing (D-0088).
+     */
+    let activeIn = null;
+    /** Profile and model → reasoning efforts refused, alongside the saved latch (D-0086, D-0088). */
+    const refusedEfforts = new Map();
+
+    /** What this profile's model has refused: this session's, and what earlier sessions saved. */
+    function refusedFor(config, key) {
+        return new Set([...(refusedEfforts.get(key) ?? []), ...(config.reasoningRefused?.[key] ?? [])]);
+    }
+
+    /** Remember a refusal in the settings, so the next page load starts past it. */
+    function latchRefusal(context, config, key, refused) {
+        refusedEfforts.set(key, refused);
+        try {
+            config.reasoningRefused = { ...(config.reasoningRefused ?? {}), [key]: [...refused] };
+            context.saveSettingsDebounced?.();
+        } catch (err) {
+            warn('Could not save the refused reasoning effort.', err);
+        }
+    }
     /** Messages the user asked to have summarised, by object, since indexes shift. */
     const asked = [];
     /** The message a summary request is out for. */
@@ -85,13 +111,24 @@ export function createSummarizer(getContext, {
     });
     const indexer = createIndexJob({ ...machinery, ...(indexStrategy ? { strategy: indexStrategy } : {}) });
 
-    /** Start a run, or fold this trigger into the one under way. Never rejects. */
-    function drain() {
+    /**
+     * Start a run, or fold this trigger into the one under way. Never rejects.
+     *
+     * @param {string} [why] What asked for the run, for the debug log: every memory call
+     *        is traced back to the event that caused it.
+     */
+    function drain(why = 'asked') {
         if (!running) return Promise.resolve();
+        if (activeIn === null || activeIn !== getContext().chatId) {
+            debug(`Queue: ${why} — waiting for activity in this chat.`);
+            return Promise.resolve();
+        }
         if (active) {
+            debug(`Queue: ${why} — folded into the run under way.`);
             again = true;
             return active;
         }
+        debug(`Queue: run started by ${why}.`);
         active = (async () => {
             do {
                 again = false;
@@ -205,17 +242,14 @@ export function createSummarizer(getContext, {
         // A chat change swaps the stats while this is out; its cost belongs to the chat it was for.
         const counting = tally.stats;
         const started = clock();
+        debug(`Queue: sending ${kindOf(tally)} for #${index}.`);
         try {
             counting.calls++;
             // ST's tokenizer is the chat model's, not the memory model's: a size, not a bill.
             counting.tokensIn += await countTokens(context, request.messages.map((m) => m.content).join('\n'));
             tally.inFlight = index;
             notify();
-            const reply = await context.ConnectionManagerRequestService.sendRequest(
-                memoryProfileId, request.messages, request.maxTokens,
-                { stream: false, signal, includePreset: true, includeInstruct: true },
-                requestOverrides(context, memoryProfile(context, memoryProfileId)),
-            );
+            const reply = await sendAskingLittleReasoning(context, memoryProfileId, request, signal, counting);
             counting.tokensOut += await countTokens(context, `${reply?.content ?? ''}${reply?.reasoning ?? ''}`);
             return { reply, signal };
         } catch (err) {
@@ -225,6 +259,47 @@ export function createSummarizer(getContext, {
             counting.lastMs = clock() - started;
             counting.ms += counting.lastMs;
         }
+    }
+
+    /**
+     * Ask for no reasoning, then less, then whatever the preset says: an endpoint that
+     * cannot stop thinking refuses the request outright rather than ignoring the ask.
+     * A refused effort is not asked of that model again this session.
+     */
+    async function sendAskingLittleReasoning(context, memoryProfileId, request, signal, counting) {
+        const profile = memoryProfile(context, memoryProfileId);
+        const key = refusalKey(profile);
+        const config = settings?.() ?? {};
+        for (;;) {
+            const refused = refusedFor(config, key);
+            const overrides = requestOverrides(context, profile, refused, config.memoryReasoning);
+            try {
+                debug(`Queue: reasoning effort ${overrides.reasoning_effort ?? 'as the preset has it'}.`);
+                return await context.ConnectionManagerRequestService.sendRequest(
+                    memoryProfileId, request.messages, request.maxTokens,
+                    { stream: false, signal, includePreset: true, includeInstruct: true },
+                    overrides,
+                );
+            } catch (err) {
+                const effort = overrides.reasoning_effort;
+                if (!effort || signal.aborted || !isBadRequest(err)) throw err;
+                latchRefusal(context, config, key, new Set([...refused, effort]));
+                toastOnce(EFFORT_REFUSED(effort));
+                counting.calls++;
+            }
+        }
+    }
+
+    function tallyOf(kind) {
+        return { summary: summaries, state: state.tally, 'index batch': indexer.tally, 'canon pick': canon.tally }[kind];
+    }
+
+    function kindOf(tally) {
+        if (tally === summaries) return 'a summary';
+        if (tally === state.tally) return 'a state update';
+        if (tally === indexer.tally) return 'an index batch';
+        if (tally === canon.tally) return 'a canon pick';
+        return 'a request';
     }
 
     /** The oldest asked-for message still in the chat, or undefined. */
@@ -292,6 +367,7 @@ export function createSummarizer(getContext, {
     }
 
     function discard(kind, index, why) {
+        tallyOf(kind)?.discard(why);
         debug(`Discarded the ${kind} for message #${index}: ${why}.`);
         return false;
     }
@@ -338,9 +414,33 @@ export function createSummarizer(getContext, {
         }
     }
 
-    /** Not awaited: ST awaits this event before it renders the reply (public/script.js:6781-6782). */
-    function onMessageReceived() {
-        drain();
+    /** Activity in the open chat: from here on its queue may run. */
+    function act(why) {
+        activeIn = getContext().chatId;
+        return drain(why);
+    }
+
+    /**
+     * Not awaited: ST awaits this event before it renders the reply (public/script.js:6781-6782).
+     * A greeting is not a reply: ST emits one as `first_message` every time a chat holding
+     * only the greeting is opened (:7703-7706), so it runs only a queue already unlocked.
+     */
+    function onMessageReceived(_index, type) {
+        if (type === 'first_message') drain('a greeting');
+        else act('a reply');
+    }
+
+    /**
+     * A generation the user started: a send, a swipe, a continue or an impersonate
+     * (public/script.js:4299). It unlocks the queue without running it: work starts when
+     * the reply lands, so a generation never races a state update reading its own prompt.
+     * ST's dry runs, which the prompt manager makes on opening a chat, and quiet
+     * generations another extension starts are not the user's.
+     */
+    function onGenerationStarted(type, _params, dryRun) {
+        if (dryRun || type === 'quiet') return;
+        if (activeIn !== getContext().chatId) debug('Queue: a generation — memory work starts with the reply.');
+        activeIn = getContext().chatId;
     }
 
     /**
@@ -349,7 +449,7 @@ export function createSummarizer(getContext, {
      * Not awaited, for the same reason as above.
      */
     function onMessageEdited() {
-        drain();
+        act('an edit');
     }
 
     /**
@@ -379,7 +479,7 @@ export function createSummarizer(getContext, {
         if (message !== writing && !asked.includes(message)) {
             summaries.forget(sceneKey(context.chatId, message));
             asked.push(message);
-            drain();
+            act(`a resummarise of #${index}`);
         }
         return { queued: true };
     }
@@ -396,11 +496,12 @@ export function createSummarizer(getContext, {
             statsChat = chatId;
         }
         notify();
-        drain();
+        drain('a chat change');
     }
 
     const listeners = [
         ['MESSAGE_RECEIVED', onMessageReceived],
+        ['GENERATION_STARTED', onGenerationStarted],
         ['MESSAGE_EDITED', onMessageEdited],
         ['CHAT_CHANGED', onChatChanged],
     ];
@@ -412,7 +513,7 @@ export function createSummarizer(getContext, {
             for (const [event, listener] of listeners) eventSource.on(eventTypes[event], listener);
             statsChat = chatId;
             running = true;
-            drain();
+            drain('start');
         },
 
         stop() {
@@ -460,7 +561,9 @@ export function createSummarizer(getContext, {
                 const context = getContext();
                 const profile = memoryProfile(context, config.memoryProfileId);
                 status.model = profile?.model ?? null;
-                status.reasoning = requestOverrides(context, profile).reasoning_effort ?? null;
+                status.reasoning = requestOverrides(
+                    context, profile, refusedFor(config, refusalKey(profile)), config.memoryReasoning,
+                ).reasoning_effort ?? null;
                 status.pending = pendingScenes(context.chat).length;
                 status.failed = failed();
                 status.givenUp = status.failed.filter((entry) => entry.attempts >= MAX_ATTEMPTS).map((entry) => entry.index);

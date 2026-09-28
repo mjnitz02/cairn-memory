@@ -16,10 +16,25 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
   billed for it: in one chat GLM-5.3 cost ten times what GLM-4.7 did for worse
   results. Cairn now asks for no reasoning on OpenRouter; on other sources, turn it
   off in the profile's preset. An empty or cut-off reply now says this in its toast.
+  Some providers cannot stop a model reasoning and refuse the request; Cairn then asks
+  for less, then for whatever the preset says, and remembers that for the session.
 - **A failing index batch gives up after three tries.** It used to be retried after
   every reply, because each new summary made it count as a new batch.
 - **The inspector log names the memory model** (`memory_model`) and whether Cairn
   asked it not to reason (`memory_reasoning`).
+
+- **Opening a chat no longer makes any memory calls.** Cairn used to catch up on
+  leftover work the moment a chat opened, so clicking the wrong character cost
+  money. It now waits until you send, generate, edit or resummarise in that chat.
+- **A "Memory model reasoning" setting**: None (the default), Low, or the profile's
+  own preset. If a provider refuses None, Cairn remembers it for that model, so
+  later page loads don't pay for the refusal again.
+- **Debug logging shows what the queue sends and why**: which event started it,
+  which kind of call, and the reasoning effort asked for.
+- **The inspector log counts thrown-away replies.** A reply that arrives after its
+  messages changed is discarded rather than stored; each kind now logs how many it
+  discarded and why (`state_discarded`, `state_last_discard`, and the same for
+  summaries, the index and canon), so a missing world state can be explained.
 
 ### Fixed
 

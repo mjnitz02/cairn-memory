@@ -6,7 +6,7 @@ import { refusalMessage } from '../src/ui/resummarise-button.js';
 import { resetToasts } from '../src/util/log.js';
 import { badOutputs, createRequestService, deferred } from './mocks/llm.js';
 import { cairnSummary, makeMixedChat } from './mocks/cairn.js';
-import { createContext } from './mocks/sillytavern.js';
+import { createContext, startActive } from './mocks/sillytavern.js';
 
 /**
  * Summarising a message on the user's word (docs/decisions.md D-0050): the same request
@@ -37,6 +37,7 @@ function harness({ responses = [], settings = {}, chat, context: contextOptions 
         // own tests in test/index-queue.test.js.
         memory: () => ({ writing: false }),
     });
+    startActive(summarizer, context);
     return { context, service, summarizer };
 }
 

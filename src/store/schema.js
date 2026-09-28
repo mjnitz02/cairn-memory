@@ -137,6 +137,16 @@ export const DEFAULT_SETTINGS = Object.freeze({
     /** Messages kept raw behind the summaries, and how far the see-saw steps (D-0068). */
     rawWindow: RAW_WINDOW,
     step: STEP,
+    /**
+     * How much the memory model may reason: `none`, `low`, or `preset` to leave it to the
+     * profile's preset (docs/decisions.md D-0086, D-0088). Asked only of OpenRouter.
+     */
+    memoryReasoning: 'none',
+    /**
+     * Efforts a profile's model has refused, by `refusalKey`, so a reload does not pay for
+     * the refusal again (D-0088). Cleared when `memoryReasoning` changes.
+     */
+    reasoningRefused: {},
 });
 
 /**

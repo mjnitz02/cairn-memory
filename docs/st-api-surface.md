@@ -140,6 +140,8 @@ literally against the cited line.
 | `bodyParams['reasoning']['effort'] = request.body.reasoning_effort;` | OpenRouter's backend sends it as `reasoning.effort` | `src/endpoints/backends/chat-completions.js` | 2349 |
 | `return 'none';` | `none` is what ST itself sends OpenRouter for "Minimum" with thoughts hidden | `public/scripts/openai.js` | 2620 |
 | `generate_data.custom_include_body = substituteParams(settings.custom_include_body);` | A preset's include-body YAML only reaches a Custom source, so an OpenRouter profile's only reasoning lever is the effort | `public/scripts/openai.js` | 2924 |
+| `console.error('Chat completion request error: ', message, responseText);` | The provider's reason goes to the server console; the browser gets only the status text, so a refused effort is known by `Bad Request` (D-0087) | `src/endpoints/backends/chat-completions.js` | 2707 |
+| `generate_data.provider = settings.openrouter_providers;` | A preset's provider list is sent only when the preset's own source is OpenRouter | `public/scripts/openai.js` | 2890 |
 | `'openrouter': {` | A profile's `api` of `openrouter` resolves to the OpenRouter chat completion source | `public/scripts/slash-commands.js` | 191 |
 | `CONNECT_API_MAP,` | The map is on the context, so Cairn resolves a profile's source as ST does | `public/scripts/st-context.js` | 285 |
 | `disabledExtensions.includes('connection-manager')` | `sendRequest` refuses outright without Connection Manager, so the summarizer checks first | `public/scripts/extensions/shared.js` | 427 |
@@ -154,6 +156,10 @@ literally against the cited line.
 | `event_types.MESSAGE_RECEIVED, this.messageId, this.type` | ...and for a streamed one | `public/script.js` | 3799 |
 | `!fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);` | ...and for a generated swipe, so the state that read the replaced reply is redone | `public/script.js` | 6691 |
 | `!fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);` | ...and for a continue, whose text is appended to the reply first (:6701) | `public/script.js` | 6716 |
+| `GENERATION_STARTED: 'generation_started',` | Event name; a generation the user starts unlocks the queue for that chat (D-0088) | `public/scripts/events.js` | 23 |
+| `await eventSource.emit(event_types.GENERATION_STARTED, type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage }, dryRun);` | ...emitted with the type and whether it is a dry run, so dry runs and `quiet` generations are told apart | `public/script.js` | 4299 |
+| `return Generate('normal', {}, true);` | The prompt manager dry-runs a generation when a chat opens, which must not count as activity | `public/scripts/openai.js` | 709 |
+| `await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, 'first_message');` | Opening a greeting-only chat re-emits the greeting as a reply every time, so `first_message` is not activity | `public/script.js` | 7705 |
 | `MESSAGE_EDITED` | Event name; a trigger, so an edited message's summary and state are redone without waiting for a reply | `public/scripts/events.js` | 10 |
 | `mes.mes = text;` | `updateMessage` writes the edit to the message... | `public/script.js` | 8178 |
 | `await eventSource.emit(event_types.MESSAGE_EDITED, this_edit_mes_id);` | ...before the event, which is awaited before the message is re-rendered | `public/script.js` | 8405 |
