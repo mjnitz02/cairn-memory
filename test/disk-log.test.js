@@ -396,6 +396,7 @@ describe('disk log — P2 summaries', () => {
     const status = {
         gate: 'ready', inFlight: 12, pending: 2, givenUp: [9], calls: 7, written: 5, failures: 2,
         lastReason: 'truncated', ms: 48_300, lastMs: 6_900, tokensIn: 7_084, tokensOut: 777, promptDefault: true,
+        model: 'z-ai/glm-5.3', reasoning: 'none',
     };
 
     async function line(overrides) {
@@ -428,6 +429,19 @@ describe('disk log — P2 summaries', () => {
             summary_prompt_default: true,
             prompt_near_limit: false,
         });
+    });
+
+    it('says which model the memory calls went to, and whether Cairn asked it not to reason (D-0086)', async () => {
+        expect(await line({ memory, summaries: status })).toMatchObject({
+            memory_model: 'z-ai/glm-5.3',
+            memory_reasoning: 'none',
+        });
+    });
+
+    it('leaves both null when there is no profile to name', async () => {
+        const unasked = await line({ memory, summaries: { ...status, model: null, reasoning: null } });
+        expect(unasked.memory_model).toBeNull();
+        expect(unasked.memory_reasoning).toBeNull();
     });
 
     it('no longer carries a cap type: there is only one kind of cap', async () => {

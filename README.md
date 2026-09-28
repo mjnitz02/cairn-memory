@@ -45,7 +45,8 @@ set of retrievable past events.
 
 - SillyTavern **1.19.0** or newer
 - A second connection profile for memory work: a strong non-roleplay model,
-  GLM-4.7 class or better.
+  GLM-4.7 class or better, with reasoning off. Cairn turns it off itself on an
+  OpenRouter profile; on any other source, turn it off in the profile's preset.
 - Single-character chats. Group chats are not supported.
 
 ## Install

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MAX_ATTEMPTS, createSummarizer } from '../src/pipeline/summarizer.js';
+import { MAX_ATTEMPTS, createSummarizer, failureDetail } from '../src/pipeline/summarizer.js';
 import { DEFAULT_SUMMARY_PROMPT, SUMMARY_MAX_TOKENS, perMessage } from '../src/memory/scene-strategy.js';
 import { QVINK_EXTENSION, pendingScenes } from '../src/memory/scenes.js';
 import { readScene } from '../src/store/chat-store.js';
@@ -299,6 +299,37 @@ describe('when it runs', () => {
 });
 
 /** docs/decisions.md D-0037: before writing, the chat, the message and its text are all checked again. */
+describe('what it asks of the memory model (D-0086)', () => {
+    const profile = (api) => ({ ...MEMORY, mode: 'cc', api, model: 'z-ai/glm-5.3' });
+
+    it('asks an OpenRouter profile for no reasoning on every call', async () => {
+        const { service, summarizer } = harness({
+            responses: [summary(10), summary(11), summary(12)],
+            context: { profiles: [profile('openrouter'), ROLEPLAY] },
+        });
+
+        summarizer.start();
+        await summarizer.idle();
+
+        expect(service.calls).toHaveLength(3);
+        expect(service.calls.every((call) => call.overridePayload.reasoning_effort === 'none')).toBe(true);
+        expect(summarizer.status).toMatchObject({ model: 'z-ai/glm-5.3', reasoning: 'none' });
+    });
+
+    it('asks nothing of another source, and still reports the model', async () => {
+        const { service, summarizer } = harness({
+            responses: [summary(10), summary(11), summary(12)],
+            context: { profiles: [profile('custom'), ROLEPLAY] },
+        });
+
+        summarizer.start();
+        await summarizer.idle();
+
+        expect(service.calls.every((call) => Object.keys(call.overridePayload).length === 0)).toBe(true);
+        expect(summarizer.status).toMatchObject({ model: 'z-ai/glm-5.3', reasoning: null });
+    });
+});
+
 describe('a reply that arrives after the world moved on', () => {
     it('is discarded when you have left the chat, and the request is aborted', async () => {
         const answer = deferred();
@@ -418,6 +449,19 @@ describe('failure', () => {
 
         expect([10, 11, 12].map((index) => context.chat[index].extra.cairn.scene.text)).toEqual([summary(10), summary(11), summary(12)]);
         expect(warning).not.toHaveBeenCalled();
+    });
+
+    it('names the likely cause when a reply comes back empty or cut off (D-0086)', async () => {
+        const { summarizer } = harness({ responses: [badOutputs.empty()] });
+
+        summarizer.start();
+        await summarizer.idle();
+        expect(warning.mock.calls[0][0]).toMatch(/spent its reply budget reasoning/);
+
+        // A refusal or an outage says nothing about the budget.
+        expect(failureDetail('It failed.', 'refusal')).toBe('It failed.');
+        expect(failureDetail('It failed.', 'error')).toBe('It failed.');
+        expect(failureDetail('It failed.', 'truncated')).toMatch(/reasoning/);
     });
 
     it('writes nothing for a thrown error, and toasts once', async () => {

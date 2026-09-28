@@ -6,7 +6,7 @@ import { readIndex, readScene, writeScene } from '../src/store/chat-store.js';
 import { resetToasts } from '../src/util/log.js';
 import { badIndexOutputs, createRequestService, deferred } from './mocks/llm.js';
 import { cairnSummary, makeMixedChat } from './mocks/cairn.js';
-import { createContext } from './mocks/sillytavern.js';
+import { createContext, openChat } from './mocks/sillytavern.js';
 
 /**
  * The queue's index job (docs/decisions.md D-0070, D-0075): one batch of summaries at a
@@ -204,6 +204,36 @@ describe('when a batch fails', () => {
         await summarizer.drain();
         expect(service.calls.filter(isIndexCall)).toHaveLength(MAX_ATTEMPTS);
         expect(indexed(chat)).toBe(0);
+    });
+});
+
+describe('a batch that grows while it fails (D-0086)', () => {
+    it('still gives up: attempts count from where the batch starts, not its whole range', async () => {
+        // Every message summarised, so each new reply's summary joins the batch that keeps failing.
+        const chat = makeMixedChat({ length: 8, qvinkThrough: -1, cairnThrough: 7 });
+        const { context, service, summarizer } = harness({ responses: Array(MAX_ATTEMPTS + 1).fill(''), chat });
+
+        summarizer.start();
+        await summarizer.idle();
+        for (let i = 1; i < MAX_ATTEMPTS + 1; i++) {
+            const at = context.chat.length;
+            context.chat.push({ name: 'Aster', is_user: false, mes: `A later reply ${i}.`, extra: {} });
+            writeScene(context.chat[at], { text: `Wren settled matter ${at}.`, prompt: 'p', at: new Date(CLOCK).toISOString() });
+            await summarizer.drain();
+        }
+
+        expect(service.calls.filter(isIndexCall)).toHaveLength(MAX_ATTEMPTS);
+        expect(summarizer.status.index.givenUp).toBe(true);
+    });
+
+    it('starts its counts again in a new chat', async () => {
+        const { context, summarizer } = harness({ responses: [''] });
+        summarizer.start();
+        await summarizer.idle();
+        expect(summarizer.status.index.failures).toBe(1);
+
+        await openChat(context, { chatId: 'another-chat', messages: [] });
+        expect(summarizer.status.index).toMatchObject({ calls: 0, failures: 0 });
     });
 });
 

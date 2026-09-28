@@ -31,8 +31,11 @@ import { MAX_ATTEMPTS, createTally } from './tally.js';
 export function createIndexJob({ getContext, send, save, discard, report, clock, strategy = indexBatch }) {
     const batches = createTally({ records: 0, dropped: 0, clipped: 0, missed: 0 });
 
-    /** A batch is tried again once the range it would read moves on. */
-    const key = (chatId, job) => `${chatId}\n${job[0].index}\n${job[job.length - 1].index}`;
+    /**
+     * Keyed on where the batch starts, not its whole range: the range grows with every
+     * reply, and a key that grows with it never gives up (docs/decisions.md D-0086).
+     */
+    const key = (chatId, job) => `${chatId}\n${job[0].index}`;
     const span = (job) => `#${job[0].index}–#${job[job.length - 1].index}`;
 
     function fail(chatId, job, reason, err) {

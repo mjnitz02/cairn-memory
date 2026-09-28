@@ -8,6 +8,48 @@ what we believed and why it changed.
 
 ---
 
+## D-0086 — Memory calls ask for no reasoning, and a growing index batch still gives up
+**2026-09-28.** The first chain played entirely on Cairn (18 real messages, long on both sides) ran
+its memory profile on GLM-5.3 through OpenRouter, then GLM-4.7 through a custom endpoint with
+reasoning off. OpenRouter's activity export, filtered to this chat:
+
+| | calls | cost | completion tokens | of which reasoning | hit the cap |
+|---|---|---|---|---|---|
+| GLM-5.3 | 13 | $0.196 | 37,765 | 36,453 (96.5%) | 6 |
+| GLM-4.7 | 18 | $0.020 | 4,622 | 0 | 0 |
+
+Four 5.3 index batches spent all 6,144 tokens reasoning and returned nothing: 61% of the bill for
+no output. The 5.3 summaries that did land averaged ~140 words against 4.7's ~95. Yet 5.3 was the
+best model at 0d (D-0084), where it reasoned 1–383 tokens a call: **what made it good was never
+the reasoning.** In play the preset's `reasoning_effort: auto` sent no effort, ST's OpenRouter path
+hides reasoning rather than stopping it (`chat-completions.js:2306-2312`), and the preset's
+include-body YAML only reaches a Custom source (`openai.js:2922-2924`) — which is why Matt had to
+build a bare Custom profile to switch it off.
+
+**1. Every memory request asks for no reasoning.** For an OpenRouter profile Cairn passes
+`reasoning_effort: 'none'` as `sendRequest`'s override, which lands after the preset
+(`custom-request.js:605`) and is the value ST itself sends for "Minimum" (`openai.js:2620`). Other
+sources get nothing: they forward the value unchecked and not every provider accepts `none`. No
+setting (CLAUDE.md §4.15): summarising under a thousand tokens of text needs no thinking, and no
+run has shown a memory output that did.
+
+**2. An index batch is keyed on where it starts** (supersedes D-0075's "tried again once the range
+it would read moves on"). The range grew by a summary or two every reply, so the key changed, the
+count restarted, and a failing batch was retried every turn and never given up — the four $0.03
+calls above. Now it gives up after `MAX_ATTEMPTS` and is tried again after a reload.
+
+**3. An `empty` or `truncated` failure says why in its toast**, the log carries `memory_model` and
+`memory_reasoning` (the switch between models had to be read off latency), and a chat change
+resets the index counts as it already did the other three kinds'.
+
+**Not decided here: the summary prompt.** 5.3's density may be partly the reasoning; the prompt is
+judged on output made without it.
+
+**Reopens if:** an OpenRouter provider ignores `effort: none` (the activity export shows reasoning
+tokens on a Cairn call), or a memory output is shown to need reasoning.
+
+---
+
 ## D-0085 — Usable before tuned: the budget and the prompts are settings, caps are soft and hard, the pick loses the kind, and the log is per chat
 **2026-09-26.** Matt's call after 0d (D-0084): the margins 0d measured are too narrow to tune the
 prompts against one chat, so the next step is a build that can be installed and played on several
