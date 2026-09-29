@@ -10,7 +10,7 @@ import { createLoreCap } from './src/prompt/lore-cap.js';
 import { createObserver } from './src/prompt/observer.js';
 import { createStatePlacement } from './src/prompt/state-placement.js';
 import { createSummarizer } from './src/pipeline/summarizer.js';
-import { migrateSettings } from './src/store/schema.js';
+import { migrateSettings } from './src/settings.js';
 import { createChatMarks } from './src/ui/chat-marks.js';
 import { createInspector } from './src/ui/inspector.js';
 import { renderSettingsPanel } from './src/ui/panel.js';

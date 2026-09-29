@@ -39,7 +39,7 @@ export async function renderSettingsPanel(context, handlers = {}) {
     bind(context, 'worldState', CHECKBOX, (value) => handlers.onWorldStateChange?.(value));
     bind(context, 'keepCanon', CHECKBOX, (value) => handlers.onKeepCanonChange?.(value));
     // The budget and the pick are planned afresh every generation, so these need no
-    // handler: a changed slot count makes the next plan's pick due (pipeline/compactor.js).
+    // handler: a changed slot count makes the next plan's pick due (pipeline/canon-pick.js).
     bind(context, 'canonSlots', wholeNumber());
     for (const key of ['memoryFraction', 'canonFraction', 'compactFraction']) bind(context, key, PERCENT);
     bind(context, 'rawWindow', wholeNumber({ min: 1 }));

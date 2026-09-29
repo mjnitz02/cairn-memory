@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MIN_INDEX_RECORDS, applyPick, indexRecords, pendingPick } from '../src/pipeline/compactor.js';
-import { readIndex } from '../src/store/chat-store.js';
-import { cairnIndexStore } from './mocks/cairn.js';
-import { makeQvinkChat } from './mocks/qvink.js';
+import { MIN_INDEX_RECORDS, applyPick, pendingPick } from '../src/pipeline/canon-pick.js';
 
 /** An index of `count` records over messages 0, 1, 2 … — the pick's whole input. */
 const records = (count, from = 0) =>
@@ -65,32 +62,6 @@ describe('when a canon pick is due', () => {
 
         expect(due.records).toHaveLength(200);
         expect(due.covers).toEqual([0, 199]);
-    });
-});
-
-describe('the index the pick reads', () => {
-    it('is every valid record in the chat, oldest first, with its message', () => {
-        const chat = makeQvinkChat({ length: 12 });
-        for (const index of [2, 5, 9]) {
-            chat[index].extra.cairn = cairnIndexStore(chat[index], `Summary ${index}.`, { what: `Thing ${index}` });
-        }
-
-        expect(indexRecords(chat, { readIndex }).map((entry) => entry.index)).toEqual([2, 5, 9]);
-        expect(indexRecords(chat, { readIndex })[1].record.what).toBe('Thing 5');
-    });
-
-    it('leaves out a record whose summary was resummarised away', () => {
-        const chat = makeQvinkChat({ length: 12 });
-        chat[2].extra.cairn = cairnIndexStore(chat[2], 'Summary 2.');
-        chat[5].extra.cairn = cairnIndexStore(chat[5], 'Summary 5.');
-        chat[5].extra.cairn.scene.text = 'A different summary entirely.';
-
-        expect(indexRecords(chat, { readIndex }).map((entry) => entry.index)).toEqual([2]);
-    });
-
-    it('is empty for a chat with no records at all', () => {
-        expect(indexRecords(makeQvinkChat({ length: 8 }), { readIndex })).toEqual([]);
-        expect(indexRecords(null, { readIndex })).toEqual([]);
     });
 });
 

@@ -24,11 +24,11 @@ const DECISION = /\bD-(\d{4})\b/g;
  * comments and docs cite them. The lookbehind keeps ST's own paths
  * (`public/scripts/...`) and relative imports (`../util/log.js`) out.
  */
-const SOURCE = /(?<![\w./-])(?:src\/)?((?:pipeline|memory|prompt|store|ui|util)\/[\w-]+\.js)\b/g;
+const SOURCE = /(?<![\w./-])(?:src\/)?((?:interop|pipeline|memory|prompt|store|ui|util)\/[\w-]+\.js)\b/g;
 /** Interfaces DESIGN.md §11 names before they exist; a citation of one is a plan, not a pointer. */
 const PLANNED = new Set(['store/entity-index.js']);
 /** Dated records: they name files as they were then, and a later move does not rewrite them (CLAUDE.md §6.26). */
-const RECORDS = new Set(['CHANGELOG.md', 'docs/decisions.md', 'docs/p4-plan.md']);
+const RECORDS = new Set(['CHANGELOG.md', 'docs/decisions.md', 'docs/p4-plan.md', 'docs/p5-plan.md']);
 
 const decisions = new Set(
     [...readFileSync('docs/decisions.md', 'utf8').matchAll(/^## D-(\d{4})\b/gm)].map((match) => match[1]),

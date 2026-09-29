@@ -21,7 +21,7 @@ import { REPO, complete, freshDir, loadKey, log, outsideRepo, pad, say, slugOf }
 import { indexBatch, parseIndexReply } from '../src/memory/index-strategy.js';
 import { canonPick, parseCanonReply } from '../src/memory/canon-strategy.js';
 import { DEFAULT_SLOTS } from '../src/memory/canon.js';
-import { applyPick } from '../src/pipeline/compactor.js';
+import { applyPick } from '../src/pipeline/canon-pick.js';
 
 const DEFAULT_DIR = path.join(homedir(), 'workspaces', 'cairn-corpus', 'p5-stage0');
 const RECORDS = 'records-replay.json';

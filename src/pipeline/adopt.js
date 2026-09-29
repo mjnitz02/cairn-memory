@@ -20,7 +20,8 @@ import { canonFor, MIN_SLOTS } from '../memory/canon.js';
 import { readScenes } from '../memory/scenes.js';
 import { clearDerived, readCanon, readIndex, readScene, writeScene } from '../store/chat-store.js';
 import { MAX_BATCH } from '../memory/index-strategy.js';
-import { MIN_INDEX_RECORDS, indexRecords } from './compactor.js';
+import { MIN_INDEX_RECORDS } from './canon-pick.js';
+import { indexRecords, pendingIndex } from './index-reads.js';
 import { debug } from '../util/log.js';
 
 /** What an imported summary stores as its prompt: it came from Qvink, not from a prompt of ours. */
@@ -119,13 +120,7 @@ export function createAdoption({ getContext, summarise, indexer, canon, save, cl
 
     /** Index every summary up to `through` that has no record, a batch at a time. */
     async function indexThrough(config, through) {
-        const { chat } = getContext();
-        const waiting = chat.flatMap((message, index) => {
-            if (index > through) return [];
-            const scene = readScene(message);
-            if (scene.status !== 'valid' || readIndex(message).status === 'valid') return [];
-            return [{ index, text: scene.scene.text }];
-        });
+        const waiting = pendingIndex(getContext().chat, { readScene, readIndex }, { through });
         for (let start = 0; start < waiting.length; start += MAX_BATCH) {
             await indexer.run(getContext(), config, waiting.slice(start, start + MAX_BATCH));
         }

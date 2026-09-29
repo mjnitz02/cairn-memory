@@ -13,17 +13,16 @@
  * summary, branch away from the scene, and the fact goes with it, with no rollback code
  * — the same shape as the state tier and the old fold (D-0045). A fact whose every
  * source is gone is dropped on read and counted, and the count is what says a
- * re-derivation is due (pipeline/compactor.js `pendingPick`).
+ * re-derivation is due (pipeline/canon-pick.js `pendingPick`).
  *
  * The fold reads **one** batch: the newest at or before `through`. The whole point of a
  * pick is that it supersedes, so a union over batches would be the bag again, and an
  * older batch would go on asserting what the newer one deliberately left out.
  *
  * Pure: plain data in, plain data out, and **the store's readers come in as arguments**
- * as they do for `pendingIndex` (pipeline/compactor.js §1.3). Importing them would make
- * this module part of a cycle — `store/schema.js` holds the default slot count's home in
- * `DEFAULT_SETTINGS`, and `store/chat-store.js` reads that schema — and a cycle that only
- * shows up outside the test runner is the worst kind.
+ * as they do for `pendingIndex` (pipeline/index-reads.js). That was D-0079's fix for a
+ * cycle through the settings defaults, which now live in settings.js; the lint rule
+ * keeping `store/` out of the layers above it stops the cycle coming back.
  */
 
 /**

@@ -3,8 +3,8 @@
  * The reasons are what the panel and the log show (src/ui/inspector.js,
  * src/util/disk-log.js), so a closed gate never looks like an idle queue.
  */
-import { qvinkSummarising } from '../memory/scenes.js';
-import { wtrackerLoaded } from '../memory/state.js';
+import { qvinkSummarising } from '../interop/qvink.js';
+import { wtrackerLoaded } from '../interop/wtracker.js';
 
 /**
  * Whether Cairn may summarise in this chat now, and if not, why.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_LORE_CAP, createLoreCap } from '../src/prompt/lore-cap.js';
-import { DEFAULT_SETTINGS, migrateSettings } from '../src/store/schema.js';
+import { DEFAULT_SETTINGS, migrateSettings } from '../src/settings.js';
 import { makeWorldInfoModule } from './mocks/world-info.js';
 
 /**
@@ -120,7 +120,7 @@ describe('the lorebook cap as a setting', () => {
     });
 
     it('reaches an install that predates it, without a version bump', () => {
-        // Adding a key with a default needs no migration (store/schema.js).
+        // Adding a key with a default needs no migration (settings.js).
         const older = migrateSettings({ version: 1, enabled: true, holdWorldInfo: false });
 
         expect(older.loreCap).toBe(DEFAULT_LORE_CAP);

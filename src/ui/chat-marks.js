@@ -11,8 +11,10 @@
  * `markMessages` and `renderMark` are pure. `createChatMarks` is the DOM glue.
  */
 import { SLUG } from '../constants.js';
-import { pendingScenes, qvinkDisplaying, readScenes } from '../memory/scenes.js';
-import { usableState, wtrackerLoaded } from '../memory/state.js';
+import { pendingScenes, readScenes } from '../memory/scenes.js';
+import { qvinkDisplaying } from '../interop/qvink.js';
+import { usableState } from '../memory/state.js';
+import { wtrackerLoaded } from '../interop/wtracker.js';
 import { canonTexts } from './canon-section.js';
 import { renderState } from '../memory/state-schema.js';
 import { MAX_ATTEMPTS } from '../pipeline/tally.js';

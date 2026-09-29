@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_ATTEMPTS } from '../src/pipeline/tally.js';
-import { QVINK_EXTENSION, readScenes } from '../src/memory/scenes.js';
+import { readScenes } from '../src/memory/scenes.js';
+import { QVINK_EXTENSION } from '../src/interop/qvink.js';
 import { readScene } from '../src/store/chat-store.js';
 import { refusalMessage } from '../src/ui/resummarise-button.js';
 import { badOutputs, deferred } from './mocks/llm.js';

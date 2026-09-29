@@ -32,7 +32,7 @@ function makeChat(length) {
  * The pending pick is worked out in the assembler, so it comes in through `memory`
  * exactly as index.js wires it. These tests stand that getter in directly, which is
  * also how they say what a pick is *given* rather than how it is worked out —
- * test/compactor.test.js covers the working-out.
+ * test/canon-pick.test.js covers the working-out.
  */
 
 const CLOCK = Date.parse('2026-09-17T09:00:00.000Z');
@@ -84,7 +84,7 @@ function harness({ chat, memory, ...options } = {}) {
         defaults: { worldState: false },
         clock: () => CLOCK,
         // `pendingPick` in miniature: a pick stops being due once a batch in the chat
-        // has read that far (pipeline/compactor.js).
+        // has read that far (pipeline/canon-pick.js).
         memory: memory ?? (() => {
             const covered = canonFor(live, READERS).coveredThrough;
             return pass(live, { due: covered === null || covered < 3 });

@@ -20,7 +20,7 @@
 import { canonPick } from '../memory/canon-strategy.js';
 import { writeCanon } from '../store/chat-store.js';
 import { debug, warn } from '../util/log.js';
-import { applyPick } from './compactor.js';
+import { applyPick } from './canon-pick.js';
 import { MAX_ATTEMPTS, createTally } from './tally.js';
 
 /**

@@ -31,12 +31,14 @@
  * counted from the block itself, so the same chat always gets the same block and
  * nothing learned last turn can bend this one (docs/decisions.md D-0033, D-0052).
  */
-import { pendingScenes, qvinkExcluding, qvinkInjecting, readScenes } from '../memory/scenes.js';
+import { pendingScenes, readScenes } from '../memory/scenes.js';
+import { qvinkExcluding, qvinkInjecting } from '../interop/qvink.js';
 import { compactLine } from '../memory/index-record.js';
 import { readCanon, readIndex } from '../store/chat-store.js';
 import { admitCanon, canonFor, slotsFor } from '../memory/canon.js';
 import { canonCap, createBudget, deriveCap, recoupled, tierSplit } from '../pipeline/budgeter.js';
-import { indexRecords, pendingPick } from '../pipeline/compactor.js';
+import { pendingPick } from '../pipeline/canon-pick.js';
+import { indexRecords } from '../pipeline/index-reads.js';
 import { FIRST_TURN, createSeeSaw } from '../pipeline/scheduler.js';
 import { createExamplesLatch, examplesSuperseded } from '../memory/examples.js';
 import { assessHandover } from './handover.js';
@@ -351,7 +353,7 @@ export function createAssembler(getContext, {
         const stuck = recoupled({ fullCap: fit.fullCap, floor: fit.floor, stepTokens });
 
         // Whether a canon pick is due. Nothing about this turn's budget goes into it
-        // any more (pipeline/compactor.js): a pick is due when the index has moved past
+        // any more (pipeline/canon-pick.js): a pick is due when the index has moved past
         // what the last one read, not when the prompt is under pressure — which is the
         // single change D-0062's three gaps reduce to. The summarizer reads it through a
         // getter and runs it after the reply lands; it carries the chat's own records,

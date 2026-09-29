@@ -195,7 +195,7 @@ export function readCanon(message) {
  * `slots` is what the pick was *asked* for, and it is stored rather than derived
  * because a short answer has to be distinguishable from an unanswered question — a
  * four-fact reply to a ten-slot pick is a spine, not work still to do
- * (pipeline/compactor.js `pendingPick`).
+ * (pipeline/canon-pick.js `pendingPick`).
  *
  * @param {Array<object>} chat The live chat.
  * @param {number} index The newest message the pick read.

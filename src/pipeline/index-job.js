@@ -21,7 +21,7 @@
 import { indexBatch, MAX_BATCH } from '../memory/index-strategy.js';
 import { readIndex, readScene, writeIndex } from '../store/chat-store.js';
 import { debug, warn } from '../util/log.js';
-import { pendingIndex } from './compactor.js';
+import { pendingIndex } from './index-reads.js';
 import { MAX_ATTEMPTS, createTally } from './tally.js';
 
 /**

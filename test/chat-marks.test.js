@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { STATE_WRITING_HTML, markMessages, renderMark, stateTexts, stateWriting } from '../src/ui/chat-marks.js';
-import { QVINK_EXTENSION, qvinkDisplaying } from '../src/memory/scenes.js';
+import { QVINK_EXTENSION, qvinkDisplaying } from '../src/interop/qvink.js';
 import { STATE_HEADER } from '../src/memory/state-schema.js';
 import { writeState } from '../src/store/chat-store.js';
 import { createSummarizer } from '../src/pipeline/summarizer.js';

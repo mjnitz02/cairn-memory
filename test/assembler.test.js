@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BLOCK_PLACEMENT, BLOCK_RENDERING, blockChars, createAssembler, renderBlock } from '../src/prompt/assembler.js';
-import { QVINK_EXTENSION, readScenes } from '../src/memory/scenes.js';
+import { readScenes } from '../src/memory/scenes.js';
+import { QVINK_EXTENSION } from '../src/interop/qvink.js';
 import { CAP_FRACTION, createBudget } from '../src/pipeline/budgeter.js';
 import { RAW_WINDOW, STEP, createSeeSaw } from '../src/pipeline/scheduler.js';
 import { createObserver } from '../src/prompt/observer.js';

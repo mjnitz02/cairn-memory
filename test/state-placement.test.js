@@ -3,7 +3,7 @@ import { createSummarizer } from '../src/pipeline/summarizer.js';
 import { createInjector, MEMORY_INJECTION } from '../src/prompt/injector.js';
 import { buildInventory, summarizeInventory } from '../src/prompt/inventory.js';
 import { STATE_INJECTION, createStatePlacement, placeState } from '../src/prompt/state-placement.js';
-import { WTRACKERS } from '../src/memory/state.js';
+import { WTRACKERS } from '../src/interop/wtracker.js';
 import { MAX_STATE_CHARS, renderState } from '../src/memory/state-schema.js';
 import { readState } from '../src/store/chat-store.js';
 import { createRequestService, deferred } from './mocks/llm.js';

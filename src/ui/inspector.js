@@ -557,7 +557,7 @@ function describeCompaction(status) {
         return `a pick is due over ${fmt(status.pending.records)} records `
             + `(#${status.pending.covers[0]}\u2013#${status.pending.covers[1]}), ${fmt(status.pending.slots)} slots`;
     }
-    // The reasons a pick is not due, in the queue's own words (pipeline/compactor.js).
+    // The reasons a pick is not due, in the queue's own words (pipeline/canon-pick.js).
     if (status.reason === 'too-few') return 'waiting \u2014 too few records to rank yet';
     if (status.reason === 'covered') return 'chosen, and up to date with the index';
     return 'nothing to choose from yet';

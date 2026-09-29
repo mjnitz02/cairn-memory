@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createSummarizer } from '../src/pipeline/summarizer.js';
 import { MAX_ATTEMPTS } from '../src/pipeline/tally.js';
-import { QVINK_EXTENSION } from '../src/memory/scenes.js';
-import { pendingStateJob, WTRACKERS } from '../src/memory/state.js';
+import { QVINK_EXTENSION } from '../src/interop/qvink.js';
+import { pendingStateJob } from '../src/memory/state.js';
+import { WTRACKERS } from '../src/interop/wtracker.js';
 import { STATE_MAX_TOKENS, STATE_PROMPT, stateRecord } from '../src/memory/state-strategy.js';
 import { hashRange, readScene, readState } from '../src/store/chat-store.js';
 import { STORE_VERSION } from '../src/store/schema.js';

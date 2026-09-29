@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_ATTEMPTS } from '../src/pipeline/tally.js';
 import { INDEX_PROMPT, MAX_BATCH } from '../src/memory/index-strategy.js';
-import { pendingIndex } from '../src/pipeline/compactor.js';
+import { pendingIndex } from '../src/pipeline/index-reads.js';
 import { readIndex, readScene, writeScene } from '../src/store/chat-store.js';
 import { badIndexOutputs, deferred } from './mocks/llm.js';
 import { cairnSummary, makeMixedChat } from './mocks/cairn.js';

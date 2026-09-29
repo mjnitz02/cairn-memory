@@ -25,7 +25,7 @@
  */
 import { RAW_WINDOW, STEP } from '../pipeline/scheduler.js';
 import { MAX_STATE_CHARS } from '../memory/state-schema.js';
-import { wtrackerLoaded } from '../memory/state.js';
+import { wtrackerLoaded } from '../interop/wtracker.js';
 import { hashString } from '../util/hash.js';
 import { estimateTokens, countTokens } from '../util/tokens.js';
 import { warn } from '../util/log.js';

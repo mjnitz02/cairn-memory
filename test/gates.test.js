@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { assessCompaction, assessStateUpdates, assessSummarizing } from '../src/pipeline/gates.js';
-import { QVINK_EXTENSION } from '../src/memory/scenes.js';
-import { WTRACKERS } from '../src/memory/state.js';
+import { QVINK_EXTENSION } from '../src/interop/qvink.js';
+import { WTRACKERS } from '../src/interop/wtracker.js';
 import { createRequestService } from './mocks/llm.js';
 import { createContext } from './mocks/sillytavern.js';
 import { MEMORY, ROLEPLAY } from './helpers/summarizer.js';
