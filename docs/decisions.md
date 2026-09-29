@@ -8,6 +8,43 @@ what we believed and why it changed.
 
 ---
 
+## D-0090 — Canon at the pace of the story: a carry-forward pick, a replay, and "Adopt this chat"
+**2026-09-28.** Matt's observation from Shaerra: canon built up over 18 messages read well, and one
+pick over a finished 85-message story is the approach 0d showed tops out at 3–4 of 5 (D-0084). But a
+shipped pick never sees the canon before it — `canonPick.build` took the index and the slot count —
+so "built up as the story grows" was really a series of independent picks, and a replay's last pick
+would have asked 0d's question again.
+
+**1. A carry-forward pick.** `canonPick.build` takes an optional `previous`: the canon so far, each
+fact cited by row in the current index, appended to `{{index}}` (so an edited prompt carries it too)
+with the instruction to keep, correct or replace to fill exactly N. Absent, the prompt is unchanged
+byte for byte. **The queue does not use it yet**; only an adoption does. Whether the queue's picks
+should carry forward, and how often canon should be picked, is the next question, not this one.
+
+**2. `scripts/replay-canon.mjs`**, on the shared client 0d now uses too (`scripts/tier-client.mjs`):
+index 8 summaries at a time in story order, then a carry-forward pick, every step kept in the corpus.
+**Esin on GLM-5.3, one run: 4 of 5 spine lines, register kept, $0.100** — against 0d's 3, 4 and 4 at
+~$0.044. The same ceiling, reached steadily: eight of ten facts were settled by summary 64 and stayed.
+Line 1 was lost the way 0d lost it (the index calls row 62's promise `filler`, "a promise years ago"),
+and once more besides — it was in the canon at 64 and displaced at 72 by the move to the coast. Early
+loud events entrench: the first orc attack held a slot throughout. Verdict in
+`~/workspaces/cairn-corpus/p5-stage0/replay/verdict.md`.
+
+**3. "Adopt this chat"**, in a collapsed section of the settings panel, never on a message. It imports
+Qvink's summaries as Cairn's own where Cairn has none (free; index records hang off Cairn's), summarises
+what still waits through the queue's summary job, then every `step` summaries indexes the new ones and
+makes a carry-forward pick, each stored on the newest record it read so the history shows under the
+messages. A confirmation states the counts and the call total, and answers Enter with no
+(`POPUP_RESULT.NEGATIVE`). The queue holds while it runs, it is activity in the chat (D-0088), a chat
+change or **Stop adopting** ends it between calls, and afterwards the assembler resets so the next
+prompt is a rebuild. It also answers open decision #7: a Qvink-summarised chat can now get records and
+canon.
+
+**Reopens if:** more runs show carry-forward below independent picks, or displacement losing a spine
+line that an independent pick keeps — the fix then is in the slots or the prompt, not in the replay.
+
+---
+
 ## D-0089 — The world state can be rebuilt by hand
 **2026-09-28.** The Shaerra chat has no state on messages 2, 6 and 14: one failed (5.3's reasoning)
 and two were discarded because the messages they read changed while they were out (now counted in

@@ -27,6 +27,9 @@ import { assessCompaction, assessIndexing, assessStateUpdates, assessSummarizing
 import { createCanonJob } from './canon-job.js';
 import { createIndexJob } from './index-job.js';
 import { createStateJob } from './state-job.js';
+import { adoptionPlan, createAdoption } from './adopt.js';
+import { DEFAULT_SLOTS } from '../memory/canon.js';
+import { STEP } from './scheduler.js';
 import { isBadRequest, memoryProfile, refusalKey, requestOverrides } from './request-options.js';
 import { MAX_ATTEMPTS, createTally } from './tally.js';
 
@@ -115,6 +118,9 @@ export function createSummarizer(getContext, {
         ...machinery, pending: memory, ...(canonStrategy ? { strategy: canonStrategy } : {}),
     });
     const indexer = createIndexJob({ ...machinery, ...(indexStrategy ? { strategy: indexStrategy } : {}) });
+    const adoption = createAdoption({ getContext, summarise, indexer, canon, save, clock });
+    /** The adoption under way, or null. The queue holds while it runs (D-0090). */
+    let adopting = null;
 
     /**
      * Start a run, or fold this trigger into the one under way. Never rejects.
@@ -124,6 +130,10 @@ export function createSummarizer(getContext, {
      */
     function drain(why = 'asked') {
         if (!running) return Promise.resolve();
+        if (adopting) {
+            debug(`Queue: ${why} — waiting for the adoption to finish.`);
+            return Promise.resolve();
+        }
         if (activeIn === null || activeIn !== getContext().chatId) {
             debug(`Queue: ${why} — waiting for activity in this chat.`);
             return Promise.resolve();
@@ -538,8 +548,66 @@ export function createSummarizer(getContext, {
         return { queued: true };
     }
 
+    /** What adopting the open chat would take, or why it can't be adopted (D-0090). */
+    function adoptionPreview() {
+        if (!running) return { ok: false, reason: 'disabled' };
+        if (adopting) return { ok: false, reason: 'adopting' };
+        const context = getContext();
+        const config = settings?.() ?? {};
+        const gate = assessSummarizing(context, config);
+        if (!gate.ready) return { ok: false, reason: gate.reason };
+        const every = config.step || STEP;
+        return { ok: true, every, ...adoptionPlan(context.chat, { every, pending: pendingScenes(context.chat) }) };
+    }
+
+    /**
+     * Adopt the open chat: import, summarise, then index and pick canon at the pace of the
+     * story (pipeline/adopt.js). The queue holds until it is done, and a chat change or
+     * `cancelAdoption` stops it between calls. It is activity in the chat (D-0088).
+     *
+     * @param {{onProgress?: (update: object) => void}} [options]
+     * @returns {Promise<{ok: boolean, reason?: string, imported?: number, summarised?: number,
+     *            steps?: number, cancelled?: boolean}>}
+     */
+    async function adopt({ onProgress } = {}) {
+        const preview = adoptionPreview();
+        if (!preview.ok) return preview;
+        const { chatId } = getContext();
+        const run = { cancelled: false, chatId };
+        adopting = run;
+        activeIn = chatId;
+        try {
+            await (active ?? Promise.resolve());
+            const config = settings?.() ?? {};
+            const result = await adoption.run(config, {
+                every: preview.every,
+                slots: config.keepCanon === false ? 0 : (config.canonSlots || DEFAULT_SLOTS),
+                pending: () => pendingScenes(getContext().chat),
+                cancelled: () => run.cancelled || getContext().chatId !== chatId,
+                progress: (update) => {
+                    debug(`Adopting: ${JSON.stringify(update)}`);
+                    notify();
+                    try {
+                        onProgress?.(update);
+                    } catch (err) {
+                        warn('Could not report adoption progress.', err);
+                    }
+                },
+            });
+            return { ok: true, ...result };
+        } catch (err) {
+            error('Adopting the chat failed.', err);
+            return { ok: false, reason: 'error' };
+        } finally {
+            adopting = null;
+            notify();
+            drain('the adoption finishing');
+        }
+    }
+
     /** A request for the chat being left is abandoned; the new chat's queue starts. */
     function onChatChanged() {
+        if (adopting) adopting.cancelled = true;
         controller?.abort();
         const { chatId } = getContext();
         if (chatId !== statsChat) {
@@ -578,6 +646,7 @@ export function createSummarizer(getContext, {
             again = false;
             asked.length = 0;
             askedStates.length = 0;
+            if (adopting) adopting.cancelled = true;
             controller?.abort();
         },
 
@@ -586,6 +655,19 @@ export function createSummarizer(getContext, {
         resummarise,
 
         restate,
+
+        adoptionPreview,
+
+        adopt,
+
+        /** Stop an adoption between calls; what it has written stays. */
+        cancelAdoption() {
+            if (adopting) adopting.cancelled = true;
+        },
+
+        get adopting() {
+            return adopting !== null;
+        },
 
         /** Resolves when no run is under way. */
         idle() {

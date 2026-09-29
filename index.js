@@ -15,6 +15,7 @@ import { createChatMarks } from './src/ui/chat-marks.js';
 import { createInspector } from './src/ui/inspector.js';
 import { renderSettingsPanel } from './src/ui/panel.js';
 import { installResummariseButton } from './src/ui/resummarise-button.js';
+import { installAdoptControls } from './src/ui/adopt-panel.js';
 import { error, info, setDebugEnabled } from './src/util/log.js';
 
 (async function init() {
@@ -119,6 +120,8 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
         }), { canon: () => assembler.canonView });
         inspector.render(observer.latest);
         inspector.summaries(summarizer.status);
+        // An adopted chat has new memory throughout, so the next prompt is a rebuild (D-0090).
+        installAdoptControls(context, summarizer, { onAdopted: () => assembler.reset() });
 
         // Both follow `enabled` alone: observing is free, and holding degrades
         // to ST's own scan rather than to a broken prompt (CLAUDE.md §4.17).

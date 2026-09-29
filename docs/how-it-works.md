@@ -204,6 +204,15 @@ turn on, the block only changes at its end until it outgrows the limit again.
 
 ## Writing summaries
 
+**Adopt this chat**, in a collapsed section of the settings panel, walks the open
+chat from its first message as if Cairn had been on all along (D-0090). Qvink's
+summaries become Cairn's own where Cairn has none, which costs nothing; messages
+with no summary are summarised; then, every **Summary step** summaries, the new ones
+are indexed and canon is picked again, starting from the canon so far and stored on
+the newest record it read. It asks first and says how many calls it will make, the
+normal queue waits while it runs, **Stop adopting** ends it between calls, and the
+next prompt after it is a full rebuild.
+
 Opening a chat, or loading the page on one, makes no memory call. A chat's work
 waits until you act in it: a reply, an edit or a resummarise starts it, and a
 generation you start lets it run once the reply lands (D-0088). A chat opened by

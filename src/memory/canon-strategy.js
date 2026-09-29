@@ -92,6 +92,24 @@ The index:
 
 Reply with JSON of the form {"canon":[{"fact":"…","entities":["…"],"from":[1]}]}, and nothing else.`;
 
+/**
+ * The canon so far, shown after the index when a pick carries forward (D-0090): each fact
+ * with the rows it cites *in this index*, so keeping one is citing it again. Appended to
+ * `{{index}}` rather than a macro of its own, so an edited prompt carries it too.
+ *
+ * @param {Array<{text: string, rows: number[]}>} previous
+ * @returns {string}
+ */
+export function renderCarriedCanon(previous) {
+    const lines = previous.map((fact) => `- ${fact.text}${fact.rows.length ? ` (rows ${fact.rows.join(', ')})` : ''}`);
+    return [
+        'The canon as it stood before the newest rows were added:',
+        ...lines,
+        '',
+        'Start from it. Keep a fact that still holds and still earns its slot, citing its rows again; correct one a later row changes; replace one when a newer fact matters more, since the slots are fixed. Reply with the whole canon, not the changes.',
+    ].join('\n');
+}
+
 /** The template to send for a `canonPrompt` setting (`resolvePrompt`). */
 export function resolveCanonPrompt(setting) {
     return resolvePrompt(setting, CANON_PROMPT, ['index']);
@@ -109,11 +127,14 @@ export const canonPick = {
      * @param {string} [request.template] The `canonPrompt` setting, raw.
      * @param {(text: string) => string} [request.expand] ST's `substituteParams`
      *        (public/scripts/st-context.js:163), applied to the template only.
+     * @param {Array<{text: string, rows: number[]}>} [request.previous] The canon to carry
+     *        forward, cited by row in this index (D-0090). Empty or absent asks from scratch,
+     *        which is what the queue does.
      * @returns {{messages: Array<{role: string, content: string}>, maxTokens: number,
      *            prompt: string, slots: number, records: number, fallback: boolean}}
      *          `prompt` is stored as `canon.prompt`.
      */
-    build({ records, slots, template, expand }) {
+    build({ records, slots, template, expand, previous = [] }) {
         if (!Array.isArray(records) || records.length < 1) {
             throw new RangeError('A canon pick reads at least one index record');
         }
@@ -124,7 +145,7 @@ export const canonPick = {
         const resolved = resolveCanonPrompt(template);
         const content = renderTemplate(resolved.template, {
             slots: String(slots),
-            index: renderIndex(records),
+            index: previous.length ? `${renderIndex(records)}\n\n${renderCarriedCanon(previous)}` : renderIndex(records),
         }, { expand });
 
         return {

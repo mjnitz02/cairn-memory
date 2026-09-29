@@ -169,6 +169,26 @@
                 </div>
             </details>
 
+            <details class="cairn-details">
+                <summary>Adopt this chat</summary>
+                <div class="cairn-hint">
+                    Walks the open chat from its first message as if Cairn had been on all along:
+                    takes Qvink's summaries as its own, summarises what has none, then indexes the
+                    story and re-picks canon one step at a time, carrying the canon forward. For a
+                    chat started before Cairn. It makes many calls to the memory model, so it asks
+                    first and says how many.
+                </div>
+                <div id="cairn_adopt" class="menu_button menu_button_icon">
+                    <i class="fa-solid fa-person-walking-arrow-right"></i>
+                    <span>Adopt this chat…</span>
+                </div>
+                <div id="cairn_adoptCancel" class="menu_button menu_button_icon" hidden>
+                    <i class="fa-solid fa-stop"></i>
+                    <span>Stop adopting</span>
+                </div>
+                <div id="cairn_adoptStatus" class="cairn-hint"></div>
+            </details>
+
             <label class="checkbox_label" for="cairn_debugLogging">
                 <input id="cairn_debugLogging" type="checkbox">
                 <span>Debug logging</span>

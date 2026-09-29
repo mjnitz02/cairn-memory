@@ -9,6 +9,16 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ## [Unreleased]
 
+### Added
+
+- **Adopt this chat**, in a collapsed section of the settings panel. It walks a chat
+  started before Cairn from its first message: takes Qvink's summaries as its own,
+  summarises what has none, then indexes the story and re-picks canon a step at a
+  time, carrying the canon forward. It says how many calls it will make and asks
+  first, and it can be stopped between calls.
+- `scripts/replay-canon.mjs`, the same walk offline over the stage 0 fixture, scored
+  against the yardstick as 0d was.
+
 ### Changed
 
 - **Memory calls ask the model not to reason.** On an OpenRouter memory profile a

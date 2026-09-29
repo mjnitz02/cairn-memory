@@ -142,6 +142,10 @@ literally against the cited line.
 | `generate_data.custom_include_body = substituteParams(settings.custom_include_body);` | A preset's include-body YAML only reaches a Custom source, so an OpenRouter profile's only reasoning lever is the effort | `public/scripts/openai.js` | 2924 |
 | `console.error('Chat completion request error: ', message, responseText);` | The provider's reason goes to the server console; the browser gets only the status text, so a refused effort is known by `Bad Request` (D-0087) | `src/endpoints/backends/chat-completions.js` | 2707 |
 | `generate_data.provider = settings.openrouter_providers;` | A preset's provider list is sent only when the preset's own source is OpenRouter | `public/scripts/openai.js` | 2890 |
+| `callGenericPopup,` | "Adopt this chat" asks before making its batch of calls (D-0090) | `public/scripts/st-context.js` | 195 |
+| `POPUP_TYPE,` | ...as a confirmation | `public/scripts/st-context.js` | 225 |
+| `POPUP_RESULT,` | ...whose Enter is set to answer no | `public/scripts/st-context.js` | 226 |
+| `NEGATIVE: 0,` | The result an adoption treats as "don't" | `public/scripts/popup.js` | 26 |
 | `'openrouter': {` | A profile's `api` of `openrouter` resolves to the OpenRouter chat completion source | `public/scripts/slash-commands.js` | 191 |
 | `CONNECT_API_MAP,` | The map is on the context, so Cairn resolves a profile's source as ST does | `public/scripts/st-context.js` | 285 |
 | `disabledExtensions.includes('connection-manager')` | `sendRequest` refuses outright without Connection Manager, so the summarizer checks first | `public/scripts/extensions/shared.js` | 427 |
