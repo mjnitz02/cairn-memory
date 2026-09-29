@@ -783,7 +783,7 @@ describe('rebuilding the world state on a message', () => {
         expect(summarizer.restate(4)).toEqual({ queued: false, reason: 'hidden' });
         expect(summarizer.restate(40)).toEqual({ queued: false, reason: 'no-message' });
 
-        expect(restateRefusalMessage(4, 'off')).toBe('Cairn can\'t rebuild the world state on message #4: Keep the world state is turned off.');
+        expect(restateRefusalMessage(4, 'off')).toBe('Cairn can\'t rebuild the world state on message #4: Track the world state is turned off.');
         expect(restateRefusalMessage(4, 'no-profile')).toBe('Cairn can\'t rebuild the world state on message #4: no memory connection chosen.');
     });
 });

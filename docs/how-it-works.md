@@ -160,6 +160,13 @@ On a chat whose card, lorebook and history already fill the prompt, the block
 keeps a tenth of it and the inspector calls the chat starved: an empty block
 would lose all of the memory to save a few raw messages.
 
+Once any message behind the recent window carries a summary, Cairn drops the
+card's example dialogue — real messages now show how the character speaks — and
+the card's reserve shrinks to match (D-0068). It flips once per chat, goes back
+on a branch taken before the first summary, and is never saved into SillyTavern's
+own setting. **Drop example dialogue once summarised** switches it off, which puts
+SillyTavern's setting back to what you chose.
+
 Because every reserve is a ceiling, a full prompt should land under 95% of the
 limit. The inspector warns, and the log sets `prompt_near_limit`, when one does
 not — which now means a reserve missed something rather than that the block was
@@ -225,7 +232,7 @@ generation you start lets it run once the reply lands (D-0088). A chat opened by
 mistake costs nothing.
 
 After each reply, and as soon as you edit a message, Cairn summarises the
-messages waiting for a summary, one request at a time, oldest first, through the **Memory connection** profile. Each
+messages waiting for a summary, one request at a time, oldest first, through the memory model's **Connection profile**. Each
 request carries the message and the five summaries before it. A reply that
 arrives after you have switched or reloaded the chat, edited the message or
 deleted it is thrown away. The request is cancelled when the chat changes.
@@ -234,7 +241,7 @@ Every memory request asks the model not to reason. Summaries, records, the
 state and the canon pick are short readings of short text, and a reasoning model
 spends its reply budget thinking about them and returns nothing (D-0086). For an
 **OpenRouter** profile Cairn sends `reasoning_effort: none`, which is what
-SillyTavern sends for **Minimum**. The **Memory model reasoning** setting can start
+SillyTavern sends for **Minimum**. The memory model's **Reasoning** setting can start
 it at `low` instead, or leave reasoning to the preset. Some OpenRouter providers
 cannot turn reasoning off and refuse the request; Cairn then asks for `low`, then
 for nothing, and saves that against the profile and model, so later page loads
@@ -393,7 +400,7 @@ state in the prompt.
 state** under it, holding the text as the prompt would carry it. Stale states are
 not shown. Nothing is shown while the switch is off or a WTracker is loaded.
 
-**The switch** is **Keep the world state**, on by default. It does nothing until a
+**The switch** is **Track the world state**, on by default. It does nothing until a
 memory profile is chosen. Turned off, the state leaves the prompt at the next
 generation and no more state requests go out.
 

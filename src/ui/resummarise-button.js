@@ -35,7 +35,7 @@ export function refusalMessage(index, reason) {
 /** Why a message's world state can't be rebuilt, for the refusals that aren't a closed gate. */
 const STATE_REFUSED = Object.freeze({
     'disabled': 'Cairn is turned off',
-    'off': 'Keep the world state is turned off',
+    'off': 'Track the world state is turned off',
     'wtracker-loaded': 'WTracker is keeping the world state',
     'no-message': 'the message is no longer in the chat',
     'hidden': 'hidden messages have no world state',

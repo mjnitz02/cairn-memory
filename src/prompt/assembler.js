@@ -211,7 +211,9 @@ export function createAssembler(getContext, {
         // here, before the reserves are read, because `cardReserve` must size the
         // card the prompt will actually carry — a reserve that disagrees with the
         // flag hides the whole reclaim in the margin.
-        const stripExamples = examplesSuperseded(scenes, step.summarisedThrough);
+        // Switched off, the latch reads false and puts the user's own value back.
+        const stripExamples = config.dropExamples !== false
+            && examplesSuperseded(scenes, step.summarisedThrough);
         const examples = examplesLatch.apply(stripExamples);
 
         // How much room the rest of the prompt leaves. Every part of it is worked

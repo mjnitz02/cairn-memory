@@ -267,6 +267,16 @@ describe('the example-dialogue latch, over a played chat', () => {
         run.assembler.reset();
         expect(run.context.powerUserSettings.strip_examples).toBe(false);
     });
+
+    it('never strips with Drop example dialogue off, and gives the user\'s value back', async () => {
+        const cairnSettings = { dropExamples: true };
+        const run = harness({ cairnSettings });
+        expect((await run.turn(60)).examplesStripped).toBe(true);
+
+        cairnSettings.dropExamples = false;
+        expect((await run.turn(61)).examplesStripped).toBe(false);
+        expect(run.context.powerUserSettings.strip_examples).toBe(false);
+    });
 });
 
 describe('eviction under a cap the block cannot fit', () => {

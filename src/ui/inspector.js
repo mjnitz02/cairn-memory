@@ -24,9 +24,10 @@ const STABILITY_BANDS = [
  */
 export function createInspector(host, { canon = () => null } = {}) {
     // Drawn apart: summaries and states land between generations, and redrawing the
-    // snapshot for each would close whatever details the reader has open.
+    // snapshot for each would close whatever details the reader has open. `-state` is
+    // taken by the chat mark (style.css), so the state part is `-state-view`, like canon.
     host.innerHTML = `<div class="${SLUG}-canon-view"></div><div class="${SLUG}-snapshot"></div>`
-        + `<div class="${SLUG}-summaries"></div><div class="${SLUG}-state"></div>`;
+        + `<div class="${SLUG}-summaries"></div><div class="${SLUG}-state-view"></div>`;
     const [canonPart, snapshotPart, summariesPart, statePart] = host.children;
     // The state section joins the queue, which moves between generations, to the
     // placement, which only a generation changes.

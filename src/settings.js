@@ -67,6 +67,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
      */
     canonSlots: DEFAULT_SLOTS,
     /**
+     * Drop the card's example dialogue once summaries stand in for the early chat
+     * (docs/decisions.md D-0068). Off leaves SillyTavern's own setting alone.
+     */
+    dropExamples: true,
+    /**
      * The most tokens the lorebook may take in the prompt (docs/decisions.md D-0069).
      * Written into ST's own `world_info_budget_cap`, which ships at 0 — no cap —
      * so the percentage budget never binds. 0 here means the same: leave it alone.

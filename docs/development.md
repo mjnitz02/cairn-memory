@@ -90,7 +90,7 @@ memory. A change to its shape needs:
 
 ## Reading a run
 
-With **Write inspector log to disk** on (the default), every observed generation
+With **Log each generation to disk** on (the default), every observed generation
 appends a flat JSON line to that chat's own file:
 
 ```

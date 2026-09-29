@@ -47,7 +47,7 @@ function renderPlacement(placement) {
     // Deeper than 1 means the queue is behind the chat (docs/decisions.md D-0042).
     const behind = placement.depth > 1 ? ` <span class="${SLUG}-fair">— behind the chat</span>` : '';
     const kinds = placement.changeKinds?.length ? placement.changeKinds.map(escapeHtml).join(', ') : 'nothing';
-    return `<pre class="${SLUG}-diff">${escapeHtml(placement.text)}</pre>
+    return `<pre class="${SLUG}-diff ${SLUG}-prose">${escapeHtml(placement.text)}</pre>
         ${row('Depth', `${fmt(placement.depth)} from the end${behind}`)}
         ${row('Size', `${fmt(placement.chars)} chars, ${fmt(placement.tokens)} tokens`)}
         ${row('Last change', kinds)}`;
