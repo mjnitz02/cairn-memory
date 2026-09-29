@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createSummarizer, failureDetail } from '../src/pipeline/summarizer.js';
+import { createSummarizer } from '../src/pipeline/summarizer.js';
+import { failureDetail } from '../src/pipeline/job.js';
 import { MAX_ATTEMPTS } from '../src/pipeline/tally.js';
 import { DEFAULT_SUMMARY_PROMPT, SUMMARY_MAX_TOKENS, perMessage } from '../src/memory/scene-strategy.js';
 import { pendingScenes } from '../src/memory/scenes.js';

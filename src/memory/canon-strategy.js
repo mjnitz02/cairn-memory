@@ -29,7 +29,7 @@
  *
  * Pure: no ST, no network. ST's macro expansion comes in as `expand`.
  */
-import { firstJson, looksLikeRefusal, reject, stripThinking, unfence } from './model-reply.js';
+import { readJsonReply, reject } from './model-reply.js';
 import {
     MAX_ENTITIES, MAX_ENTITY_CHARS, MAX_FACT_CHARS, MAX_SLOTS, MAX_SOURCES, MIN_SLOTS,
 } from './canon.js';
@@ -190,16 +190,8 @@ export const canonPick = {
  *          | {ok: false, reason: 'empty'|'refusal'|'format'|'truncated'|'no-facts'}}
  */
 export function parseCanonReply(content, { slots = MAX_SLOTS, records = Infinity } = {}) {
-    const thought = stripThinking(content);
-    if (thought.truncated) return reject('truncated');
-    const text = unfence(thought.text).trim();
-    if (!text) return reject('empty');
-
-    const found = firstJson(text);
-    if (!found.parsed) {
-        if (looksLikeRefusal(text)) return reject('refusal');
-        return reject(found.unclosed ? 'truncated' : 'format');
-    }
+    const found = readJsonReply(content);
+    if (!found.ok) return found;
     // A bare array is a model dropping the envelope, which is a shape we can still read.
     const value = Array.isArray(found.value) ? { canon: found.value } : found.value;
     if (!isObject(value) || !Array.isArray(value.canon)) return reject('format');

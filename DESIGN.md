@@ -386,7 +386,8 @@ src/
     canon-pick.js         when a canon pick is due, and what its reply becomes
     index-reads.js        which summaries wait for a record; every record there is
     summarizer.js         the queue and all LLM calls, via ConnectionManagerRequestService
-    *-job.js              one kind of memory work each: state, index, canon
+    job.js                what every kind shares: tally, retry key, failure policy, send
+    *-job.js              one kind of memory work each: summary, state, index, canon
     gates.js              whether memory calls may run now, and why not
     tally.js              per-kind cost and failure bookkeeping
     request-options.js    what every memory request asks for

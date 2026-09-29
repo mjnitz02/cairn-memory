@@ -8,48 +8,36 @@
  * (D-0075), then a compaction pass, which has a whole see-saw step of slack
  * (docs/p4-plan.md decision 7). What a prompt says and how a reply is read belong to the strategies
  * (memory/*-strategy.js); what one job of a kind *is* belongs to its own file
- * (state-job.js, canon-job.js), and the summary job is inline because it is the
- * queue's own unit of work.
+ * (summary-, state-, index- and canon-job.js), on the skeleton they share (job.js).
  *
  * A failure writes nothing and toasts once per streak of its kind. A missing summary
  * holds the step before its message (pipeline/scheduler.js), a missing state leaves the
  * previous one in the prompt, and a failed pass lets eviction proceed exactly as it
  * does today. Nothing here may reach ST's event path (CLAUDE.md §4.17).
  */
-import { pendingScenes, redoScenes, sceneHistory } from '../memory/scenes.js';
+import { pendingScenes, redoScenes } from '../memory/scenes.js';
 import { stateJobAt } from '../memory/state.js';
-import { perMessage, resolveSummaryPrompt } from '../memory/scene-strategy.js';
 import { describeReply } from '../memory/model-reply.js';
-import { readScene, summarisable, writeScene } from '../store/chat-store.js';
-import { hashString } from '../util/hash.js';
+import { readScene, summarisable } from '../store/chat-store.js';
 import { countTokens } from '../util/tokens.js';
-import { debug, error, toast, toastOnce, warn } from '../util/log.js';
+import { debug, error, toastOnce, warn } from '../util/log.js';
 import { assessCompaction, assessIndexing, assessStateUpdates, assessSummarizing } from './gates.js';
 import { createCanonJob } from './canon-job.js';
 import { createIndexJob } from './index-job.js';
 import { READ_CHANGED, createStateJob } from './state-job.js';
+import { createSummaryJob } from './summary-job.js';
 import { adoptionPlan, createAdoption } from './adopt.js';
 import { DEFAULT_SLOTS } from '../memory/canon.js';
 import { STEP } from './scheduler.js';
 import { isBadRequest, memoryProfile, refusalKey, requestOverrides } from './request-options.js';
-import { MAX_ATTEMPTS, createTally } from './tally.js';
 
 const NO_CONNECTION_MANAGER = 'Cairn needs the Connection Manager extension enabled to write memory summaries.';
 const PROFILE_MISSING = 'Cairn\'s memory connection profile no longer exists. Choose another in Cairn\'s settings.';
 const SAME_PROFILE = 'Cairn\'s memory connection is the profile this chat uses. Memory summaries should come from a separate model.';
-const PROMPT_FALLBACK = 'Cairn\'s summary prompt has no {{message}}, so the default prompt is being used.';
-/** An empty or cut-off reply is nearly always a budget spent reasoning (docs/decisions.md D-0086). */
-const REASONING_HINT = 'The memory model most likely spent its reply budget reasoning: turn reasoning off in the memory profile\'s preset.';
-const BUDGET_REASONS = new Set(['empty', 'truncated']);
 /** Reasons a reply arrived and could not be read, as against a transport or write failure. */
 const READ_FAILURES = new Set(['empty', 'refusal', 'format', 'truncated', 'no-facts']);
 const EFFORT_REFUSED = (effort) => `The memory model's provider refused reasoning effort "${effort}", so Cairn asks it for `
     + 'less from now on. Changing Cairn\'s reasoning setting tries again.';
-
-/** A failure's toast text, with the likely cause when the reason points at one. */
-export function failureDetail(detail, reason) {
-    return BUDGET_REASONS.has(reason) ? `${detail} ${REASONING_HINT}` : detail;
-}
 
 /**
  * @param {() => object} getContext Returns a fresh SillyTavern.getContext()
@@ -67,12 +55,11 @@ export function failureDetail(detail, reason) {
  *        chat's log (D-0093): sizes, timings and reasons, never a model's text.
  */
 export function createSummarizer(getContext, {
-    settings, strategy = perMessage, stateStrategy, canonStrategy, indexStrategy,
+    settings, strategy, stateStrategy, canonStrategy, indexStrategy,
     clock = Date.now, onUpdate, memory, onCall,
 } = {}) {
     /** The settings as they are now: read at the point of use, since the panel changes them live. */
     const readSettings = () => settings?.() ?? {};
-    const summaries = createTally();
     /** The chat the tallies count for. A reload of the same chat keeps them. */
     let statsChat = null;
     let summaryGate = null;
@@ -113,20 +100,20 @@ export function createSummarizer(getContext, {
     const askedStates = [];
     /** The message a rebuild is out for, so a second click while it is out changes nothing. */
     let restating = null;
-    /** The message a summary request is out for. */
-    let writing = null;
 
-    // The two kinds that are one job at a time. They take the queue's transport and
-    // failure policy and own nothing else (pipeline/state-job.js, canon-job.js).
-    const machinery = { getContext, send, save, discard, report, clock };
-    const state = createStateJob({ ...machinery, ...(stateStrategy ? { strategy: stateStrategy } : {}) });
-    const canon = createCanonJob({
-        ...machinery, pending: memory, ...(canonStrategy ? { strategy: canonStrategy } : {}),
-    });
-    const indexer = createIndexJob({ ...machinery, ...(indexStrategy ? { strategy: indexStrategy } : {}) });
+    // Each kind takes the queue's transport and owns nothing else (pipeline/*-job.js).
+    const machinery = { getContext, send, save, clock };
+    const strategyOf = (given) => (given ? { strategy: given } : {});
+    const summary = createSummaryJob({ ...machinery, ...strategyOf(strategy) });
+    const state = createStateJob({ ...machinery, ...strategyOf(stateStrategy) });
+    const indexer = createIndexJob({ ...machinery, ...strategyOf(indexStrategy) });
+    const canon = createCanonJob({ ...machinery, pending: memory, ...strategyOf(canonStrategy) });
+    /** Every kind of memory work: the one list the log, the stats and a chat change walk. */
+    const kinds = [summary, state, indexer, canon];
+    const summarise = (context, config, index, options) => summary.run(context, config, index, options);
     const adoption = createAdoption({ getContext, summarise, indexer, canon, save, clock });
-    for (const tally of [summaries, state.tally, indexer.tally, canon.tally]) {
-        tally.onOutcome = (outcome) => logCall(tally, outcome);
+    for (const kind of kinds) {
+        kind.tally.onOutcome = (outcome) => logCall(kind.job, outcome);
     }
     /** The call out or just back, until its job says how it ended (D-0093). */
     let call = null;
@@ -245,7 +232,7 @@ export function createSummarizer(getContext, {
                 notify();
                 continue;
             }
-            const index = pendingScenes(chat).find((at) => !summaries.givenUp(sceneKey(chatId, chat[at])));
+            const index = pendingScenes(chat).find((at) => !summary.givenUp(chatId, chat[at]));
             if (index !== undefined) {
                 const landed = await summarise(context, config, index);
                 // After the outcome is recorded, not when the request settles: a panel that
@@ -283,17 +270,18 @@ export function createSummarizer(getContext, {
      *
      * @returns {Promise<{reply?: object, error?: unknown, signal: AbortSignal}>}
      */
-    async function send(context, memoryProfileId, request, tally, index) {
+    async function send(context, memoryProfileId, request, job, index) {
+        const { tally } = job;
         controller = new AbortController();
         const { signal } = controller;
         // A chat change swaps the stats while this is out; its cost belongs to the chat it was for.
         const counting = tally.stats;
         const started = clock();
-        debug(`Queue: sending ${kindOf(tally)} for #${index}.`);
+        debug(`Queue: sending ${job.kind.article} for #${index}.`);
         // A call its job never settled still gets its line, rather than lending its sizes to the next.
-        if (call) logCall(call.tally, { outcome: 'unsettled' });
+        if (call) logCall(call.job, { outcome: 'unsettled' });
         call = {
-            tally, chatId: context.chatId, at: new Date(started).toISOString(), message: index,
+            job, chatId: context.chatId, at: new Date(started).toISOString(), message: index,
             model: memoryProfile(context, memoryProfileId)?.model ?? null,
             tokensIn: null, tokensOut: null, replyChars: null, reply: null, error: null, ms: null,
         };
@@ -355,19 +343,18 @@ export function createSummarizer(getContext, {
      * One line for the chat's log: the call and how its job ended. A failure before any
      * call (a prompt that would not build) gets a line too, with no call fields.
      */
-    function logCall(tally, { outcome, reason = null, attempt = null }) {
-        const sent = call?.tally === tally ? call : null;
+    function logCall(job, { outcome, reason = null, attempt = null }) {
+        const sent = call?.job === job ? call : null;
         if (sent) call = null;
         if (!onCall) return;
         try {
-            const job = jobOf(tally);
             // A structured reply that could not be read keeps where it broke (D-0094).
-            const detail = outcome === 'failed' && job !== 'summary' && READ_FAILURES.has(reason) && sent?.reply
+            const detail = outcome === 'failed' && job !== summary.job && READ_FAILURES.has(reason) && sent?.reply
                 ? describeReply(sent.reply) : null;
             onCall({
                 kind: 'call',
                 at: sent?.at ?? new Date(clock()).toISOString(),
-                job,
+                job: job.kind.log,
                 message: sent?.message ?? null,
                 during: adopting ? (adopting.redo ? 'redo' : 'adopt') : 'queue',
                 outcome,
@@ -389,25 +376,6 @@ export function createSummarizer(getContext, {
         }
     }
 
-    function jobOf(tally) {
-        if (tally === summaries) return 'summary';
-        if (tally === state.tally) return 'state';
-        if (tally === indexer.tally) return 'index';
-        return 'canon';
-    }
-
-    function tallyOf(kind) {
-        return { summary: summaries, state: state.tally, 'index batch': indexer.tally, 'canon pick': canon.tally }[kind];
-    }
-
-    function kindOf(tally) {
-        if (tally === summaries) return 'a summary';
-        if (tally === state.tally) return 'a state update';
-        if (tally === indexer.tally) return 'an index batch';
-        if (tally === canon.tally) return 'a canon pick';
-        return 'a request';
-    }
-
     /** The oldest asked-for message still in the chat, or undefined. */
     function nextAsked(chat) {
         return nextIn(asked, chat);
@@ -422,98 +390,12 @@ export function createSummarizer(getContext, {
         return undefined;
     }
 
-    /**
-     * @param {{asked?: boolean}} [options] `asked` when the user clicked for it: a failure then says so every time.
-     * @returns {Promise<boolean>} Whether a scene was written, and the run should go on.
-     */
-    async function summarise(context, { memoryProfileId, summaryPrompt }, index, { asked: byUser = false } = {}) {
-        const { chat, chatId } = context;
-        const message = chat[index];
-        const hash = hashString(message.mes);
-
-        let request;
-        try {
-            request = strategy.build({
-                message,
-                history: sceneHistory(chat, index),
-                template: summaryPrompt,
-                expand: (text) => context.substituteParams(text),
-            });
-        } catch (err) {
-            return failSummary(chatId, message, index, 'error', err, byUser);
-        }
-        if (request.fallback) toastOnce(PROMPT_FALLBACK);
-
-        writing = message;
-        const sent = await send(context, memoryProfileId, request, summaries, index);
-        writing = null;
-        if (sent.signal.aborted) return discard('summary', index, 'aborted');
-        if (sent.error) return failSummary(chatId, message, index, 'error', sent.error, byUser);
-
-        // Anything can happen in the seconds a request is out (docs/decisions.md D-0037). No
-        // chat-id check: opening, reloading or renaming a chat refills the array with new
-        // objects (public/script.js:7658, :10713), so the object test already catches it.
-        const now = getContext();
-        if (!now.chat.includes(message)) return discard('summary', index, 'no longer in the chat');
-        if (hashString(message.mes) !== hash) return discard('summary', index, 'message edited');
-
-        const parsed = strategy.parse(sent.reply?.content);
-        if (!parsed.ok) return failSummary(chatId, message, index, parsed.reason, undefined, byUser);
-        if (!writeScene(message, { text: parsed.text, prompt: request.prompt, at: new Date(clock()).toISOString() })) {
-            return failSummary(chatId, message, index, 'write', undefined, byUser);
-        }
-
-        summaries.succeed(sceneKey(chatId, message));
-        debug(`Summarised message #${index}.`);
-        await save(now, 'a summary');
-        return true;
-    }
-
     async function save(context, what) {
         try {
             await context.saveChat();
         } catch (err) {
             warn(`Could not save the chat after writing ${what}.`, err);
         }
-    }
-
-    function discard(kind, index, why) {
-        tallyOf(kind)?.discard(why);
-        debug(`Discarded the ${kind} for message #${index}: ${why}.`);
-        return false;
-    }
-
-    function failSummary(chatId, message, index, reason, err, byUser = false) {
-        const outcome = summaries.fail(sceneKey(chatId, message), reason);
-        if (byUser) {
-            toast(failureDetail(`Summarising message #${index} failed (${reason}). Nothing was changed.`, reason));
-            if (err) warn(err);
-            return false;
-        }
-        report(outcome, `The summary for message #${index} failed (${reason}).`, err);
-        if (outcome.givenUp) {
-            warn(`Gave up on message #${index} after ${outcome.count} failures. The memory step holds before it until the page is reloaded.`);
-        }
-        return false;
-    }
-
-    function report({ first, reason }, detail, err) {
-        if (first) toast(failureDetail(`${detail} Cairn will try again after the next reply.`, reason));
-        else warn(detail);
-        if (err) warn(err);
-    }
-
-    /** Waiting messages in the open chat that have failed at least once, oldest first. */
-    function failed() {
-        const { chat, chatId } = getContext();
-        return pendingScenes(chat).flatMap((index) => {
-            const record = summaries.record(sceneKey(chatId, chat[index]));
-            return record ? [{ index, attempts: record.count, reason: record.reason }] : [];
-        });
-    }
-
-    function givenUp() {
-        return failed().filter((entry) => entry.attempts >= MAX_ATTEMPTS).map((entry) => entry.index);
     }
 
     /** A panel that throws costs the panel, not the summary. */
@@ -589,8 +471,8 @@ export function createSummarizer(getContext, {
         if (!gate.ready) return refused(gate.reason);
 
         // A second click while it is waiting or out changes nothing.
-        if (message !== writing && !asked.includes(message)) {
-            summaries.forget(sceneKey(context.chatId, message));
+        if (message !== summary.writing && !asked.includes(message)) {
+            summary.forget(context.chatId, message);
             asked.push(message);
             act(`a resummarise of #${index}`);
         }
@@ -691,10 +573,7 @@ export function createSummarizer(getContext, {
         controller?.abort();
         const { chatId } = getContext();
         if (chatId !== statsChat) {
-            summaries.resetStats();
-            state.tally.resetStats();
-            canon.tally.resetStats();
-            indexer.tally.resetStats();
+            for (const kind of kinds) kind.tally.resetStats();
             statsChat = chatId;
         }
         notify();
@@ -755,7 +634,7 @@ export function createSummarizer(getContext, {
         },
 
         /** Messages in the open chat that have failed too often to try again this session. */
-        givenUp,
+        givenUp: summary.givenUpIn,
 
         /**
          * Counts, sizes and timings for the open chat — never a summary's, a state's or
@@ -764,17 +643,13 @@ export function createSummarizer(getContext, {
          * kinds.
          */
         get status() {
+            const config = readSettings();
             const status = {
-                ...summaries.stats, gate: summaryGate, streak: summaries.streak, inFlight: summaries.inFlight,
-                pending: null, failed: [], givenUp: [], promptDefault: null, model: null, reasoning: null,
+                ...summary.status({ reason: summaryGate }, config), model: null, reasoning: null,
                 state: state.status(stateGate), canon: canon.status(canonGate),
                 index: indexer.status(indexGate),
             };
             try {
-                // The default is what goes out when the prompt is unedited *or* unusable.
-                const config = readSettings();
-                const prompt = resolveSummaryPrompt(config.summaryPrompt);
-                status.promptDefault = !prompt.edited || prompt.fallback;
                 // Which model the calls went to, and what Cairn asked of it: a run that
                 // switches models mid-chat is otherwise read off latency (D-0086).
                 const context = getContext();
@@ -783,19 +658,10 @@ export function createSummarizer(getContext, {
                 status.reasoning = requestOverrides(
                     context, profile, refusedFor(config, refusalKey(profile)), config.memoryReasoning,
                 ).reasoning_effort ?? null;
-                status.pending = pendingScenes(context.chat).length;
-                status.failed = failed();
-                status.givenUp = status.failed.filter((entry) => entry.attempts >= MAX_ATTEMPTS).map((entry) => entry.index);
             } catch (err) {
-                warn('Could not read the summary queue.', err);
+                warn('Could not read the memory model.', err);
             }
             return status;
         },
     };
 }
-
-/** Summaries are tried again once the message's text changes. */
-function sceneKey(chatId, message) {
-    return `${chatId}\n${hashString(message.mes)}`;
-}
-

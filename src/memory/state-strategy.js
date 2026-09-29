@@ -8,7 +8,7 @@
  *
  * Pure: no ST, no network. ST's macro expansion comes in as `expand`.
  */
-import { firstJson, looksLikeRefusal, reject, stripThinking, unfence } from './model-reply.js';
+import { readJsonReply, reject } from './model-reply.js';
 import {
     CHARACTER_FIELDS,
     MAX_CHARACTERS,
@@ -132,14 +132,7 @@ export const stateRecord = {
  * @returns {{ok: true, record: object} | {ok: false, reason: 'empty'|'refusal'|'format'|'truncated'}}
  */
 export function parseStateReply(content) {
-    const thought = stripThinking(content);
-    if (thought.truncated) return reject('truncated');
-    const text = unfence(thought.text).trim();
-    if (!text) return reject('empty');
-
-    const found = firstJson(text);
-    if (found.parsed) return isObject(found.value) ? { ok: true, record: found.value } : reject('format');
-    if (looksLikeRefusal(text)) return reject('refusal');
-    if (found.unclosed) return reject('truncated');
-    return reject('format');
+    const found = readJsonReply(content);
+    if (!found.ok) return found;
+    return isObject(found.value) ? { ok: true, record: found.value } : reject('format');
 }

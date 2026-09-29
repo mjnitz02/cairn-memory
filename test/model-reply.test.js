@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { describeReply } from '../src/memory/model-reply.js';
+import { describeReply, readJsonReply } from '../src/memory/model-reply.js';
+import { badStateOutputs } from './mocks/llm.js';
 
 /** Where a failed reply broke, for the call log (docs/decisions.md D-0094). */
 
@@ -43,5 +44,27 @@ describe('describeReply', () => {
 
     it('describes a reply whose thinking never closed from the raw text', () => {
         expect(describeReply('<think>the rows are').tail).toBe('<think>the rows are');
+    });
+});
+
+/** The first half of every JSON parser: the index, canon and state strategies all start here. */
+describe('readJsonReply', () => {
+    const RECORD = Object.freeze({ location: 'The ferry terminal, outer pier' });
+
+    it.each(['fenced', 'preambleAndSignOff', 'leakedReasoning', 'orphanThinkClose'])('finds the JSON in a %s reply', (shape) => {
+        expect(readJsonReply(badStateOutputs[shape](RECORD))).toEqual({ ok: true, value: RECORD });
+    });
+
+    it('hands back any JSON value: its shape is the parser\'s business', () => {
+        expect(readJsonReply('[1, 2]')).toEqual({ ok: true, value: [1, 2] });
+    });
+
+    it('names why there is nothing to read', () => {
+        expect(readJsonReply(badStateOutputs.unterminatedReasoning())).toEqual({ ok: false, reason: 'truncated' });
+        expect(readJsonReply(badStateOutputs.truncated({ ...RECORD, weather: 'Drizzle, cold' }))).toEqual({ ok: false, reason: 'truncated' });
+        expect(readJsonReply(badStateOutputs.refusal())).toEqual({ ok: false, reason: 'refusal' });
+        expect(readJsonReply(badStateOutputs.prose())).toEqual({ ok: false, reason: 'format' });
+        expect(readJsonReply(badStateOutputs.empty())).toEqual({ ok: false, reason: 'empty' });
+        expect(readJsonReply(undefined)).toEqual({ ok: false, reason: 'empty' });
     });
 });

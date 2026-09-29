@@ -1,7 +1,7 @@
 /**
  * Cleanup every memory strategy's parser does first: reasoning that leaked into
  * the content, a code fence, and a refusal in place of output
- * (docs/decisions.md D-0037, D-0044).
+ * (docs/decisions.md D-0037, D-0044). The JSON parsers start from `readJsonReply`.
  *
  * Pure: text in, text out.
  */
@@ -69,6 +69,25 @@ export function firstJson(text) {
         }
     }
     return { parsed: false, unclosed: false };
+}
+
+/**
+ * The JSON a structured reply carries, or why it carries none: the cleanup above, then
+ * the first span that parses. What the value must look like is each parser's own business.
+ *
+ * @param {unknown} content The reply's `content`.
+ * @returns {{ok: true, value: unknown} | {ok: false, reason: 'empty'|'refusal'|'format'|'truncated'}}
+ */
+export function readJsonReply(content) {
+    const thought = stripThinking(content);
+    if (thought.truncated) return reject('truncated');
+    const text = unfence(thought.text).trim();
+    if (!text) return reject('empty');
+
+    const found = firstJson(text);
+    if (found.parsed) return { ok: true, value: found.value };
+    if (looksLikeRefusal(text)) return reject('refusal');
+    return reject(found.unclosed ? 'truncated' : 'format');
 }
 
 /** Where the bracket at `start` closes, skipping brackets inside JSON strings; -1 if it never does. */

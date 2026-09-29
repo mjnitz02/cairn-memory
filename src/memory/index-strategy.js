@@ -24,7 +24,7 @@
  *
  * Pure: no ST, no network. ST's macro expansion comes in as `expand`.
  */
-import { firstJson, looksLikeRefusal, reject, stripThinking, unfence } from './model-reply.js';
+import { readJsonReply, reject } from './model-reply.js';
 import {
     KINDS, KIND_MEANINGS, MAX_LINE_CHARS, MAX_SLOT_CHARS, MAX_WHO, MAX_WHO_CHARS, normaliseRecord,
 } from './index-record.js';
@@ -157,16 +157,8 @@ export const indexBatch = {
  *          | {ok: false, reason: 'empty'|'refusal'|'format'|'truncated'}}
  */
 export function parseIndexReply(content, { count = MAX_BATCH } = {}) {
-    const thought = stripThinking(content);
-    if (thought.truncated) return reject('truncated');
-    const text = unfence(thought.text).trim();
-    if (!text) return reject('empty');
-
-    const found = firstJson(text);
-    if (!found.parsed) {
-        if (looksLikeRefusal(text)) return reject('refusal');
-        return reject(found.unclosed ? 'truncated' : 'format');
-    }
+    const found = readJsonReply(content);
+    if (!found.ok) return found;
     // A bare array is a model dropping the envelope, which is a shape we can still read.
     const value = Array.isArray(found.value) ? { records: found.value } : found.value;
     if (!isObject(value) || !Array.isArray(value.records)) return reject('format');
