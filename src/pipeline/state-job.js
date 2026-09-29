@@ -16,6 +16,9 @@ import { writeState } from '../store/chat-store.js';
 import { debug, warn } from '../util/log.js';
 import { MAX_ATTEMPTS, createTally } from './tally.js';
 
+/** What `run` resolves to when the reply was discarded because a message it read changed. */
+export const READ_CHANGED = 'read-changed';
+
 /**
  * @param {{getContext: () => object, send: Function, save: Function, discard: Function,
  *          report: Function, clock: () => number, strategy?: object}} machinery
@@ -73,8 +76,9 @@ export function createStateJob({ getContext, send, save, discard, report, clock,
             const now = getContext();
             const index = jobStillCurrent(now.chat, job);
             if (index < 0) {
-                const why = now.chat?.includes(job.message) ? 'a message it read changed' : 'its message is no longer in the chat';
-                return discard('state', job.index, why);
+                if (!now.chat?.includes(job.message)) return discard('state', job.index, 'its message is no longer in the chat');
+                discard('state', job.index, 'a message it read changed');
+                return READ_CHANGED;
             }
 
             const parsed = strategy.parse(sent.reply?.content);

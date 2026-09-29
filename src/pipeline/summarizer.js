@@ -26,7 +26,7 @@ import { debug, error, toast, toastOnce, warn } from '../util/log.js';
 import { assessCompaction, assessIndexing, assessStateUpdates, assessSummarizing } from './gates.js';
 import { createCanonJob } from './canon-job.js';
 import { createIndexJob } from './index-job.js';
-import { createStateJob } from './state-job.js';
+import { READ_CHANGED, createStateJob } from './state-job.js';
 import { adoptionPlan, createAdoption } from './adopt.js';
 import { DEFAULT_SLOTS } from '../memory/canon.js';
 import { STEP } from './scheduler.js';
@@ -167,6 +167,7 @@ export function createSummarizer(getContext, {
      */
     async function run() {
         let stateTried = false;
+        let stateRetried = false;
         let canonTried = false;
         let indexTried = false;
         while (running) {
@@ -215,7 +216,11 @@ export function createSummarizer(getContext, {
                 const job = gates.state.ready ? state.pending(chat) : null;
                 // Whatever becomes of it, summaries still run: a state that keeps failing must not starve them.
                 if (job && !state.givenUp(chatId, job)) {
-                    await state.run(context, config, job);
+                    // A message rewritten with no edit event (a formatter) would otherwise wait a whole turn.
+                    if (await state.run(context, config, job) === READ_CHANGED && !stateRetried) {
+                        stateRetried = true;
+                        stateTried = false;
+                    }
                     notify();
                     continue;
                 }
@@ -457,11 +462,13 @@ export function createSummarizer(getContext, {
     }
 
     /**
-     * Not awaited: ST awaits this event before it renders the reply (public/script.js:6781-6782).
-     * A greeting is not a reply: ST emits one as `first_message` every time a chat holding
-     * only the greeting is opened (:7703-7706), so it runs only a queue already unlocked.
+     * After render, not on MESSAGE_RECEIVED: a formatter such as WeatherPack rewrites the
+     * reply in a `makeFirst` listener here, and ST awaits it before ours (D-0091).
+     * Not awaited. A greeting is not a reply: ST emits one as `first_message` every time a
+     * chat holding only the greeting is opened (public/script.js:7703-7706), so it runs only
+     * a queue already unlocked.
      */
-    function onMessageReceived(_index, type) {
+    function onMessageRendered(_index, type) {
         if (type === 'first_message') drain('a greeting');
         else act('a reply');
     }
@@ -622,7 +629,7 @@ export function createSummarizer(getContext, {
     }
 
     const listeners = [
-        ['MESSAGE_RECEIVED', onMessageReceived],
+        ['CHARACTER_MESSAGE_RENDERED', onMessageRendered],
         ['GENERATION_STARTED', onGenerationStarted],
         ['MESSAGE_EDITED', onMessageEdited],
         ['CHAT_CHANGED', onChatChanged],

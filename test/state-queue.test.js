@@ -11,7 +11,7 @@ import { resetToasts } from '../src/util/log.js';
 import { badStateOutputs, createRequestService, deferred } from './mocks/llm.js';
 import { makeMixedChat } from './mocks/cairn.js';
 import {
-    continueReply, createContext, editMessage, makeChat, makeMessage, openChat, receiveMessage, sendMessage, swipeReply, swipeTo, startActive, startGeneration,
+    continueReply, createContext, editMessage, installFormatter, makeChat, makeMessage, openChat, receiveMessage, sendMessage, swipeReply, swipeTo, startActive, startGeneration,
 } from './mocks/sillytavern.js';
 
 /**
@@ -212,7 +212,7 @@ describe('when it runs', () => {
         expect([10, 11, 12].map((index) => readScene(context.chat[index]).status)).toEqual(['valid', 'valid', 'valid']);
     });
 
-    it('does not hold up ST, which awaits MESSAGE_RECEIVED before rendering the reply', async () => {
+    it('does not hold up ST, which awaits every listener to a reply', async () => {
         const answer = deferred();
         const { context, service, summarizer } = harness({ chat: playedChat(), responses: [answer.promise] });
         summarizer.start();
@@ -334,12 +334,12 @@ describe('when it runs', () => {
 
     it('stops listening to every trigger when stopped', () => {
         const { context, summarizer } = harness({ chat: playedChat() });
-        const { MESSAGE_RECEIVED, MESSAGE_EDITED, CHAT_CHANGED } = context.eventTypes;
+        const { CHARACTER_MESSAGE_RENDERED, MESSAGE_EDITED, CHAT_CHANGED } = context.eventTypes;
         summarizer.start();
-        expect([MESSAGE_RECEIVED, MESSAGE_EDITED, CHAT_CHANGED].map((event) => context.eventSource.listenerCount(event))).toEqual([1, 1, 1]);
+        expect([CHARACTER_MESSAGE_RENDERED, MESSAGE_EDITED, CHAT_CHANGED].map((event) => context.eventSource.listenerCount(event))).toEqual([1, 1, 1]);
 
         summarizer.stop();
-        expect([MESSAGE_RECEIVED, MESSAGE_EDITED, CHAT_CHANGED].map((event) => context.eventSource.listenerCount(event))).toEqual([0, 0, 0]);
+        expect([CHARACTER_MESSAGE_RENDERED, MESSAGE_EDITED, CHAT_CHANGED].map((event) => context.eventSource.listenerCount(event))).toEqual([0, 0, 0]);
     });
 
     it('does nothing with World state off, and summaries still run', async () => {
@@ -438,19 +438,117 @@ describe('a state reply that arrives after the chat moved on', () => {
         expect(summarizer.status.state.failures).toBe(0);
     });
 
-    it('is discarded when a message it read is deleted or hidden', async () => {
+    it('is discarded when a message it read is deleted or hidden, and what is left is read at once', async () => {
         for (const change of [(chat) => chat.splice(6, 1), (chat) => { chat[6].is_system = true; }]) {
-            const { context, summarizer, answer } = await outFor();
+            const { context, service, summarizer, answer } = await outFor();
             const target = context.chat[7];
 
             change(context.chat);
             answer.resolve(reply(TO_PIER));
             await summarizer.idle();
 
-            expect(target.extra.cairn).toBeUndefined();
-            expect(summarizer.status.state.failures).toBe(0);
-            expect(summarizer.status.state.discarded).toBe(1);
+            expect(service.calls).toHaveLength(2);
+            expect(service.calls[1].prompt[0].content).not.toContain('turn 6');
+            expect(readState(context.chat, context.chat.indexOf(target)).state.value).toEqual(TO_DECK);
+            expect(summarizer.status.state).toMatchObject({ failures: 0, discarded: 1, written: 1 });
         }
+    });
+
+    it('is read again once, not a turn later, when a formatter rewrites a message it read with no event', async () => {
+        const answer = deferred();
+        const { context, service, summarizer } = harness({ chat: playedChat(), responses: [answer.promise, reply(TO_DECK)] });
+        summarizer.start();
+        await summarizer.idle();
+        await exchange(context, 6);
+
+        // A rewrite no Cairn listener hears, after the job was built.
+        context.chat[7].mes = '*Aster answers at turn 7.*';
+        answer.resolve(reply(TO_PIER));
+        await summarizer.idle();
+
+        expect(service.calls).toHaveLength(2);
+        expect(service.calls[1].prompt[0].content).toContain('*Aster answers at turn 7.*');
+        expect(stateOf(context.chat, 7).value).toEqual(TO_DECK);
+        expect(summarizer.status.state).toMatchObject({ written: 1, discarded: 1 });
+    });
+
+    it('is read again only once in a run, so a message that never settles cannot loop', async () => {
+        const first = deferred();
+        const second = deferred();
+        const { context, service, summarizer } = harness({ chat: playedChat(), responses: [first.promise, second.promise] });
+        summarizer.start();
+        await summarizer.idle();
+        await exchange(context, 6);
+
+        context.chat[7].mes = 'Rewritten once.';
+        first.resolve(reply(TO_PIER));
+        await flush();
+        context.chat[7].mes = 'Rewritten twice.';
+        second.resolve(reply(TO_DECK));
+        await summarizer.idle();
+
+        expect(service.calls).toHaveLength(2);
+        expect(readState(context.chat, 7).status).toBe('none');
+        expect(summarizer.status.state).toMatchObject({ written: 0, discarded: 2, failures: 0 });
+    });
+});
+
+/**
+ * A markdown formatter rewrites every reply after it renders (docs/decisions.md D-0091).
+ * The shape is WeatherPack's; before D-0091 each of these replies was discarded and the
+ * state went stale until the memory step passed it.
+ */
+describe('with a formatter that rewrites replies', () => {
+    const italicise = (mes) => (mes.startsWith('*') ? mes : `*${mes}*`);
+
+    it('reads the reply as the formatter left it, in one call', async () => {
+        const { context, service, summarizer } = harness({ chat: playedChat(), responses: [reply(TO_PIER)] });
+        installFormatter(context, italicise);
+        summarizer.start();
+        await summarizer.idle();
+
+        await exchange(context, 6);
+        await summarizer.idle();
+
+        expect(service.calls).toHaveLength(1);
+        expect(service.calls[0].prompt[0].content).toContain('*Aster answers at turn 7.*');
+        expect(stateOf(context.chat, 7).value).toEqual(TO_PIER);
+        expect(summarizer.status.state).toMatchObject({ written: 1, discarded: 0 });
+    });
+
+    it('keeps the state current turn after turn', async () => {
+        const { context, service, summarizer } = harness({ chat: playedChat(), responses: [reply(TO_PIER), reply(TO_DECK), reply(TO_PIER)] });
+        installFormatter(context, italicise);
+        summarizer.start();
+        await summarizer.idle();
+
+        for (const turn of [6, 8, 10]) {
+            await exchange(context, turn);
+            await summarizer.idle();
+        }
+
+        expect(service.calls).toHaveLength(3);
+        expect([7, 9, 11].map((index) => readState(context.chat, index).status)).toEqual(['valid', 'valid', 'valid']);
+        expect(summarizer.status.state.discarded).toBe(0);
+    });
+
+    it('reads an edit again after the formatter rewrites it, with no turn in between', async () => {
+        const answer = deferred();
+        const { context, service, summarizer } = harness({ chat: playedChat(), responses: [reply(TO_PIER), answer.promise, reply(TO_DECK)] });
+        installFormatter(context, italicise);
+        summarizer.start();
+        await summarizer.idle();
+        await exchange(context, 6);
+        await summarizer.idle();
+
+        // MESSAGE_EDITED starts the job on the raw edit; MESSAGE_UPDATED formats it after.
+        await editMessage(context, 7, 'Aster answers from the deck.');
+        answer.resolve(reply(TO_PIER));
+        await summarizer.idle();
+
+        expect(service.calls).toHaveLength(3);
+        expect(service.calls[2].prompt[0].content).toContain('*Aster answers from the deck.*');
+        expect(stateOf(context.chat, 7).value.location).toBe(TO_DECK.location);
     });
 });
 

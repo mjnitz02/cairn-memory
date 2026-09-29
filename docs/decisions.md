@@ -8,6 +8,35 @@ what we believed and why it changed.
 
 ---
 
+## D-0091 — The queue starts after the reply renders, and a state re-reads once when its messages change
+**2026-09-29.** On the Yuzuha chat (GLM-5.3, 24 messages) the world state stopped updating at
+message 14 and vanished at the next step. The log: from then on every state call's reply was
+discarded, "a message it read changed", one call per turn, the injected state sinking from depth 1
+to 9 until the step passed it (`behind-step`). The cause was WeatherPack, which Matt runs as a
+leash on the model's markdown: it rewrites `mes` in a `makeFirst` listener to
+`CHARACTER_MESSAGE_RENDERED` (WeatherPack `7f81ffa`, `src/index.ts:146`, `:611-615`) and emits
+nothing. ST emits that right after `MESSAGE_RECEIVED` (public/script.js:6781-6783), where Cairn had
+already hashed the raw reply. Early replies were clean, so the rewrite was a no-op and the state
+landed; once the model's markdown drifted, WeatherPack rewrote nearly every reply.
+
+**1. The queue's reply trigger is `CHARACTER_MESSAGE_RENDERED`.** ST awaits every listener in turn
+(public/lib/eventemitter.js:146), so a formatter's `makeFirst` rewrite is done before Cairn reads.
+Every `MESSAGE_RECEIVED` emit in ST 1.19.0 is followed by this one, greetings and `/sendas` included.
+
+**2. A state discarded because a message it read changed is read again at once, once per run.**
+The trigger fixes the common case in one call; the re-read covers what it can't: a formatter
+listening later, or WeatherPack's rewrite of an edit on `MESSAGE_UPDATED` (:8431), after the
+`MESSAGE_EDITED` that started the job (:8405). Once, so a message that never settles cannot loop.
+A deletion or hide is now also re-read at once rather than a turn later.
+
+**Not done:** normalising the hash to ignore markdown. It would spare the second call, but it changes
+what a state is checked against (CLAUDE.md §8.32), and "the text changed" is the honest rule.
+
+**Would reopen it:** a formatter that rewrites later than the render, or a second call per turn
+showing up in `state_discarded` with WeatherPack loaded.
+
+---
+
 ## D-0090 — Canon at the pace of the story: a carry-forward pick, a replay, and "Adopt this chat"
 **2026-09-28.** Matt's observation from Shaerra: canon built up over 18 messages read well, and one
 pick over a finished 85-message story is the approach 0d showed tops out at 3–4 of 5 (D-0084). But a

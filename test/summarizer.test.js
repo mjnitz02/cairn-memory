@@ -177,7 +177,7 @@ describe('summarising the queue', () => {
 });
 
 describe('when it runs', () => {
-    it('does not hold up ST, which awaits MESSAGE_RECEIVED before rendering the reply', async () => {
+    it('does not hold up ST, which awaits every listener to a reply', async () => {
         const answer = deferred();
         const chat = makeMixedChat({ length: 12, qvinkThrough: 10, cairnThrough: 10 });
         const { context, service, summarizer } = harness({ chat, responses: [answer.promise] });
@@ -280,11 +280,11 @@ describe('when it runs', () => {
     it('stops listening and abandons the request in flight when stopped', async () => {
         const answer = deferred();
         const { context, service, summarizer } = harness({ responses: [answer.promise] });
-        const { MESSAGE_RECEIVED, CHAT_CHANGED } = context.eventTypes;
+        const { CHARACTER_MESSAGE_RENDERED, CHAT_CHANGED } = context.eventTypes;
 
         summarizer.start();
         summarizer.start();
-        expect(context.eventSource.listenerCount(MESSAGE_RECEIVED)).toBe(1);
+        expect(context.eventSource.listenerCount(CHARACTER_MESSAGE_RENDERED)).toBe(1);
         expect(context.eventSource.listenerCount(CHAT_CHANGED)).toBe(1);
         await flush();
 
@@ -293,7 +293,7 @@ describe('when it runs', () => {
 
         expect(service.calls[0].custom.signal.aborted).toBe(true);
         expect(written(context.chat)).toEqual([]);
-        expect(context.eventSource.listenerCount(MESSAGE_RECEIVED)).toBe(0);
+        expect(context.eventSource.listenerCount(CHARACTER_MESSAGE_RENDERED)).toBe(0);
         expect(context.eventSource.listenerCount(CHAT_CHANGED)).toBe(0);
         expect(warning).not.toHaveBeenCalled();
     });
@@ -336,6 +336,7 @@ describe('opening a chat (D-0088)', () => {
         summarizer.start();
 
         await context.eventSource.emit(context.eventTypes.MESSAGE_RECEIVED, 0, 'first_message');
+        await context.eventSource.emit(context.eventTypes.CHARACTER_MESSAGE_RENDERED, 0, 'first_message');
         await summarizer.idle();
 
         expect(service.calls).toHaveLength(0);

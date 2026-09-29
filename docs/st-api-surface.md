@@ -155,18 +155,20 @@ literally against the cited line.
 | `substituteParams,` | Expands ST macros on the summary template before chat text goes in | `public/scripts/st-context.js` | 163 |
 | `chatId: selected_group` | Keys a message's failure count to its chat | `public/scripts/st-context.js` | 125 |
 | `saveChat: saveChatConditional` | Persist a written scene; saves the *current* chat | `public/scripts/st-context.js` | 155 |
-| `MESSAGE_RECEIVED` | Event name; the summarizer's trigger | `public/scripts/events.js` | 9 |
-| `event_types.MESSAGE_RECEIVED, chat_id, type` | Emitted for a new reply with its chat index, **before** the reply is rendered | `public/script.js` | 6781 |
-| `event_types.MESSAGE_RECEIVED, this.messageId, this.type` | ...and for a streamed one | `public/script.js` | 3799 |
-| `!fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);` | ...and for a generated swipe, so the state that read the replaced reply is redone | `public/script.js` | 6691 |
-| `!fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);` | ...and for a continue, whose text is appended to the reply first (:6701) | `public/script.js` | 6716 |
+| `CHARACTER_MESSAGE_RENDERED: 'character_message_rendered',` | Event name; the summarizer's trigger, after a formatter has rewritten the reply (D-0091) | `public/scripts/events.js` | 49 |
+| `!fromStreaming && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);` | Emitted for a new reply with its chat index and type, **after** `MESSAGE_RECEIVED` (:6781) and the render | `public/script.js` | 6783 |
+| `await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, this.messageId, this.type);` | ...and for a streamed one | `public/script.js` | 3800 |
+| `!fromStreaming && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);` | ...and for a generated swipe, so the state that read the replaced reply is redone | `public/script.js` | 6693 |
+| `!fromStreaming && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);` | ...and for a continue, whose text is appended to the reply first (:6701) | `public/script.js` | 6718 |
+| `EventEmitter.prototype.makeFirst = function (event, listener) {` | A formatter (WeatherPack) rewrites `mes` in a first listener to the render, which ST awaits before ours | `public/lib/eventemitter.js` | 90 |
 | `GENERATION_STARTED: 'generation_started',` | Event name; a generation the user starts unlocks the queue for that chat (D-0088) | `public/scripts/events.js` | 23 |
 | `await eventSource.emit(event_types.GENERATION_STARTED, type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage }, dryRun);` | ...emitted with the type and whether it is a dry run, so dry runs and `quiet` generations are told apart | `public/script.js` | 4299 |
 | `return Generate('normal', {}, true);` | The prompt manager dry-runs a generation when a chat opens, which must not count as activity | `public/scripts/openai.js` | 709 |
-| `await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, 'first_message');` | Opening a greeting-only chat re-emits the greeting as a reply every time, so `first_message` is not activity | `public/script.js` | 7705 |
+| `await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, 'first_message');` | Opening a greeting-only chat re-emits the greeting as a reply every time, so `first_message` is not activity | `public/script.js` | 7706 |
 | `MESSAGE_EDITED` | Event name; a trigger, so an edited message's summary and state are redone without waiting for a reply | `public/scripts/events.js` | 10 |
 | `mes.mes = text;` | `updateMessage` writes the edit to the message... | `public/script.js` | 8178 |
 | `await eventSource.emit(event_types.MESSAGE_EDITED, this_edit_mes_id);` | ...before the event, which is awaited before the message is re-rendered | `public/script.js` | 8405 |
+| `await eventSource.emit(event_types.MESSAGE_UPDATED, this_edit_mes_id);` | After the re-render a formatter may rewrite the edit, which the state's one re-read catches (D-0091) | `public/script.js` | 8431 |
 | `await listeners[i].apply(this, args);` | ST awaits every listener in turn, so the summarizer starts its work and returns | `public/lib/eventemitter.js` | 146 |
 | `chat.splice(0, chat.length, ...data);` | Opening or reloading a chat refills the same array with **new** message objects, so a late reply's message is no longer in it | `public/script.js` | 7658 |
 | `await reloadCurrentChat();` | A rename reloads the chat too | `public/script.js` | 10713 |

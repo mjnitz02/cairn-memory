@@ -257,8 +257,8 @@ anything.
 
 Nothing starts when you send a message, because that's when the chat model starts
 generating, and on a shared or local backend a summary would compete with it.
-Running the summaries never delays SillyTavern. It waits for every
-`MESSAGE_RECEIVED` listener before it shows the reply, so Cairn starts the work
+Running the summaries never delays SillyTavern. Cairn starts the work once the
+reply is shown (`CHARACTER_MESSAGE_RENDERED`, after any formatter has rewritten it)
 and returns at once. Unlike Qvink with **Block generation** on, Cairn never holds
 up your next message either, so you can keep chatting while a summary is written.
 The message you send is the newest, so it's summarised after the next reply. If
@@ -358,7 +358,10 @@ is how they leave. A reply that lists nobody at all is ignored.
 The
 state is stored on the newest message it read, in `message.extra.cairn.state`,
 with a hash of the messages it read. A reply that arrives after any of those
-messages changed, or after you left the chat, is thrown away. A failed state
+messages changed, or after you left the chat, is thrown away; when the messages
+changed, Cairn reads them again straight away, once. The update starts only after
+the reply is shown, so a formatter such as WeatherPack has already rewritten it
+(D-0091). A failed state
 update writes nothing, warns once per run of failures, and doesn't stop the
 summaries. After three failures on the same messages Cairn stops trying until a
 new message arrives or one is edited.

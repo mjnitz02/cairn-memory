@@ -52,6 +52,11 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ### Fixed
 
+- **The world state stopped updating alongside WeatherPack** or any extension that
+  tidies a reply's markdown after it arrives. Cairn read the reply before the tidy,
+  saw it change, threw the update away and did not try again until the next reply,
+  so the state went stale and then vanished at the next memory step. Cairn now reads
+  the reply after it is shown, and reads again at once if a message changes under it.
 - Switching chats now resets the index counters, as it already did the others.
 
 - **The inspector log is one file per chat, and it keeps growing.** Each chat
