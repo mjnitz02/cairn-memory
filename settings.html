@@ -178,9 +178,18 @@
                     chat started before Cairn. It makes many calls to the memory model, so it asks
                     first and says how many.
                 </div>
+                <div class="cairn-hint">
+                    <b>Redo from scratch</b> does the same walk but summarises every message again,
+                    even ones Qvink or Cairn already summarised, and rebuilds the index and canon
+                    from nothing — for an old chat you want redone on today's memory model.
+                </div>
                 <div id="cairn_adopt" class="menu_button menu_button_icon">
                     <i class="fa-solid fa-person-walking-arrow-right"></i>
                     <span>Adopt this chat…</span>
+                </div>
+                <div id="cairn_adoptRedo" class="menu_button menu_button_icon">
+                    <i class="fa-solid fa-arrows-rotate"></i>
+                    <span>Redo from scratch…</span>
                 </div>
                 <div id="cairn_adoptCancel" class="menu_button menu_button_icon" hidden>
                     <i class="fa-solid fa-stop"></i>

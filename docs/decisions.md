@@ -8,6 +8,31 @@ what we believed and why it changed.
 
 ---
 
+## D-0092 — "Redo from scratch": the adoption walk with nothing kept
+**2026-09-29.** Matt has long chats from before Cairn, summarised by Qvink on older models, and wants
+them redone end to end on a current memory model: a set of complete 100+ message runs, with logs,
+to add to the corpus. Adopt keeps any summary it finds, so it could not do this.
+
+**A second button, not a setting.** It is a one-off action, so it gets no knob (CLAUDE.md §4.15).
+It runs the same walk (`pipeline/adopt.js`) with three differences:
+1. **Every message is summarised again** (`redoScenes`): from the first, whatever it carries, except
+   the last, a newer Cairn's store, and any message Qvink's user excluded.
+2. **Nothing is imported from Qvink.**
+3. **The index and all canon are cleared before the first call** (`clearDerived`). This is the part
+   that matters. A resummary already makes the old records stale. But a step's pick carries forward
+   the newest batch at or before it (`canonFor`), and an old batch whose cited records get re-indexed
+   comes back valid. Left in place, it would be fed into the new picks. The test for this fails
+   without the clear.
+
+A summary that fails keeps the old one and is indexed from it. The world state is not touched: it
+is rebuilt by hand on the newest message (D-0089) if wanted. Clearing stored memory is allowed
+while we are pre-release (D-0077).
+
+**Would reopen it:** wanting the state replayed at the story's pace too, or a redo on a chat Matt
+means to keep. That second case needs the pre-release suspension lifted first.
+
+---
+
 ## D-0091 — The queue starts after the reply renders, and a state re-reads once when its messages change
 **2026-09-29.** On the Yuzuha chat (GLM-5.3, 24 messages) the world state stopped updating at
 message 14 and vanished at the next step. The log: from then on every state call's reply was

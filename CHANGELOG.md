@@ -16,6 +16,9 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
   summarises what has none, then indexes the story and re-picks canon a step at a
   time, carrying the canon forward. It says how many calls it will make and asks
   first, and it can be stopped between calls.
+- **Redo from scratch**, beside it: the same walk, but every message is summarised
+  again even where Qvink or Cairn already has, and the index and canon are rebuilt
+  from nothing. For an old chat you want redone on today's memory model.
 - `scripts/replay-canon.mjs`, the same walk offline over the stage 0 fixture, scored
   against the yardstick as 0d was.
 

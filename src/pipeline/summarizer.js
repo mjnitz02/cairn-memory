@@ -16,7 +16,7 @@
  * previous one in the prompt, and a failed pass lets eviction proceed exactly as it
  * does today. Nothing here may reach ST's event path (CLAUDE.md §4.17).
  */
-import { pendingScenes, sceneHistory } from '../memory/scenes.js';
+import { pendingScenes, redoScenes, sceneHistory } from '../memory/scenes.js';
 import { stateJobAt } from '../memory/state.js';
 import { perMessage, resolveSummaryPrompt } from '../memory/scene-strategy.js';
 import { readScene, summarisable, writeScene } from '../store/chat-store.js';
@@ -555,8 +555,8 @@ export function createSummarizer(getContext, {
         return { queued: true };
     }
 
-    /** What adopting the open chat would take, or why it can't be adopted (D-0090). */
-    function adoptionPreview() {
+    /** What adopting (or redoing, D-0092) the open chat would take, or why it can't be (D-0090). */
+    function adoptionPreview({ redo = false } = {}) {
         if (!running) return { ok: false, reason: 'disabled' };
         if (adopting) return { ok: false, reason: 'adopting' };
         const context = getContext();
@@ -564,7 +564,8 @@ export function createSummarizer(getContext, {
         const gate = assessSummarizing(context, config);
         if (!gate.ready) return { ok: false, reason: gate.reason };
         const every = config.step || STEP;
-        return { ok: true, every, ...adoptionPlan(context.chat, { every, pending: pendingScenes(context.chat) }) };
+        const pending = (redo ? redoScenes : pendingScenes)(context.chat);
+        return { ok: true, every, ...adoptionPlan(context.chat, { every, pending, redo }) };
     }
 
     /**
@@ -572,12 +573,13 @@ export function createSummarizer(getContext, {
      * story (pipeline/adopt.js). The queue holds until it is done, and a chat change or
      * `cancelAdoption` stops it between calls. It is activity in the chat (D-0088).
      *
-     * @param {{onProgress?: (update: object) => void}} [options]
+     * @param {{onProgress?: (update: object) => void, redo?: boolean}} [options] `redo`
+     *        summarises every message again and rebuilds the index and canon from nothing.
      * @returns {Promise<{ok: boolean, reason?: string, imported?: number, summarised?: number,
      *            steps?: number, cancelled?: boolean}>}
      */
-    async function adopt({ onProgress } = {}) {
-        const preview = adoptionPreview();
+    async function adopt({ onProgress, redo = false } = {}) {
+        const preview = adoptionPreview({ redo });
         if (!preview.ok) return preview;
         const { chatId } = getContext();
         const run = { cancelled: false, chatId };
@@ -589,7 +591,8 @@ export function createSummarizer(getContext, {
             const result = await adoption.run(config, {
                 every: preview.every,
                 slots: config.keepCanon === false ? 0 : (config.canonSlots || DEFAULT_SLOTS),
-                pending: () => pendingScenes(getContext().chat),
+                pending: () => (redo ? redoScenes : pendingScenes)(getContext().chat),
+                redo,
                 cancelled: () => run.cancelled || getContext().chatId !== chatId,
                 progress: (update) => {
                     debug(`Adopting: ${JSON.stringify(update)}`);

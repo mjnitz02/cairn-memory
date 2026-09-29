@@ -10,12 +10,15 @@
  * summaries, index the new ones and re-pick canon *carrying the canon so far forward*,
  * each pick stored on the newest record it read, so the history shows how it grew.
  *
+ * A **redo** (D-0092) skips the import, summarises every message again whatever it
+ * carries, and clears the old index and canon first, so no old pick is carried forward.
+ *
  * The queue's jobs do every write, so what it stores and how it fails are theirs. This
  * file owns only the order. `adoptionPlan` is pure; `createAdoption` is the driver.
  */
 import { canonFor, MIN_SLOTS } from '../memory/canon.js';
 import { readScenes } from '../memory/scenes.js';
-import { readCanon, readIndex, readScene, writeScene } from '../store/chat-store.js';
+import { clearDerived, readCanon, readIndex, readScene, writeScene } from '../store/chat-store.js';
 import { MAX_BATCH } from '../memory/index-strategy.js';
 import { MIN_INDEX_RECORDS, indexRecords } from './compactor.js';
 import { debug } from '../util/log.js';
@@ -30,17 +33,22 @@ const readers = { readCanon, readIndex };
  * how many messages it must summarise, and how many index and canon calls the replay makes.
  *
  * @param {Array<object>} chat
- * @param {{every: number, pending: number[]}} options `pending` is `pendingScenes(chat)`.
- * @returns {{imports: number[], summaries: number, steps: number, calls: number}}
+ * @param {{every: number, pending: number[], redo?: boolean}} options `pending` is
+ *        `pendingScenes(chat)`, or `redoScenes(chat)` for a redo.
+ * @returns {{imports: number[], summaries: number, steps: number, calls: number, redo: boolean}}
  */
-export function adoptionPlan(chat, { every, pending }) {
+export function adoptionPlan(chat, { every, pending, redo = false }) {
+    if (redo) {
+        const steps = Math.ceil(pending.length / every);
+        return { imports: [], summaries: pending.length, steps, calls: pending.length + 2 * steps, redo };
+    }
     const imports = importable(chat);
     const importing = new Set(imports);
     const summaries = pending.filter((index) => !importing.has(index)).length;
     const scenes = readScenes(chat).filter((scene) => scene.source === 'cairn' || importing.has(scene.index)).length
         + summaries;
     const steps = Math.ceil(scenes / every);
-    return { imports, summaries, steps, calls: summaries + 2 * steps };
+    return { imports, summaries, steps, calls: summaries + 2 * steps, redo };
 }
 
 /** Messages carrying a Qvink summary the block reads, and no Cairn summary of their own. */
@@ -60,25 +68,32 @@ export function createAdoption({ getContext, summarise, indexer, canon, save, cl
      * reported it, and the adoption carries on with what it has.
      *
      * @param {object} config The settings.
-     * @param {{every: number, slots: number, pending: () => number[],
+     * @param {{every: number, slots: number, pending: () => number[], redo?: boolean,
      *          cancelled: () => boolean, progress: (update: object) => void}} options
-     * @returns {Promise<{imported: number, summarised: number, steps: number, cancelled: boolean}>}
+     * @returns {Promise<{imported: number, cleared: number, summarised: number, steps: number,
+     *            cancelled: boolean}>}
      */
-    async function run(config, { every, slots, pending, cancelled, progress }) {
-        const result = { imported: 0, summarised: 0, steps: 0, cancelled: false };
+    async function run(config, { every, slots, pending, redo = false, cancelled, progress }) {
+        const result = { imported: 0, cleared: 0, summarised: 0, steps: 0, cancelled: false };
         const stop = () => {
             result.cancelled = cancelled();
             return result.cancelled;
         };
 
         const context = getContext();
-        const at = new Date(clock()).toISOString();
-        for (const index of importable(context.chat)) {
-            const text = readScenes([context.chat[index]])[0]?.text;
-            if (text && writeScene(context.chat[index], { text, prompt: IMPORTED_PROMPT, at })) result.imported++;
+        if (redo) {
+            for (const message of context.chat) if (clearDerived(message)) result.cleared++;
+            if (result.cleared) await save(context, 'a cleared index and canon');
+            progress({ phase: 'clear', cleared: result.cleared });
+        } else {
+            const at = new Date(clock()).toISOString();
+            for (const index of importable(context.chat)) {
+                const text = readScenes([context.chat[index]])[0]?.text;
+                if (text && writeScene(context.chat[index], { text, prompt: IMPORTED_PROMPT, at })) result.imported++;
+            }
+            if (result.imported) await save(context, 'imported summaries');
+            progress({ phase: 'import', imported: result.imported });
         }
-        if (result.imported) await save(context, 'imported summaries');
-        progress({ phase: 'import', imported: result.imported });
 
         const waiting = pending();
         for (const [done, index] of waiting.entries()) {

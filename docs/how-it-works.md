@@ -213,6 +213,12 @@ the newest record it read. It asks first and says how many calls it will make, t
 normal queue waits while it runs, **Stop adopting** ends it between calls, and the
 next prompt after it is a full rebuild.
 
+**Redo from scratch**, beside it, is the same walk with nothing kept (D-0092): every
+message is summarised again, whether Qvink or Cairn summarised it before, except the
+last and any Qvink excluded. Before it starts it clears the index and every canon pick,
+so no old pick is carried into the new ones. A summary that fails keeps the old one, and
+the world state is left alone.
+
 Opening a chat, or loading the page on one, makes no memory call. A chat's work
 waits until you act in it: a reply, an edit or a resummarise starts it, and a
 generation you start lets it run once the reply lands (D-0088). A chat opened by

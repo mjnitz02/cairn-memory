@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSummarizer } from '../src/pipeline/summarizer.js';
 import { IMPORTED_PROMPT, adoptionPlan } from '../src/pipeline/adopt.js';
-import { pendingScenes } from '../src/memory/scenes.js';
+import { pendingScenes, redoScenes } from '../src/memory/scenes.js';
 import { INDEX_PROMPT } from '../src/memory/index-strategy.js';
 import { canonFor } from '../src/memory/canon.js';
 import { readCanon, readIndex, readScene } from '../src/store/chat-store.js';
-import { adoptionMessage, adoptionRefusal, progressText } from '../src/ui/adopt-panel.js';
+import { adoptionMessage, adoptionRefusal, doneText, progressText } from '../src/ui/adopt-panel.js';
 import { resetToasts } from '../src/util/log.js';
 import { createRequestService, deferred } from './mocks/llm.js';
-import { makeMixedChat } from './mocks/cairn.js';
+import { cairnCanonStore, cairnIndexStore, cairnSummary, makeMixedChat } from './mocks/cairn.js';
 import { createContext } from './mocks/sillytavern.js';
 
 /**
@@ -155,5 +155,79 @@ describe('adopting a chat', () => {
         context.extensionSettings.qvink_memory = { auto_summarize: true };
         context.extensionPrompts.qvink_memory_short = { value: '', position: -1 };
         expect(summarizer.adoptionPreview()).toEqual({ ok: false, reason: 'qvink-summarising' });
+    });
+});
+
+/**
+ * A redo (D-0092): an old chat carrying Qvink's summaries, then Cairn's with their index
+ * records and an old canon pick — all of it done again, and none of the old canon carried.
+ */
+describe('redoing a chat from scratch', () => {
+    const OLD_FACT = 'An old fact from a pick before the redo.';
+
+    function redoChat() {
+        const live = makeMixedChat({ length: 20, qvinkThrough: 9, cairnThrough: 17 });
+        for (let index = 10; index <= 17; index++) {
+            live[index].extra.cairn = cairnIndexStore(live[index], cairnSummary(index));
+        }
+        live[15].extra.cairn.canon = cairnCanonStore([{ text: OLD_FACT, from: [12] }], [10, 15]).canon;
+        live[3].extra.qvink_memory.exclude = true;
+        return live;
+    }
+
+    function expected(live) {
+        const plan = adoptionPlan(live, { every: EVERY, pending: redoScenes(live), redo: true });
+        const sizes = Array.from({ length: plan.steps }, (_, i) => Math.min(EVERY, plan.summaries - i * EVERY));
+        const responses = [
+            ...redoScenes(live).map(summary),
+            ...Array.from({ length: plan.steps }, (_, i) => [indexReply(sizes[i]), canonReply(i + 1)]).flat(),
+        ];
+        return { plan, responses };
+    }
+
+    it('summarises every message but the last and any Qvink excluded, and imports nothing', () => {
+        const live = redoChat();
+        const redo = redoScenes(live);
+
+        expect(redo).not.toContain(3);
+        expect(redo).not.toContain(19);
+        expect(redo).toEqual(expect.arrayContaining([0, 9, 10, 17, 18]));
+        expect(adoptionPlan(live, { every: EVERY, pending: redo, redo: true })).toMatchObject({
+            imports: [], summaries: redo.length, redo: true,
+        });
+    });
+
+    it('replaces every summary, clears the old canon, and never carries it into a pick', async () => {
+        const live = redoChat();
+        const { plan, responses } = expected(live);
+        const { context, service, summarizer } = harness({ live, responses });
+        summarizer.start();
+
+        expect(summarizer.adoptionPreview({ redo: true })).toMatchObject({ ok: true, redo: true, calls: plan.calls });
+        const result = await summarizer.adopt({ redo: true });
+
+        expect(result).toMatchObject({ ok: true, imported: 0, summarised: plan.summaries, steps: plan.steps, cancelled: false });
+        expect(result.cleared).toBeGreaterThanOrEqual(8);
+        expect(service.calls).toHaveLength(plan.calls);
+        for (const index of redoScenes(context.chat)) {
+            expect(readScene(context.chat[index]).scene.text).toBe(summary(index));
+            expect(readIndex(context.chat[index]).status).toBe('valid');
+        }
+
+        const picks = service.calls.filter(isPick).map((call) => call.prompt[0].content);
+        expect(picks[0]).not.toContain('The canon as it stood');
+        expect(picks.join('\n')).not.toContain(OLD_FACT);
+        const batches = context.chat.map(readCanon).filter((read) => read.status === 'valid');
+        expect(batches).toHaveLength(plan.steps);
+        expect(batches.flatMap((read) => read.canon.facts).map((fact) => fact.text)).not.toContain(OLD_FACT);
+    });
+
+    it('says what it will do, and what it did', () => {
+        const text = adoptionMessage({ redo: true, imports: [], summaries: 18, every: 8, steps: 3, calls: 24 });
+        expect(text).toContain('all <b>18</b> messages again');
+        expect(text).toContain('About <b>24</b> calls');
+        expect(progressText({ phase: 'clear', cleared: 8 })).toBe('Cleared the index and canon from 8 messages.');
+        expect(doneText({ cleared: 8, imported: 0, summarised: 18, steps: 3, cancelled: false }))
+            .toBe('Done: 8 cleared, 18 summarised, 3 steps.');
     });
 });
