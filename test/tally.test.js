@@ -45,6 +45,22 @@ describe('one kind\'s tally', () => {
         expect(tally.record('a')).toMatchObject({ count: 1 });
     });
 
+    it('tells its listener of every outcome, for the call log (D-0093)', () => {
+        const tally = createTally();
+        const heard = [];
+        tally.onOutcome = (outcome) => heard.push(outcome);
+
+        tally.fail('a', 'empty');
+        tally.discard('aborted');
+        tally.succeed('a');
+
+        expect(heard).toEqual([
+            { outcome: 'failed', reason: 'empty', attempt: 1 },
+            { outcome: 'discarded', reason: 'aborted' },
+            { outcome: 'written' },
+        ]);
+    });
+
     it('keeps each tally to itself', () => {
         const summaries = createTally();
         const states = createTally();

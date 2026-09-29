@@ -8,6 +8,31 @@ what we believed and why it changed.
 
 ---
 
+## D-0093 — Every memory call gets a line in the chat's log
+**2026-09-29.** Matt adopted a chat (Christine Byrne) and several memory calls failed, but nothing
+reached `user/files/`. The disk log wrote only from the observer's snapshots, which means one line per
+*generation*. Memory calls showed up only as running counters on the next generation's line, and an
+adoption makes no generation. OpenRouter's export crashed, and it has no API that lists requests by
+time, so the failures could not be read back from anywhere.
+
+**One line per call, in the same file**, with `kind: "call"` (generation lines have no `kind`). This
+keeps one ordered trail per chat (D-0085), so a failure sits next to the turn it affected. The line is
+written once the job settles it: each tally tells the summarizer of every `fail`, `succeed` and
+`discard`, and `send` holds that call's sizes, timing, model and transport error until then. There
+are two edge cases. A failure before any call, such as a prompt that would not build, still gets a
+line, with empty call fields. A call its job never settled is logged as `unsettled` when the next
+call goes out, so its numbers never end up on another call's line. Lines carry sizes, reasons and
+error text, **never the model's reply**.
+
+**Not done:** OpenRouter's `gen-…` id, which would let `GET /api/v1/generation` return the real cost
+and reasoning tokens per call. First check whether ST's Connection Manager passes the response `id`
+through.
+
+**Would reopen it:** call lines crowding the generation lines out of a normal chat's trail, or a
+reader that needs them in a file of their own.
+
+---
+
 ## D-0092 — "Redo from scratch": the adoption walk with nothing kept
 **2026-09-29.** Matt has long chats from before Cairn, summarised by Qvink on older models, and wants
 them redone end to end on a current memory model: a set of complete 100+ message runs, with logs,

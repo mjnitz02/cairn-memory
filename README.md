@@ -83,7 +83,7 @@ state on a message, choose **Rebuild the world state** (the stacked-boxes icon).
 | Enabled | Turns Cairn off without uninstalling. Existing memory is kept. |
 | Memory connection | The profile Cairn uses to write summaries, the index, canon and the world state. Must not be your roleplay model. |
 | Show inspector | Shows what was injected, from where, how stable the prompt is, and the canon in the prompt. |
-| Write inspector log to disk | Appends each generation to one file per chat, `user/files/cairn-<chat>-<id>.jsonl`, across sessions. |
+| Write inspector log to disk | Appends each generation and each memory call to one file per chat, `user/files/cairn-<chat>-<id>.jsonl`, across sessions. |
 | Hold World Info entries | Keeps a lorebook entry in the prompt once it has activated, instead of letting it drop out when the keyword scan misses it. On by default; off restores stock SillyTavern behaviour. |
 | Lorebook cap | The most tokens your lorebook may take. Written into SillyTavern's own setting, so it applies to every chat. **0** leaves SillyTavern's budget alone. |
 | Write the memory block | Lets Cairn inject the summaries and keep the messages they cover out of the history. On by default, but Cairn waits until your existing memory extension is silent — see below. |

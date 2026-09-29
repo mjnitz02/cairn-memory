@@ -40,12 +40,13 @@ function replies(steps, sizes) {
     return [summary(18), ...Array.from({ length: steps }, (_, i) => [indexReply(sizes[i]), canonReply(i + 1)]).flat()];
 }
 
-function harness({ responses = [], settings = {}, live = chat() } = {}) {
+function harness({ responses = [], settings = {}, live = chat(), onCall } = {}) {
     const service = createRequestService({ responses });
     const context = createContext({ chat: live, profiles: [MEMORY, ROLEPLAY], selectedProfile: ROLEPLAY.id, requestService: service });
     const summarizer = createSummarizer(() => context, {
         settings: () => ({ memoryProfileId: MEMORY.id, worldState: false, step: EVERY, canonSlots: SLOTS, ...settings }),
         memory: () => ({ writing: true }),
+        onCall,
     });
     return { context, service, summarizer };
 }
@@ -115,6 +116,29 @@ describe('adopting a chat', () => {
         }
         expect(canonFor(context.chat, { readCanon, readIndex }).facts[0].text).toBe(`Fact 1 as of step ${plan.steps}.`);
         expect(service.calls.filter(isIndex)).toHaveLength(plan.steps);
+    });
+
+    it('logs every call it makes, a failed one with its reason (D-0093)', async () => {
+        const { plan } = expected();
+        const size = plan.imports.length;
+        const steps = Math.ceil(size / EVERY);
+        const sizes = Array.from({ length: steps }, (_, i) => Math.min(EVERY, size - i * EVERY));
+        const lines = [];
+        const { service, summarizer } = harness({
+            onCall: (entry) => lines.push(entry),
+            responses: ['', ...Array.from({ length: steps }, (_, i) => [indexReply(sizes[i]), canonReply(i + 1)]).flat()],
+        });
+        summarizer.start();
+
+        await summarizer.adopt();
+
+        expect(lines).toHaveLength(service.calls.length);
+        expect(lines.every((line) => line.kind === 'call' && line.during === 'adopt')).toBe(true);
+        expect(lines[0]).toMatchObject({ job: 'summary', message: 18, outcome: 'failed', attempt: 1 });
+        expect(lines[0].reason).toEqual(expect.any(String));
+        expect(lines[0].ms).toEqual(expect.any(Number));
+        expect(lines.slice(1).map((line) => line.job)).toEqual(Array.from({ length: steps }, () => ['index', 'canon']).flat());
+        expect(lines.slice(1).every((line) => line.outcome === 'written')).toBe(true);
     });
 
     it('holds the queue while it runs, and lets it go when it is done', async () => {
@@ -200,7 +224,8 @@ describe('redoing a chat from scratch', () => {
     it('replaces every summary, clears the old canon, and never carries it into a pick', async () => {
         const live = redoChat();
         const { plan, responses } = expected(live);
-        const { context, service, summarizer } = harness({ live, responses });
+        const lines = [];
+        const { context, service, summarizer } = harness({ live, responses, onCall: (entry) => lines.push(entry) });
         summarizer.start();
 
         expect(summarizer.adoptionPreview({ redo: true })).toMatchObject({ ok: true, redo: true, calls: plan.calls });
@@ -209,6 +234,8 @@ describe('redoing a chat from scratch', () => {
         expect(result).toMatchObject({ ok: true, imported: 0, summarised: plan.summaries, steps: plan.steps, cancelled: false });
         expect(result.cleared).toBeGreaterThanOrEqual(8);
         expect(service.calls).toHaveLength(plan.calls);
+        expect(lines).toHaveLength(plan.calls);
+        expect(lines.every((line) => line.during === 'redo' && line.outcome === 'written')).toBe(true);
         for (const index of redoScenes(context.chat)) {
             expect(readScene(context.chat[index]).scene.text).toBe(summary(index));
             expect(readIndex(context.chat[index]).status).toBe('valid');

@@ -67,6 +67,8 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
             // works out each turn comes through rather than being derived twice
             // (docs/p4-plan.md decision 6).
             memory: () => assembler.pendingPass,
+            // Every memory call gets its own line, adoptions included (D-0093).
+            onCall: (entry) => diskLog.appendCall(entry, getContext),
             onUpdate: () => {
                 inspector?.summaries(summarizer.status);
                 marks.refresh();

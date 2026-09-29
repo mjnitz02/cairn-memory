@@ -19,6 +19,10 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 - **Redo from scratch**, beside it: the same walk, but every message is summarised
   again even where Qvink or Cairn already has, and the index and canon are rebuilt
   from nothing. For an old chat you want redone on today's memory model.
+- **Every memory call is logged.** With the inspector log on, each summary, state,
+  index and canon call writes its own line: what it was for, whether it was written,
+  failed or thrown away and why, how long it took and how big it was. Before this an
+  adoption left no trace in the log, because it makes no generation.
 - `scripts/replay-canon.mjs`, the same walk offline over the stage 0 fixture, scored
   against the yardstick as 0d was.
 

@@ -55,16 +55,19 @@ export function failureDetail(detail, reason) {
  * @param {{settings: () => {memoryProfileId?: string, summaryPrompt?: string,
  *              worldState?: boolean, keepCanon?: boolean},
  *          strategy?: object, stateStrategy?: object, canonStrategy?: object,
- *          clock?: () => number, onUpdate?: () => void, memory?: () => object|null}} options
+ *          clock?: () => number, onUpdate?: () => void, memory?: () => object|null,
+ *          onCall?: (entry: object) => void}} options
  *        `strategy` is the summary strategy; `indexStrategy` is the index batch's.
  *        `onUpdate` fires when a request goes out
  *        or settles, so the panel can follow work that happens between generations.
  *        `memory` returns the assembler's pending compaction pass for the turn just
  *        planned — the budget lives there, so this file never re-derives it.
+ *        `onCall` gets one entry per memory call once its outcome is known, for the
+ *        chat's log (D-0093): sizes, timings and reasons, never a model's text.
  */
 export function createSummarizer(getContext, {
     settings, strategy = perMessage, stateStrategy, canonStrategy, indexStrategy,
-    clock = Date.now, onUpdate, memory,
+    clock = Date.now, onUpdate, memory, onCall,
 } = {}) {
     const summaries = createTally();
     /** The chat the tallies count for. A reload of the same chat keeps them. */
@@ -119,6 +122,11 @@ export function createSummarizer(getContext, {
     });
     const indexer = createIndexJob({ ...machinery, ...(indexStrategy ? { strategy: indexStrategy } : {}) });
     const adoption = createAdoption({ getContext, summarise, indexer, canon, save, clock });
+    for (const tally of [summaries, state.tally, indexer.tally, canon.tally]) {
+        tally.onOutcome = (outcome) => logCall(tally, outcome);
+    }
+    /** The call out or just back, until its job says how it ended (D-0093). */
+    let call = null;
     /** The adoption under way, or null. The queue holds while it runs (D-0090). */
     let adopting = null;
 
@@ -279,21 +287,34 @@ export function createSummarizer(getContext, {
         const counting = tally.stats;
         const started = clock();
         debug(`Queue: sending ${kindOf(tally)} for #${index}.`);
+        // A call its job never settled still gets its line, rather than lending its sizes to the next.
+        if (call) logCall(call.tally, { outcome: 'unsettled' });
+        call = {
+            tally, chatId: context.chatId, at: new Date(started).toISOString(), message: index,
+            model: memoryProfile(context, memoryProfileId)?.model ?? null,
+            tokensIn: null, tokensOut: null, replyChars: null, error: null, ms: null,
+        };
+        const open = call;
         try {
             counting.calls++;
             // ST's tokenizer is the chat model's, not the memory model's: a size, not a bill.
-            counting.tokensIn += await countTokens(context, request.messages.map((m) => m.content).join('\n'));
+            open.tokensIn = await countTokens(context, request.messages.map((m) => m.content).join('\n'));
+            counting.tokensIn += open.tokensIn;
             tally.inFlight = index;
             notify();
             const reply = await sendAskingLittleReasoning(context, memoryProfileId, request, signal, counting);
-            counting.tokensOut += await countTokens(context, `${reply?.content ?? ''}${reply?.reasoning ?? ''}`);
+            open.tokensOut = await countTokens(context, `${reply?.content ?? ''}${reply?.reasoning ?? ''}`);
+            open.replyChars = (reply?.content ?? '').length;
+            counting.tokensOut += open.tokensOut;
             return { reply, signal };
         } catch (err) {
+            open.error = String(err?.message ?? err).slice(0, 500);
             return { error: err, signal };
         } finally {
             tally.inFlight = null;
             counting.lastMs = clock() - started;
             counting.ms += counting.lastMs;
+            open.ms = counting.lastMs;
         }
     }
 
@@ -324,6 +345,44 @@ export function createSummarizer(getContext, {
                 counting.calls++;
             }
         }
+    }
+
+    /**
+     * One line for the chat's log: the call and how its job ended. A failure before any
+     * call (a prompt that would not build) gets a line too, with no call fields.
+     */
+    function logCall(tally, { outcome, reason = null, attempt = null }) {
+        const sent = call?.tally === tally ? call : null;
+        if (sent) call = null;
+        if (!onCall) return;
+        try {
+            onCall({
+                kind: 'call',
+                at: sent?.at ?? new Date(clock()).toISOString(),
+                job: jobOf(tally),
+                message: sent?.message ?? null,
+                during: adopting ? (adopting.redo ? 'redo' : 'adopt') : 'queue',
+                outcome,
+                reason,
+                attempt,
+                error: sent?.error ?? null,
+                ms: sent?.ms ?? null,
+                tokens_in: sent?.tokensIn ?? null,
+                tokens_out: sent?.tokensOut ?? null,
+                reply_chars: sent?.replyChars ?? null,
+                model: sent?.model ?? null,
+                chat_id: sent?.chatId ?? getContext().chatId ?? null,
+            });
+        } catch (err) {
+            warn('Could not log a memory call.', err);
+        }
+    }
+
+    function jobOf(tally) {
+        if (tally === summaries) return 'summary';
+        if (tally === state.tally) return 'state';
+        if (tally === indexer.tally) return 'index';
+        return 'canon';
     }
 
     function tallyOf(kind) {
@@ -582,7 +641,7 @@ export function createSummarizer(getContext, {
         const preview = adoptionPreview({ redo });
         if (!preview.ok) return preview;
         const { chatId } = getContext();
-        const run = { cancelled: false, chatId };
+        const run = { cancelled: false, chatId, redo };
         adopting = run;
         activeIn = chatId;
         try {

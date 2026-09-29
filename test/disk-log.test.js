@@ -257,6 +257,34 @@ describe('one log per chat, appended to', () => {
     });
 });
 
+describe('memory call lines (D-0093)', () => {
+    it('writes a call to the file of the chat it was made for, marked as a call', async () => {
+        const log = createDiskLog({ delayMs: 0 });
+        log.setEnabled(true);
+        log.appendCall({ kind: 'call', job: 'summary', message: 4, outcome: 'failed', reason: 'empty', chat_id: 'Other - 2026-09-29' }, getContext);
+
+        await vi.waitFor(() => expect(uploads()).toHaveLength(1));
+
+        expect(JSON.parse(uploads()[0][1].body).name).toBe(logFilename('Other - 2026-09-29'));
+        expect(JSON.parse(writtenLines()[0])).toMatchObject({
+            kind: 'call', job: 'summary', message: 4, outcome: 'failed', reason: 'empty', chat_id: 'Other - 2026-09-29',
+        });
+    });
+
+    it('interleaves with generation lines in the order they happened', async () => {
+        const log = createDiskLog({ delayMs: 0 });
+        log.setEnabled(true);
+        log.append(snapshot(), getContext);
+        log.appendCall({ kind: 'call', job: 'index', outcome: 'written' }, getContext);
+
+        await vi.waitFor(() => expect(uploads()).toHaveLength(1));
+
+        const lines = writtenLines().map((line) => JSON.parse(line));
+        expect(lines.map((line) => line.kind ?? 'generation')).toEqual(['generation', 'call']);
+        expect(lines[1].chat_id).toBe(context.chatId);
+    });
+});
+
 describe('what a line has to answer', () => {
     /**
      * The log exists so a run can be read with jq instead of by hand

@@ -23,7 +23,7 @@ export function createTally(counters = {}) {
     let stats = fresh();
     let streak = 0;
 
-    return {
+    const tally = {
         /** Counters for the open chat. The log keeps running totals, so a reader diffs two lines. */
         get stats() {
             return stats;
@@ -35,6 +35,9 @@ export function createTally(counters = {}) {
 
         /** The message a request is out for, or null. */
         inFlight: null,
+
+        /** Told of every outcome, so each call gets a line in the chat's log (D-0093). */
+        onOutcome: null,
 
         /** Counts start again in another chat; attempts and the streak do not. */
         resetStats() {
@@ -51,6 +54,7 @@ export function createTally(counters = {}) {
             stats.failures++;
             stats.lastReason = reason;
             streak++;
+            tally.onOutcome?.({ outcome: 'failed', reason, attempt: count });
             return { count, first: streak === 1, givenUp: count >= MAX_ATTEMPTS, reason };
         },
 
@@ -61,12 +65,14 @@ export function createTally(counters = {}) {
         discard(reason) {
             stats.discarded++;
             stats.lastDiscard = reason;
+            tally.onOutcome?.({ outcome: 'discarded', reason });
         },
 
         succeed(key) {
             attempts.delete(key);
             stats.written++;
             streak = 0;
+            tally.onOutcome?.({ outcome: 'written' });
         },
 
         /** Forget a job's failures, so a user's retry of a given-up job is tried at all. */
@@ -83,4 +89,5 @@ export function createTally(counters = {}) {
             return (attempts.get(key)?.count ?? 0) >= MAX_ATTEMPTS;
         },
     };
+    return tally;
 }
