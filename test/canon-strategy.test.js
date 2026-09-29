@@ -61,7 +61,7 @@ describe('building a canon pick', () => {
         expect(canonPick.build({ records: RECORDS, slots: 3 }).messages[0].content)
             .toContain('Choose exactly 3 facts');
         expect(canonPick.build({ records: RECORDS, slots: 9 }).messages[0].content)
-            .toContain('Exactly 9 facts');
+            .toContain('Now reply with the JSON object: exactly 9 facts');
     });
 
     it('never leaks the compact line into the index, which would cost the pick thousands of tokens', () => {
@@ -90,6 +90,16 @@ describe('building a canon pick', () => {
         // The two instructions the pick exists for: read every row, chain the cause.
         expect(CANON_PROMPT).toContain('Read every row');
         expect(CANON_PROMPT).toContain('Chain the causes');
+    });
+
+    it('ends on a complete example the parser reads whole, then the index, then the ask (D-0094)', () => {
+        const example = CANON_PROMPT.match(/^Reply:\n(\{"canon":\[\n[\s\S]*?\n\]\})$/m)[1];
+        const parsed = parseCanonReply(example, { slots: 3, records: 5 });
+
+        expect(parsed).toMatchObject({ ok: true, dropped: [], short: 0 });
+        for (const fact of JSON.parse(example).canon) expect(Object.keys(fact)).toEqual(['fact', 'entities', 'from']);
+        expect(CANON_PROMPT).toContain('write speech with single quotes, never double quotes');
+        expect(CANON_PROMPT.trimEnd().endsWith('{{index}}\n\nNow reply with the JSON object: exactly {{slots}} facts from the index above.')).toBe(true);
     });
 
     it('shows a quiet row being picked for its background', () => {

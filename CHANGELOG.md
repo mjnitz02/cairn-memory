@@ -9,20 +9,68 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ## [Unreleased]
 
+### Added
+
+- **Adopt this chat**, in a collapsed section of the settings panel. It walks a chat
+  started before Cairn from its first message: takes Qvink's summaries as its own,
+  summarises what has none, then indexes the story and re-picks canon a step at a
+  time, carrying the canon forward. It says how many calls it will make and asks
+  first, and it can be stopped between calls.
+- **Redo from scratch**, beside it: the same walk, but every message is summarised
+  again even where Qvink or Cairn already has, and the index and canon are rebuilt
+  from nothing. For an old chat you want redone on today's memory model.
+- **Every memory call is logged.** With the inspector log on, each summary, state,
+  index and canon call writes its own line: what it was for, whether it was written,
+  failed or thrown away and why, how long it took and how big it was. Before this an
+  adoption left no trace in the log, because it makes no generation.
+- **A failed memory call logs where its reply broke**: the parse error and a short
+  window of the reply around it, so a malformed reply can be told from a cut-off one.
+- `scripts/replay-canon.mjs`, the same walk offline over the stage 0 fixture, scored
+  against the yardstick as 0d was.
+
 ### Changed
 
+- **The index, canon and world state prompts are laid out for lighter models**: the
+  task, the fields one by one, one complete example reply, then your chat, then a
+  one-line ask. They also say to write speech inside a value in single quotes, the
+  likeliest reason a reply's JSON would not parse. If you have edited any of these
+  prompts, your edit is kept; clear it to get the new default.
 - **Memory calls ask the model not to reason.** On an OpenRouter memory profile a
   reasoning model spent its whole reply budget thinking, came back empty, and was
   billed for it: in one chat GLM-5.3 cost ten times what GLM-4.7 did for worse
   results. Cairn now asks for no reasoning on OpenRouter; on other sources, turn it
   off in the profile's preset. An empty or cut-off reply now says this in its toast.
+  Some providers cannot stop a model reasoning and refuse the request; Cairn then asks
+  for less, then for whatever the preset says, and remembers that for the session.
 - **A failing index batch gives up after three tries.** It used to be retried after
   every reply, because each new summary made it count as a new batch.
 - **The inspector log names the memory model** (`memory_model`) and whether Cairn
   asked it not to reason (`memory_reasoning`).
 
+- **Opening a chat no longer makes any memory calls.** Cairn used to catch up on
+  leftover work the moment a chat opened, so clicking the wrong character cost
+  money. It now waits until you send, generate, edit or resummarise in that chat.
+- **A "Memory model reasoning" setting**: None (the default), Low, or the profile's
+  own preset. If a provider refuses None, Cairn remembers it for that model, so
+  later page loads don't pay for the refusal again.
+- **Debug logging shows what the queue sends and why**: which event started it,
+  which kind of call, and the reasoning effort asked for.
+- **A button to rebuild the world state on a message** (stacked boxes), beside
+  **Summarise with Cairn** (stacked cubes), for a state that failed or went missing.
+- **The world state shows a spinner while it is written**, after a reply or from
+  the rebuild button, instead of appearing silently.
+- **The inspector log counts thrown-away replies.** A reply that arrives after its
+  messages changed is discarded rather than stored; each kind now logs how many it
+  discarded and why (`state_discarded`, `state_last_discard`, and the same for
+  summaries, the index and canon), so a missing world state can be explained.
+
 ### Fixed
 
+- **The world state stopped updating alongside WeatherPack** or any extension that
+  tidies a reply's markdown after it arrives. Cairn read the reply before the tidy,
+  saw it change, threw the update away and did not try again until the next reply,
+  so the state went stale and then vanished at the next memory step. Cairn now reads
+  the reply after it is shown, and reads again at once if a message changes under it.
 - Switching chats now resets the index counters, as it already did the others.
 
 - **The inspector log is one file per chat, and it keeps growing.** Each chat

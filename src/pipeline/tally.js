@@ -15,14 +15,15 @@ export const MAX_ATTEMPTS = 3;
  */
 export function createTally(counters = {}) {
     const fresh = () => ({
-        calls: 0, written: 0, failures: 0, lastReason: null, lastMs: null, ms: 0, tokensIn: 0, tokensOut: 0, ...counters,
+        calls: 0, written: 0, failures: 0, lastReason: null, lastMs: null, ms: 0, tokensIn: 0, tokensOut: 0,
+        discarded: 0, lastDiscard: null, ...counters,
     });
     /** Job key → `{count, reason}`. Keys carry the chat id, so they outlive a chat change. */
     const attempts = new Map();
     let stats = fresh();
     let streak = 0;
 
-    return {
+    const tally = {
         /** Counters for the open chat. The log keeps running totals, so a reader diffs two lines. */
         get stats() {
             return stats;
@@ -34,6 +35,9 @@ export function createTally(counters = {}) {
 
         /** The message a request is out for, or null. */
         inFlight: null,
+
+        /** Told of every outcome, so each call gets a line in the chat's log (D-0093). */
+        onOutcome: null,
 
         /** Counts start again in another chat; attempts and the streak do not. */
         resetStats() {
@@ -50,13 +54,25 @@ export function createTally(counters = {}) {
             stats.failures++;
             stats.lastReason = reason;
             streak++;
+            tally.onOutcome?.({ outcome: 'failed', reason, attempt: count });
             return { count, first: streak === 1, givenUp: count >= MAX_ATTEMPTS, reason };
+        },
+
+        /**
+         * A reply thrown away because the chat moved on while it was out: not a failure,
+         * so no streak and no toast, but counted, or a missing write has no explanation.
+         */
+        discard(reason) {
+            stats.discarded++;
+            stats.lastDiscard = reason;
+            tally.onOutcome?.({ outcome: 'discarded', reason });
         },
 
         succeed(key) {
             attempts.delete(key);
             stats.written++;
             streak = 0;
+            tally.onOutcome?.({ outcome: 'written' });
         },
 
         /** Forget a job's failures, so a user's retry of a given-up job is tried at all. */
@@ -73,4 +89,5 @@ export function createTally(counters = {}) {
             return (attempts.get(key)?.count ?? 0) >= MAX_ATTEMPTS;
         },
     };
+    return tally;
 }

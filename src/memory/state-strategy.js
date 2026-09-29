@@ -36,7 +36,7 @@ export const STATE_MAX_EARLIER = 5;
  * caps. It records stated facts only, so the memory model never takes over telling the
  * story (D-0043).
  */
-export const STATE_PROMPT = `You keep a short record of the hard facts of a roleplay scene: where it is, who is in it, and what each character's hair and outfit are right now. Character descriptions often fix these, so the record carries forward whatever the story has since changed. Below are the record as it stands and the messages that came after it. Reply with the complete record as it stands at the end of those messages.
+export const STATE_PROMPT = `Your task: keep a short record of the hard facts of a roleplay scene — where it is, who is in it, and what each character's hair and outfit are right now. You are given the record as it stands and the messages that came after it. Reply with the complete record as it stands at the end of those messages. Character descriptions often fix these facts, so the record carries forward whatever the story has since changed.
 
 Fields, with the most characters each value may use:
 - location: where the scene is, most specific place first (${TEXT_FIELDS.location})
@@ -50,13 +50,14 @@ Rules:
 - Fill in any field the record is missing whenever the messages or the characters' own descriptions establish it, even in passing. A blank field is worse than an old one.
 - List exactly the characters present at the end of the messages. Anyone you leave out has left the scene.
 - Values are short, plain phrases stating what the messages say. Keep each value within its limit; a longer one is thrown away and the stored value kept.
+- Where the messages leave a detail unsettled, carry the record's own value across unchanged.
+
+Reply format: only a JSON object with the keys "location", "weather" and "characters", with no other text before or after it. "characters" maps each present character's name to an object with "hair" and "outfit". Inside a value, write speech with single quotes, never double quotes.
 
 Example.
 Record: {"location":"The ferry terminal, waiting room","weather":"Drizzle outside; damp and cold indoors","characters":{"Wren":{"hair":"Loose, damp from the rain","outfit":"Wool coat over a grey jumper, jeans, boots"}}}
 Messages: Wren shrugs off her soaked coat, ties her hair back and walks out to the pier.
 Reply: {"location":"The ferry terminal, outer pier","weather":"Drizzle outside; damp and cold indoors","characters":{"Wren":{"hair":"Tied back","outfit":"Grey jumper, jeans, boots"}}}
-
-Where the messages leave a detail unsettled, carry the record's own value across unchanged.
 
 Current record:
 {{state}}
@@ -69,7 +70,7 @@ Earlier events:
 New messages:
 {{messages}}
 
-Reply with the complete record as JSON, and nothing else.`;
+Now reply with the complete record as JSON, and nothing else.`;
 
 /** The template to send for a `statePrompt` setting (`resolvePrompt`). */
 export function resolveStatePrompt(setting) {

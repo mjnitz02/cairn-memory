@@ -204,6 +204,26 @@ turn on, the block only changes at its end until it outgrows the limit again.
 
 ## Writing summaries
 
+**Adopt this chat**, in a collapsed section of the settings panel, walks the open
+chat from its first message as if Cairn had been on all along (D-0090). Qvink's
+summaries become Cairn's own where Cairn has none, which costs nothing; messages
+with no summary are summarised; then, every **Summary step** summaries, the new ones
+are indexed and canon is picked again, starting from the canon so far and stored on
+the newest record it read. It asks first and says how many calls it will make, the
+normal queue waits while it runs, **Stop adopting** ends it between calls, and the
+next prompt after it is a full rebuild.
+
+**Redo from scratch**, beside it, is the same walk with nothing kept (D-0092): every
+message is summarised again, whether Qvink or Cairn summarised it before, except the
+last and any Qvink excluded. Before it starts it clears the index and every canon pick,
+so no old pick is carried into the new ones. A summary that fails keeps the old one, and
+the world state is left alone.
+
+Opening a chat, or loading the page on one, makes no memory call. A chat's work
+waits until you act in it: a reply, an edit or a resummarise starts it, and a
+generation you start lets it run once the reply lands (D-0088). A chat opened by
+mistake costs nothing.
+
 After each reply, and as soon as you edit a message, Cairn summarises the
 messages waiting for a summary, one request at a time, oldest first, through the **Memory connection** profile. Each
 request carries the message and the five summaries before it. A reply that
@@ -214,9 +234,17 @@ Every memory request asks the model not to reason. Summaries, records, the
 state and the canon pick are short readings of short text, and a reasoning model
 spends its reply budget thinking about them and returns nothing (D-0086). For an
 **OpenRouter** profile Cairn sends `reasoning_effort: none`, which is what
-SillyTavern sends for **Minimum**. It asks nothing of other sources, which pass the
-value on unchecked; turn reasoning off in that profile's own preset. An empty or
-cut-off reply says so in its toast.
+SillyTavern sends for **Minimum**. The **Memory model reasoning** setting can start
+it at `low` instead, or leave reasoning to the preset. Some OpenRouter providers
+cannot turn reasoning off and refuse the request; Cairn then asks for `low`, then
+for nothing, and saves that against the profile and model, so later page loads
+start there (D-0087, D-0088). It asks nothing of other sources, which
+pass the value on unchecked; turn reasoning off in that profile's own preset. An
+empty or cut-off reply says so in its toast.
+
+A profile's preset should be one made for the same source. A preset made for a
+Custom endpoint, used on an OpenRouter profile, loses its provider list on the way
+out, and OpenRouter picks any provider it likes.
 
 Cairn does nothing without a memory profile, in group chats, or while Qvink
 Memory is running with **Auto Summarize** on. Two extensions summarising the same
@@ -235,8 +263,8 @@ anything.
 
 Nothing starts when you send a message, because that's when the chat model starts
 generating, and on a shared or local backend a summary would compete with it.
-Running the summaries never delays SillyTavern. It waits for every
-`MESSAGE_RECEIVED` listener before it shows the reply, so Cairn starts the work
+Running the summaries never delays SillyTavern. Cairn starts the work once the
+reply is shown (`CHARACTER_MESSAGE_RENDERED`, after any formatter has rewritten it)
 and returns at once. Unlike Qvink with **Block generation** on, Cairn never holds
 up your next message either, so you can keep chatting while a summary is written.
 The message you send is the newest, so it's summarised after the next reply. If
@@ -259,6 +287,18 @@ summary, which the queue skips, and it gives a message Cairn gave up on a fresh
 start. It waits on the same switches as the queue and says which one is closed.
 Replacing a summary that is already in the memory block changes the block from
 that summary on, so the next prompt misses the cache from there, as an edit would.
+The same click redoes the summary's index record, so it costs two calls.
+
+**Rebuild the world state**, beside it (the stacked-boxes icon), redoes the world
+state on that message (D-0089). It reads every message since the state before it,
+builds on that state, and replaces any state already on the message; a failure
+keeps what is there. Only the newest state reaches the prompt, so a message in the
+middle of the chat without a state costs nothing once a later one exists, and the
+button matters most on the newest message, when its update failed or was thrown
+away. Rebuilding one state leaves the others alone: each is its own snapshot.
+While a state is being written, after a reply or from this button, its message
+says so with a spinner, **Cairn is updating the world state…**, which goes when
+the state lands or fails.
 
 **The prompt** is the **Summary prompt** setting. `{{message}}` is the message as
 `Name: text`, and `{{history}}` is the summaries before it, one per line.
@@ -324,7 +364,10 @@ is how they leave. A reply that lists nobody at all is ignored.
 The
 state is stored on the newest message it read, in `message.extra.cairn.state`,
 with a hash of the messages it read. A reply that arrives after any of those
-messages changed, or after you left the chat, is thrown away. A failed state
+messages changed, or after you left the chat, is thrown away; when the messages
+changed, Cairn reads them again straight away, once. The update starts only after
+the reply is shown, so a formatter such as WeatherPack has already rewritten it
+(D-0091). A failed state
 update writes nothing, warns once per run of failures, and doesn't stop the
 summaries. After three failures on the same messages Cairn stops trying until a
 new message arrives or one is edited.

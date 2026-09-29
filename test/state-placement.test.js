@@ -9,7 +9,7 @@ import { readState, writeState } from '../src/store/chat-store.js';
 import { resetToasts } from '../src/util/log.js';
 import { createRequestService, deferred } from './mocks/llm.js';
 import {
-    assembleTextPrompt, createContext, makeChat, makeCoreChat, makeMessage, newSwipe, swipeTo,
+    assembleTextPrompt, createContext, makeChat, makeCoreChat, makeMessage, newSwipe, swipeTo, startActive,
 } from './mocks/sillytavern.js';
 
 /**
@@ -194,6 +194,7 @@ describe('writing the state into the prompt', () => {
         const service = createRequestService({ responses: [answer.promise] });
         const context = createContext({ chat: playedChat(), profiles: [MEMORY], requestService: service });
         const summarizer = createSummarizer(() => context, { settings: () => ({ memoryProfileId: MEMORY.id }) });
+        startActive(summarizer, context);
         const injector = createInjector(() => context, {
             memory: { plan: async () => makePlan() },
             state: createStatePlacement(() => context, { scope: {} }),

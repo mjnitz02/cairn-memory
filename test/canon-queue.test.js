@@ -6,7 +6,7 @@ import { readCanon, readIndex } from '../src/store/chat-store.js';
 import { resetToasts } from '../src/util/log.js';
 import { badCanonOutputs, createRequestService, deferred } from './mocks/llm.js';
 import { cairnIndexStore } from './mocks/cairn.js';
-import { createContext, makeChat as rawChat } from './mocks/sillytavern.js';
+import { createContext, makeChat as rawChat, startActive } from './mocks/sillytavern.js';
 
 /** The store's readers, which `canonFor` takes rather than imports (memory/canon.js). */
 const READERS = { readCanon, readIndex };
@@ -100,6 +100,7 @@ function harness({ responses = [], chat, settings = {}, context: contextOptions 
             return pass(live, { due: covered === null || covered < 3 });
         }),
     });
+    startActive(summarizer, context);
     return { context, service, summarizer, chat: live };
 }
 

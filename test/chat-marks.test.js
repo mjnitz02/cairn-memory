@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { markMessages, renderMark, stateTexts } from '../src/ui/chat-marks.js';
+import { STATE_WRITING_HTML, markMessages, renderMark, stateTexts, stateWriting } from '../src/ui/chat-marks.js';
 import { QVINK_EXTENSION, qvinkDisplaying } from '../src/memory/scenes.js';
 import { STATE_HEADER } from '../src/memory/state-schema.js';
 import { writeState } from '../src/store/chat-store.js';
@@ -7,7 +7,7 @@ import { MAX_ATTEMPTS, createSummarizer } from '../src/pipeline/summarizer.js';
 import { resetToasts } from '../src/util/log.js';
 import { cairnStore, cairnSummary, makeMixedChat } from './mocks/cairn.js';
 import { badOutputs, createRequestService, deferred } from './mocks/llm.js';
-import { createContext, makeChat } from './mocks/sillytavern.js';
+import { createContext, makeChat, startActive } from './mocks/sillytavern.js';
 
 const MEMORY = { id: 'memory-profile', name: 'GLM (memory)' };
 
@@ -181,6 +181,7 @@ describe('following a summarizer run', () => {
             settings: () => ({ memoryProfileId: MEMORY.id, worldState: false }),
             onUpdate: () => seen.push(states(markMessages(context.chat, summarizer.status))),
         });
+        startActive(summarizer, context);
         return { context, summarizer, seen };
     }
 
@@ -208,5 +209,74 @@ describe('following a summarizer run', () => {
         expect(markMessages(context.chat, summarizer.status).get(10)).toEqual({ state: 'failed', attempts: 1, reason: 'truncated' });
         context.chat[10].extra.cairn = cairnStore(context.chat[10], finished(10));
         expect(markMessages(context.chat, summarizer.status).get(10).state).toBe('written');
+    });
+});
+
+/** A spinner while a world state is written, by the queue or the rebuild button (D-0089). */
+describe('while a world state is being written', () => {
+    const DECK = { location: 'The ferry, upper deck', characters: { Wren: { outfit: 'Wool coat, boots' } } };
+
+    beforeEach(() => {
+        vi.stubGlobal('toastr', { warning: vi.fn() });
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        resetToasts();
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+    });
+
+    it('names the message whose state request is out, and nothing otherwise', () => {
+        expect(stateWriting({ state: { inFlight: 5 } })).toBe(5);
+        expect(stateWriting({ state: { inFlight: null } })).toBeNull();
+        expect(stateWriting(null)).toBeNull();
+        expect(STATE_WRITING_HTML).toContain('fa-spin');
+        expect(STATE_WRITING_HTML).toContain('world state');
+    });
+
+    function run(responses, chatOf = () => makeChat(6)) {
+        const context = createContext({ chat: chatOf(), profiles: [MEMORY], requestService: createRequestService({ responses }) });
+        const seen = [];
+        const summarizer = createSummarizer(() => context, {
+            settings: () => ({ memoryProfileId: MEMORY.id }),
+            memory: () => ({ writing: false }),
+            onUpdate: () => seen.push(stateWriting(summarizer.status)),
+        });
+        return { context, summarizer, seen };
+    }
+
+    it('shows on the newest message while the queue brings the state up to date after a reply', async () => {
+        const answer = deferred();
+        const { context, summarizer, seen } = run([answer.promise]);
+        startActive(summarizer, context);
+        summarizer.start();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(stateWriting(summarizer.status)).toBe(5);
+        answer.resolve(JSON.stringify(DECK));
+        await summarizer.idle();
+        expect(stateWriting(summarizer.status)).toBeNull();
+        // The marks were told both when it went out and when it landed.
+        expect(seen).toContain(5);
+        expect(seen.at(-1)).toBeNull();
+    });
+
+    it('shows on the message a rebuild was asked for', async () => {
+        const answer = deferred();
+        const { summarizer } = run([answer.promise], () => {
+            const played = makeChat(6);
+            writeState(played, 5, { value: DECK, read: 6, changed: [], prompt: 'h:1', at: 'T' });
+            return played;
+        });
+        summarizer.start();
+
+        expect(summarizer.restate(3)).toEqual({ queued: true });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(stateWriting(summarizer.status)).toBe(3);
+
+        answer.resolve(JSON.stringify(DECK));
+        await summarizer.idle();
+        expect(stateWriting(summarizer.status)).toBeNull();
     });
 });

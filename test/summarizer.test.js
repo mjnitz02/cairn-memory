@@ -9,7 +9,7 @@ import { resetToasts } from '../src/util/log.js';
 import { badOutputs, createRequestService, deferred } from './mocks/llm.js';
 import { makeMixedChat } from './mocks/cairn.js';
 import { makeMessage as makeProse, makeSummary } from './mocks/qvink.js';
-import { createContext, openChat, receiveMessage } from './mocks/sillytavern.js';
+import { createContext, openChat, receiveMessage, startActive, startGeneration } from './mocks/sillytavern.js';
 
 const MEMORY = { id: 'memory-profile', name: 'GLM (memory)' };
 const ROLEPLAY = { id: 'roleplay-profile', name: 'Local (roleplay)' };
@@ -48,6 +48,7 @@ function harness({ responses = [], settings = {}, chat, service, context: contex
 
         ...(strategy ? { strategy } : {}),
     });
+    startActive(summarizer, context);
     return { context, service: requests, summarizer };
 }
 
@@ -176,7 +177,7 @@ describe('summarising the queue', () => {
 });
 
 describe('when it runs', () => {
-    it('does not hold up ST, which awaits MESSAGE_RECEIVED before rendering the reply', async () => {
+    it('does not hold up ST, which awaits every listener to a reply', async () => {
         const answer = deferred();
         const chat = makeMixedChat({ length: 12, qvinkThrough: 10, cairnThrough: 10 });
         const { context, service, summarizer } = harness({ chat, responses: [answer.promise] });
@@ -279,11 +280,11 @@ describe('when it runs', () => {
     it('stops listening and abandons the request in flight when stopped', async () => {
         const answer = deferred();
         const { context, service, summarizer } = harness({ responses: [answer.promise] });
-        const { MESSAGE_RECEIVED, CHAT_CHANGED } = context.eventTypes;
+        const { CHARACTER_MESSAGE_RENDERED, CHAT_CHANGED } = context.eventTypes;
 
         summarizer.start();
         summarizer.start();
-        expect(context.eventSource.listenerCount(MESSAGE_RECEIVED)).toBe(1);
+        expect(context.eventSource.listenerCount(CHARACTER_MESSAGE_RENDERED)).toBe(1);
         expect(context.eventSource.listenerCount(CHAT_CHANGED)).toBe(1);
         await flush();
 
@@ -292,13 +293,98 @@ describe('when it runs', () => {
 
         expect(service.calls[0].custom.signal.aborted).toBe(true);
         expect(written(context.chat)).toEqual([]);
-        expect(context.eventSource.listenerCount(MESSAGE_RECEIVED)).toBe(0);
+        expect(context.eventSource.listenerCount(CHARACTER_MESSAGE_RENDERED)).toBe(0);
         expect(context.eventSource.listenerCount(CHAT_CHANGED)).toBe(0);
         expect(warning).not.toHaveBeenCalled();
     });
 });
 
 /** docs/decisions.md D-0037: before writing, the chat, the message and its text are all checked again. */
+describe('opening a chat (D-0088)', () => {
+    /** A summarizer as index.js makes it: started, with nobody having acted yet. */
+    function opened(responses) {
+        const service = createRequestService({ responses });
+        const context = createContext({
+            chat: makeMixedChat({ length: 14, qvinkThrough: 9, cairnThrough: 9 }),
+            profiles: [MEMORY, ROLEPLAY],
+            selectedProfile: ROLEPLAY.id,
+            requestService: service,
+        });
+        const summarizer = createSummarizer(() => context, {
+            settings: () => ({ memoryProfileId: MEMORY.id, worldState: false }),
+            memory: () => ({ writing: false }),
+        });
+        return { context, service, summarizer };
+    }
+
+    it('makes no call on loading the page or opening a chat with work waiting', async () => {
+        const { context, service, summarizer } = opened([]);
+
+        summarizer.start();
+        await summarizer.idle();
+        await openChat(context, { chatId: 'another-chat', messages: makeMixedChat({ length: 14, qvinkThrough: 9, cairnThrough: 9 }) });
+        await summarizer.idle();
+        // A settings change is not activity in the chat either.
+        await summarizer.drain('the memory profile setting');
+
+        expect(pendingScenes(context.chat).length).toBeGreaterThan(0);
+        expect(service.calls).toHaveLength(0);
+    });
+
+    it('does not count the greeting ST re-emits when a greeting-only chat opens (public/script.js:7703-7706)', async () => {
+        const { context, service, summarizer } = opened([]);
+        summarizer.start();
+
+        await context.eventSource.emit(context.eventTypes.MESSAGE_RECEIVED, 0, 'first_message');
+        await context.eventSource.emit(context.eventTypes.CHARACTER_MESSAGE_RENDERED, 0, 'first_message');
+        await summarizer.idle();
+
+        expect(service.calls).toHaveLength(0);
+    });
+
+    it('ignores ST\'s dry runs and other extensions\' quiet generations (public/script.js:4299)', async () => {
+        const { context, service, summarizer } = opened([]);
+        summarizer.start();
+
+        await startGeneration(context, { dryRun: true });
+        await startGeneration(context, { type: 'quiet' });
+        await summarizer.drain('a settings change');
+
+        expect(service.calls).toHaveLength(0);
+    });
+
+    it('starts on a reply once the user has generated, and not before the reply lands', async () => {
+        const { context, service, summarizer } = opened([summary(10), summary(11), summary(12)]);
+        summarizer.start();
+
+        await startGeneration(context);
+        expect(service.calls).toHaveLength(0);
+
+        await receiveMessage(context, reply(14));
+        await summarizer.idle();
+        expect(service.calls.length).toBeGreaterThan(0);
+    });
+
+    it('starts on a resummarise click, which is activity in the chat', async () => {
+        const { service, summarizer } = opened([summary(10), summary(11), summary(12)]);
+        summarizer.start();
+
+        expect(summarizer.resummarise(10)).toEqual({ queued: true });
+        await summarizer.idle();
+        expect(service.calls.length).toBeGreaterThan(0);
+    });
+
+    it('asks again for activity after moving to another chat', async () => {
+        const { context, service, summarizer } = opened([summary(10), summary(11), summary(12)]);
+        summarizer.start();
+        await startGeneration(context);
+
+        await openChat(context, { chatId: 'another-chat', messages: makeMixedChat({ length: 14, qvinkThrough: 9, cairnThrough: 9 }) });
+        await summarizer.drain('a settings change');
+        expect(service.calls).toHaveLength(0);
+    });
+});
+
 describe('what it asks of the memory model (D-0086)', () => {
     const profile = (api) => ({ ...MEMORY, mode: 'cc', api, model: 'z-ai/glm-5.3' });
 
@@ -314,6 +400,102 @@ describe('what it asks of the memory model (D-0086)', () => {
         expect(service.calls).toHaveLength(3);
         expect(service.calls.every((call) => call.overridePayload.reasoning_effort === 'none')).toBe(true);
         expect(summarizer.status).toMatchObject({ model: 'z-ai/glm-5.3', reasoning: 'none' });
+    });
+
+    it('steps down to a lower effort when the endpoint refuses none, and remembers it', async () => {
+        // OpenRouter: "Reasoning is mandatory for this endpoint and cannot be disabled." The
+        // browser sees only the status text (src/endpoints/backends/chat-completions.js:2705-2710).
+        const { service, summarizer } = harness({
+            responses: [new Error('Bad Request'), summary(10), summary(11), summary(12)],
+            context: { profiles: [profile('openrouter'), ROLEPLAY] },
+        });
+
+        summarizer.start();
+        await summarizer.idle();
+
+        expect(service.calls.map((call) => call.overridePayload.reasoning_effort)).toEqual(['none', 'low', 'low', 'low']);
+        expect(summarizer.status).toMatchObject({ written: 3, failures: 0, calls: 4, reasoning: 'low' });
+        expect(warning).toHaveBeenCalledTimes(1);
+        expect(warning.mock.calls[0][0]).toMatch(/refused reasoning effort "none"/);
+    });
+
+    it('saves a refusal, so the next page load starts at the lower effort with no refused call (D-0088)', async () => {
+        // The real settings are one live object that outlives a page's summarizer.
+        const saved = { memoryProfileId: MEMORY.id, worldState: false, memoryReasoning: 'none', reasoningRefused: {} };
+        const load = (responses) => {
+            const service = createRequestService({ responses });
+            const context = createContext({
+                chat: makeMixedChat({ length: 14, qvinkThrough: 9, cairnThrough: 9 }),
+                profiles: [profile('openrouter'), ROLEPLAY], selectedProfile: ROLEPLAY.id, requestService: service,
+            });
+            const summarizer = startActive(createSummarizer(() => context, { settings: () => saved, memory: () => ({ writing: false }) }), context);
+            return { service, context, summarizer };
+        };
+
+        const first = load([new Error('Bad Request'), summary(10), summary(11), summary(12)]);
+        first.summarizer.start();
+        await first.summarizer.idle();
+        expect(saved.reasoningRefused).toEqual({ [`${MEMORY.id}\nz-ai/glm-5.3`]: ['none'] });
+        expect(first.context.saved.settings).toBeGreaterThan(0);
+
+        const reloaded = load([summary(10), summary(11), summary(12)]);
+        reloaded.summarizer.start();
+        await reloaded.summarizer.idle();
+        const efforts = reloaded.service.calls.map((call) => call.overridePayload.reasoning_effort);
+        expect(efforts.length).toBeGreaterThan(0);
+        expect(efforts.every((effort) => effort === 'low')).toBe(true);
+    });
+
+    it('starts where the setting says: Low asks for low, and the preset\'s own asks nothing', async () => {
+        for (const [setting, expected] of [['low', 'low'], ['preset', undefined]]) {
+            const { service, summarizer } = harness({
+                responses: [summary(10), summary(11), summary(12)],
+                settings: { memoryReasoning: setting },
+                context: { profiles: [profile('openrouter'), ROLEPLAY] },
+            });
+            summarizer.start();
+            await summarizer.idle();
+            expect(service.calls.map((call) => call.overridePayload.reasoning_effort)).toEqual([expected, expected, expected]);
+        }
+    });
+
+    it('sends the preset\'s own setting once every effort is refused', async () => {
+        const { service, summarizer } = harness({
+            responses: [new Error('Bad Request'), new Error('Bad Request'), summary(10), summary(11), summary(12)],
+            context: { profiles: [profile('openrouter'), ROLEPLAY] },
+        });
+
+        summarizer.start();
+        await summarizer.idle();
+
+        expect(service.calls.map((call) => call.overridePayload.reasoning_effort)).toEqual(['none', 'low', undefined, undefined, undefined]);
+        expect(summarizer.status).toMatchObject({ written: 3, reasoning: null });
+    });
+
+    it('does not retry a failure that is not a refusal: an outage costs one request, as before', async () => {
+        const { service, summarizer } = harness({
+            responses: [new Error('502 Bad Gateway')],
+            context: { profiles: [profile('openrouter'), ROLEPLAY] },
+        });
+
+        summarizer.start();
+        await summarizer.idle();
+
+        expect(service.calls).toHaveLength(1);
+        expect(summarizer.status).toMatchObject({ failures: 1, lastReason: 'error', reasoning: 'none' });
+    });
+
+    it('never retries a refusal on a source it asked nothing of', async () => {
+        const { service, summarizer } = harness({
+            responses: [new Error('Bad Request')],
+            context: { profiles: [profile('custom'), ROLEPLAY] },
+        });
+
+        summarizer.start();
+        await summarizer.idle();
+
+        expect(service.calls).toHaveLength(1);
+        expect(summarizer.status.failures).toBe(1);
     });
 
     it('asks nothing of another source, and still reports the model', async () => {

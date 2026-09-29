@@ -151,9 +151,15 @@
 }
 
 .cairn-scene-writing,
-.cairn-scene-waiting {
+.cairn-scene-waiting,
+.cairn-state-writing {
     font-style: italic;
     opacity: 0.7;
+}
+
+.cairn-state-writing {
+    margin: 0 0 5px 0;
+    font-size: small;
 }
 
 .cairn-scene-failed,

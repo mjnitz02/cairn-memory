@@ -22,6 +22,19 @@
                 world state.
             </div>
 
+            <label for="cairn_memoryReasoning">Memory model reasoning</label>
+            <select id="cairn_memoryReasoning" class="text_pole">
+                <option value="none">None</option>
+                <option value="low">Low</option>
+                <option value="preset">As the profile's preset says</option>
+            </select>
+            <div class="cairn-hint">
+                How much the memory model may think before it answers: summarising needs none,
+                and thinking is slow and billed. Asked of OpenRouter profiles; if a provider
+                refuses None, Cairn uses Low for that model from then on, and changing this
+                setting tries None again.
+            </div>
+
             <label class="checkbox_label" for="cairn_showInspector">
                 <input id="cairn_showInspector" type="checkbox">
                 <span>Show inspector</span>
@@ -154,6 +167,35 @@
                     <i class="fa-solid fa-rotate-left"></i>
                     <span>Reset to default</span>
                 </div>
+            </details>
+
+            <details class="cairn-details">
+                <summary>Adopt this chat</summary>
+                <div class="cairn-hint">
+                    Walks the open chat from its first message as if Cairn had been on all along:
+                    takes Qvink's summaries as its own, summarises what has none, then indexes the
+                    story and re-picks canon one step at a time, carrying the canon forward. For a
+                    chat started before Cairn. It makes many calls to the memory model, so it asks
+                    first and says how many.
+                </div>
+                <div class="cairn-hint">
+                    <b>Redo from scratch</b> does the same walk but summarises every message again,
+                    even ones Qvink or Cairn already summarised, and rebuilds the index and canon
+                    from nothing — for an old chat you want redone on today's memory model.
+                </div>
+                <div id="cairn_adopt" class="menu_button menu_button_icon">
+                    <i class="fa-solid fa-person-walking-arrow-right"></i>
+                    <span>Adopt this chat…</span>
+                </div>
+                <div id="cairn_adoptRedo" class="menu_button menu_button_icon">
+                    <i class="fa-solid fa-arrows-rotate"></i>
+                    <span>Redo from scratch…</span>
+                </div>
+                <div id="cairn_adoptCancel" class="menu_button menu_button_icon" hidden>
+                    <i class="fa-solid fa-stop"></i>
+                    <span>Stop adopting</span>
+                </div>
+                <div id="cairn_adoptStatus" class="cairn-hint"></div>
             </details>
 
             <label class="checkbox_label" for="cairn_debugLogging">

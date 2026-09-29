@@ -16,6 +16,9 @@ import { writeState } from '../store/chat-store.js';
 import { debug, warn } from '../util/log.js';
 import { MAX_ATTEMPTS, createTally } from './tally.js';
 
+/** What `run` resolves to when the reply was discarded because a message it read changed. */
+export const READ_CHANGED = 'read-changed';
+
 /**
  * @param {{getContext: () => object, send: Function, save: Function, discard: Function,
  *          report: Function, clock: () => number, strategy?: object}} machinery
@@ -45,6 +48,9 @@ export function createStateJob({ getContext, send, save, discard, report, clock,
         /** Whether this job has failed too often to try again this session. */
         givenUp: (chatId, job) => states.givenUp(key(chatId, job)),
 
+        /** Forget a job's failures, so a rebuild the user asked for is tried at all. */
+        forget: (chatId, job) => states.forget(key(chatId, job)),
+
         /** One update. Its outcome is only recorded: a failing state must not starve summaries. */
         async run(context, { memoryProfileId, statePrompt }, job) {
             const { chatId } = context;
@@ -69,7 +75,11 @@ export function createStateJob({ getContext, send, save, discard, report, clock,
             // hide, deletion, swipe, continue or chat change meanwhile discards the reply.
             const now = getContext();
             const index = jobStillCurrent(now.chat, job);
-            if (index < 0) return discard('state', job.index, 'the messages it read changed');
+            if (index < 0) {
+                if (!now.chat?.includes(job.message)) return discard('state', job.index, 'its message is no longer in the chat');
+                discard('state', job.index, 'a message it read changed');
+                return READ_CHANGED;
+            }
 
             const parsed = strategy.parse(sent.reply?.content);
             if (!parsed.ok) return fail(chatId, job, index, parsed.reason);

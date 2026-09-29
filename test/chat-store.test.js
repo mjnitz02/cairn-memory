@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { STORE_VERSION } from '../src/store/schema.js';
 import {
-    MIN_SUMMARY_TOKENS, hashRange, readCanon, readIndex, readRange, readScene, readState,
+    MIN_SUMMARY_TOKENS, clearDerived, hashRange, readCanon, readIndex, readRange, readScene, readState,
     summarisable, writeCanon, writeIndex, writeScene, writeState,
 } from '../src/store/chat-store.js';
 import { hashString } from '../src/util/hash.js';
@@ -748,6 +748,32 @@ describe('writing an index record', () => {
             expect(message).toBe(messages[i]);
             expect(message.extra).toBe(extras[i]);
         });
+    });
+});
+
+describe('clearing what a redo re-derives (D-0092)', () => {
+    it('drops the index record and the canon batch, and keeps the summary and the state', () => {
+        const chat = [{ name: 'Aster', mes: 'Aster said she would get her across before the feast day.', extra: {} }];
+        writeScene(chat[0], { text: 'Aster promised a crossing.', prompt: 'h:p', at: 'T' });
+        writeIndex(chat, 0, { record: RECORD, prompt: 'h:index', at: 'T' });
+        writeCanon(chat, 0, { facts: [{ text: 'A crossing is promised.', entities: [], from: [0] }], covers: [0, 0], prompt: 'h:c', at: 'T' });
+        writeState(chat, 0, { value: { where: 'the quay' }, read: 1, changed: [], prompt: 'h:s', at: 'T' });
+        const extra = chat[0].extra;
+
+        expect(clearDerived(chat[0])).toBe(true);
+
+        expect(chat[0].extra).toBe(extra);
+        expect(readIndex(chat[0]).status).toBe('none');
+        expect(readCanon(chat[0]).status).toBe('none');
+        expect(readScene(chat[0]).status).toBe('valid');
+        expect(readState(chat, 0).status).toBe('valid');
+        expect(clearDerived(chat[0])).toBe(false);
+    });
+
+    it('leaves a newer Cairn\'s store alone', () => {
+        const message = { mes: 'x', extra: { cairn: { v: STORE_VERSION + 1, index: {}, canon: {} } } };
+        expect(clearDerived(message)).toBe(false);
+        expect(message.extra.cairn.canon).toEqual({});
     });
 });
 

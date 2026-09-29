@@ -16,8 +16,10 @@
  * previous one in the prompt, and a failed pass lets eviction proceed exactly as it
  * does today. Nothing here may reach ST's event path (CLAUDE.md §4.17).
  */
-import { pendingScenes, sceneHistory } from '../memory/scenes.js';
+import { pendingScenes, redoScenes, sceneHistory } from '../memory/scenes.js';
+import { stateJobAt } from '../memory/state.js';
 import { perMessage, resolveSummaryPrompt } from '../memory/scene-strategy.js';
+import { describeReply } from '../memory/model-reply.js';
 import { readScene, summarisable, writeScene } from '../store/chat-store.js';
 import { hashString } from '../util/hash.js';
 import { countTokens } from '../util/tokens.js';
@@ -25,8 +27,11 @@ import { debug, error, toast, toastOnce, warn } from '../util/log.js';
 import { assessCompaction, assessIndexing, assessStateUpdates, assessSummarizing } from './gates.js';
 import { createCanonJob } from './canon-job.js';
 import { createIndexJob } from './index-job.js';
-import { createStateJob } from './state-job.js';
-import { memoryProfile, requestOverrides } from './request-options.js';
+import { READ_CHANGED, createStateJob } from './state-job.js';
+import { adoptionPlan, createAdoption } from './adopt.js';
+import { DEFAULT_SLOTS } from '../memory/canon.js';
+import { STEP } from './scheduler.js';
+import { isBadRequest, memoryProfile, refusalKey, requestOverrides } from './request-options.js';
 import { MAX_ATTEMPTS, createTally } from './tally.js';
 
 export { MAX_ATTEMPTS };
@@ -38,6 +43,10 @@ const PROMPT_FALLBACK = 'Cairn\'s summary prompt has no {{message}}, so the defa
 /** An empty or cut-off reply is nearly always a budget spent reasoning (docs/decisions.md D-0086). */
 const REASONING_HINT = 'The memory model most likely spent its reply budget reasoning: turn reasoning off in the memory profile\'s preset.';
 const BUDGET_REASONS = new Set(['empty', 'truncated']);
+/** Reasons a reply arrived and could not be read, as against a transport or write failure. */
+const READ_FAILURES = new Set(['empty', 'refusal', 'format', 'truncated', 'no-facts']);
+const EFFORT_REFUSED = (effort) => `The memory model's provider refused reasoning effort "${effort}", so Cairn asks it for `
+    + 'less from now on. Changing Cairn\'s reasoning setting tries again.';
 
 /** A failure's toast text, with the likely cause when the reason points at one. */
 export function failureDetail(detail, reason) {
@@ -49,16 +58,19 @@ export function failureDetail(detail, reason) {
  * @param {{settings: () => {memoryProfileId?: string, summaryPrompt?: string,
  *              worldState?: boolean, keepCanon?: boolean},
  *          strategy?: object, stateStrategy?: object, canonStrategy?: object,
- *          clock?: () => number, onUpdate?: () => void, memory?: () => object|null}} options
+ *          clock?: () => number, onUpdate?: () => void, memory?: () => object|null,
+ *          onCall?: (entry: object) => void}} options
  *        `strategy` is the summary strategy; `indexStrategy` is the index batch's.
  *        `onUpdate` fires when a request goes out
  *        or settles, so the panel can follow work that happens between generations.
  *        `memory` returns the assembler's pending compaction pass for the turn just
  *        planned — the budget lives there, so this file never re-derives it.
+ *        `onCall` gets one entry per memory call once its outcome is known, for the
+ *        chat's log (D-0093): sizes, timings and reasons, never a model's text.
  */
 export function createSummarizer(getContext, {
     settings, strategy = perMessage, stateStrategy, canonStrategy, indexStrategy,
-    clock = Date.now, onUpdate, memory,
+    clock = Date.now, onUpdate, memory, onCall,
 } = {}) {
     const summaries = createTally();
     /** The chat the tallies count for. A reload of the same chat keeps them. */
@@ -71,8 +83,36 @@ export function createSummarizer(getContext, {
     let controller = null;
     let active = null;
     let again = false;
+    /**
+     * The chat the user has acted in since it was opened. Opening a chat, or loading the
+     * page on one, makes no memory call: the queue waits for a send, a generation, an
+     * edit or a resummarise there, so a chat opened by mistake costs nothing (D-0088).
+     */
+    let activeIn = null;
+    /** Profile and model → reasoning efforts refused, alongside the saved latch (D-0086, D-0088). */
+    const refusedEfforts = new Map();
+
+    /** What this profile's model has refused: this session's, and what earlier sessions saved. */
+    function refusedFor(config, key) {
+        return new Set([...(refusedEfforts.get(key) ?? []), ...(config.reasoningRefused?.[key] ?? [])]);
+    }
+
+    /** Remember a refusal in the settings, so the next page load starts past it. */
+    function latchRefusal(context, config, key, refused) {
+        refusedEfforts.set(key, refused);
+        try {
+            config.reasoningRefused = { ...(config.reasoningRefused ?? {}), [key]: [...refused] };
+            context.saveSettingsDebounced?.();
+        } catch (err) {
+            warn('Could not save the refused reasoning effort.', err);
+        }
+    }
     /** Messages the user asked to have summarised, by object, since indexes shift. */
     const asked = [];
+    /** Messages the user asked to have their world state rebuilt on, likewise (D-0089). */
+    const askedStates = [];
+    /** The message a rebuild is out for, so a second click while it is out changes nothing. */
+    let restating = null;
     /** The message a summary request is out for. */
     let writing = null;
 
@@ -84,14 +124,37 @@ export function createSummarizer(getContext, {
         ...machinery, pending: memory, ...(canonStrategy ? { strategy: canonStrategy } : {}),
     });
     const indexer = createIndexJob({ ...machinery, ...(indexStrategy ? { strategy: indexStrategy } : {}) });
+    const adoption = createAdoption({ getContext, summarise, indexer, canon, save, clock });
+    for (const tally of [summaries, state.tally, indexer.tally, canon.tally]) {
+        tally.onOutcome = (outcome) => logCall(tally, outcome);
+    }
+    /** The call out or just back, until its job says how it ended (D-0093). */
+    let call = null;
+    /** The adoption under way, or null. The queue holds while it runs (D-0090). */
+    let adopting = null;
 
-    /** Start a run, or fold this trigger into the one under way. Never rejects. */
-    function drain() {
+    /**
+     * Start a run, or fold this trigger into the one under way. Never rejects.
+     *
+     * @param {string} [why] What asked for the run, for the debug log: every memory call
+     *        is traced back to the event that caused it.
+     */
+    function drain(why = 'asked') {
         if (!running) return Promise.resolve();
+        if (adopting) {
+            debug(`Queue: ${why} — waiting for the adoption to finish.`);
+            return Promise.resolve();
+        }
+        if (activeIn === null || activeIn !== getContext().chatId) {
+            debug(`Queue: ${why} — waiting for activity in this chat.`);
+            return Promise.resolve();
+        }
         if (active) {
+            debug(`Queue: ${why} — folded into the run under way.`);
             again = true;
             return active;
         }
+        debug(`Queue: run started by ${why}.`);
         active = (async () => {
             do {
                 again = false;
@@ -115,6 +178,7 @@ export function createSummarizer(getContext, {
      */
     async function run() {
         let stateTried = false;
+        let stateRetried = false;
         let canonTried = false;
         let indexTried = false;
         while (running) {
@@ -142,12 +206,32 @@ export function createSummarizer(getContext, {
             if (gates.summary.sameProfile || gates.state.sameProfile) toastOnce(SAME_PROFILE);
 
             const { chat, chatId } = context;
+            // A rebuild the user asked for goes first, as the state does: they are waiting on it.
+            const rebuildAt = nextIn(askedStates, chat);
+            if (rebuildAt !== undefined) {
+                const job = gates.state.ready ? stateJobAt(chat, rebuildAt) : null;
+                if (job) {
+                    state.forget(chatId, job);
+                    restating = job.message;
+                    try {
+                        await state.run(context, config, job);
+                    } finally {
+                        restating = null;
+                    }
+                    notify();
+                }
+                continue;
+            }
             if (!stateTried) {
                 stateTried = true;
                 const job = gates.state.ready ? state.pending(chat) : null;
                 // Whatever becomes of it, summaries still run: a state that keeps failing must not starve them.
                 if (job && !state.givenUp(chatId, job)) {
-                    await state.run(context, config, job);
+                    // A message rewritten with no edit event (a formatter) would otherwise wait a whole turn.
+                    if (await state.run(context, config, job) === READ_CHANGED && !stateRetried) {
+                        stateRetried = true;
+                        stateTried = false;
+                    }
                     notify();
                     continue;
                 }
@@ -205,32 +289,134 @@ export function createSummarizer(getContext, {
         // A chat change swaps the stats while this is out; its cost belongs to the chat it was for.
         const counting = tally.stats;
         const started = clock();
+        debug(`Queue: sending ${kindOf(tally)} for #${index}.`);
+        // A call its job never settled still gets its line, rather than lending its sizes to the next.
+        if (call) logCall(call.tally, { outcome: 'unsettled' });
+        call = {
+            tally, chatId: context.chatId, at: new Date(started).toISOString(), message: index,
+            model: memoryProfile(context, memoryProfileId)?.model ?? null,
+            tokensIn: null, tokensOut: null, replyChars: null, reply: null, error: null, ms: null,
+        };
+        const open = call;
         try {
             counting.calls++;
             // ST's tokenizer is the chat model's, not the memory model's: a size, not a bill.
-            counting.tokensIn += await countTokens(context, request.messages.map((m) => m.content).join('\n'));
+            open.tokensIn = await countTokens(context, request.messages.map((m) => m.content).join('\n'));
+            counting.tokensIn += open.tokensIn;
             tally.inFlight = index;
             notify();
-            const reply = await context.ConnectionManagerRequestService.sendRequest(
-                memoryProfileId, request.messages, request.maxTokens,
-                { stream: false, signal, includePreset: true, includeInstruct: true },
-                requestOverrides(context, memoryProfile(context, memoryProfileId)),
-            );
-            counting.tokensOut += await countTokens(context, `${reply?.content ?? ''}${reply?.reasoning ?? ''}`);
+            const reply = await sendAskingLittleReasoning(context, memoryProfileId, request, signal, counting);
+            open.tokensOut = await countTokens(context, `${reply?.content ?? ''}${reply?.reasoning ?? ''}`);
+            open.replyChars = (reply?.content ?? '').length;
+            open.reply = reply?.content ?? '';
+            counting.tokensOut += open.tokensOut;
             return { reply, signal };
         } catch (err) {
+            open.error = String(err?.message ?? err).slice(0, 500);
             return { error: err, signal };
         } finally {
             tally.inFlight = null;
             counting.lastMs = clock() - started;
             counting.ms += counting.lastMs;
+            open.ms = counting.lastMs;
         }
+    }
+
+    /**
+     * Ask for no reasoning, then less, then whatever the preset says: an endpoint that
+     * cannot stop thinking refuses the request outright rather than ignoring the ask.
+     * A refused effort is not asked of that model again this session.
+     */
+    async function sendAskingLittleReasoning(context, memoryProfileId, request, signal, counting) {
+        const profile = memoryProfile(context, memoryProfileId);
+        const key = refusalKey(profile);
+        const config = settings?.() ?? {};
+        for (;;) {
+            const refused = refusedFor(config, key);
+            const overrides = requestOverrides(context, profile, refused, config.memoryReasoning);
+            try {
+                debug(`Queue: reasoning effort ${overrides.reasoning_effort ?? 'as the preset has it'}.`);
+                return await context.ConnectionManagerRequestService.sendRequest(
+                    memoryProfileId, request.messages, request.maxTokens,
+                    { stream: false, signal, includePreset: true, includeInstruct: true },
+                    overrides,
+                );
+            } catch (err) {
+                const effort = overrides.reasoning_effort;
+                if (!effort || signal.aborted || !isBadRequest(err)) throw err;
+                latchRefusal(context, config, key, new Set([...refused, effort]));
+                toastOnce(EFFORT_REFUSED(effort));
+                counting.calls++;
+            }
+        }
+    }
+
+    /**
+     * One line for the chat's log: the call and how its job ended. A failure before any
+     * call (a prompt that would not build) gets a line too, with no call fields.
+     */
+    function logCall(tally, { outcome, reason = null, attempt = null }) {
+        const sent = call?.tally === tally ? call : null;
+        if (sent) call = null;
+        if (!onCall) return;
+        try {
+            const job = jobOf(tally);
+            // A structured reply that could not be read keeps where it broke (D-0094).
+            const detail = outcome === 'failed' && job !== 'summary' && READ_FAILURES.has(reason) && sent?.reply
+                ? describeReply(sent.reply) : null;
+            onCall({
+                kind: 'call',
+                at: sent?.at ?? new Date(clock()).toISOString(),
+                job,
+                message: sent?.message ?? null,
+                during: adopting ? (adopting.redo ? 'redo' : 'adopt') : 'queue',
+                outcome,
+                reason,
+                attempt,
+                error: sent?.error ?? null,
+                ms: sent?.ms ?? null,
+                tokens_in: sent?.tokensIn ?? null,
+                tokens_out: sent?.tokensOut ?? null,
+                reply_chars: sent?.replyChars ?? null,
+                ...(detail && {
+                    reply_error: detail.error, reply_at: detail.at, reply_near: detail.near, reply_tail: detail.tail,
+                }),
+                model: sent?.model ?? null,
+                chat_id: sent?.chatId ?? getContext().chatId ?? null,
+            });
+        } catch (err) {
+            warn('Could not log a memory call.', err);
+        }
+    }
+
+    function jobOf(tally) {
+        if (tally === summaries) return 'summary';
+        if (tally === state.tally) return 'state';
+        if (tally === indexer.tally) return 'index';
+        return 'canon';
+    }
+
+    function tallyOf(kind) {
+        return { summary: summaries, state: state.tally, 'index batch': indexer.tally, 'canon pick': canon.tally }[kind];
+    }
+
+    function kindOf(tally) {
+        if (tally === summaries) return 'a summary';
+        if (tally === state.tally) return 'a state update';
+        if (tally === indexer.tally) return 'an index batch';
+        if (tally === canon.tally) return 'a canon pick';
+        return 'a request';
     }
 
     /** The oldest asked-for message still in the chat, or undefined. */
     function nextAsked(chat) {
-        while (asked.length) {
-            const index = chat.indexOf(asked.shift());
+        return nextIn(asked, chat);
+    }
+
+    /** Take the oldest message in `list` that is still in the chat, and return its index. */
+    function nextIn(list, chat) {
+        while (list.length) {
+            const index = chat.indexOf(list.shift());
             if (index >= 0) return index;
         }
         return undefined;
@@ -292,6 +478,7 @@ export function createSummarizer(getContext, {
     }
 
     function discard(kind, index, why) {
+        tallyOf(kind)?.discard(why);
         debug(`Discarded the ${kind} for message #${index}: ${why}.`);
         return false;
     }
@@ -338,9 +525,35 @@ export function createSummarizer(getContext, {
         }
     }
 
-    /** Not awaited: ST awaits this event before it renders the reply (public/script.js:6781-6782). */
-    function onMessageReceived() {
-        drain();
+    /** Activity in the open chat: from here on its queue may run. */
+    function act(why) {
+        activeIn = getContext().chatId;
+        return drain(why);
+    }
+
+    /**
+     * After render, not on MESSAGE_RECEIVED: a formatter such as WeatherPack rewrites the
+     * reply in a `makeFirst` listener here, and ST awaits it before ours (D-0091).
+     * Not awaited. A greeting is not a reply: ST emits one as `first_message` every time a
+     * chat holding only the greeting is opened (public/script.js:7703-7706), so it runs only
+     * a queue already unlocked.
+     */
+    function onMessageRendered(_index, type) {
+        if (type === 'first_message') drain('a greeting');
+        else act('a reply');
+    }
+
+    /**
+     * A generation the user started: a send, a swipe, a continue or an impersonate
+     * (public/script.js:4299). It unlocks the queue without running it: work starts when
+     * the reply lands, so a generation never races a state update reading its own prompt.
+     * ST's dry runs, which the prompt manager makes on opening a chat, and quiet
+     * generations another extension starts are not the user's.
+     */
+    function onGenerationStarted(type, _params, dryRun) {
+        if (dryRun || type === 'quiet') return;
+        if (activeIn !== getContext().chatId) debug('Queue: a generation — memory work starts with the reply.');
+        activeIn = getContext().chatId;
     }
 
     /**
@@ -349,7 +562,7 @@ export function createSummarizer(getContext, {
      * Not awaited, for the same reason as above.
      */
     function onMessageEdited() {
-        drain();
+        act('an edit');
     }
 
     /**
@@ -379,13 +592,102 @@ export function createSummarizer(getContext, {
         if (message !== writing && !asked.includes(message)) {
             summaries.forget(sceneKey(context.chatId, message));
             asked.push(message);
-            drain();
+            act(`a resummarise of #${index}`);
         }
         return { queued: true };
     }
 
+    /**
+     * Rebuild the world state on a message, on the user's word (D-0089): it reads every
+     * visible message since the state before it and replaces any state already there.
+     * Only the newest state reaches the prompt, so this matters most on the newest
+     * message, but any visible one may be rebuilt.
+     *
+     * @param {number} index
+     * @returns {{queued: boolean, reason?: string}} `reason` is a state gate's, or
+     *          `disabled`, `no-message`, `hidden` or `future`.
+     */
+    function restate(index) {
+        const refused = (reason) => ({ queued: false, reason });
+        if (!running) return refused('disabled');
+        const context = getContext();
+        const message = context.chat?.[index];
+        if (!message || typeof message.mes !== 'string') return refused('no-message');
+        if (message.is_system) return refused('hidden');
+        const gate = assessStateUpdates(context, settings?.() ?? {});
+        if (!gate.ready) return refused(gate.reason);
+        if (!stateJobAt(context.chat, index)) return refused('future');
+
+        if (message !== restating && !askedStates.includes(message)) {
+            askedStates.push(message);
+            act(`a world state rebuild of #${index}`);
+        }
+        return { queued: true };
+    }
+
+    /** What adopting (or redoing, D-0092) the open chat would take, or why it can't be (D-0090). */
+    function adoptionPreview({ redo = false } = {}) {
+        if (!running) return { ok: false, reason: 'disabled' };
+        if (adopting) return { ok: false, reason: 'adopting' };
+        const context = getContext();
+        const config = settings?.() ?? {};
+        const gate = assessSummarizing(context, config);
+        if (!gate.ready) return { ok: false, reason: gate.reason };
+        const every = config.step || STEP;
+        const pending = (redo ? redoScenes : pendingScenes)(context.chat);
+        return { ok: true, every, ...adoptionPlan(context.chat, { every, pending, redo }) };
+    }
+
+    /**
+     * Adopt the open chat: import, summarise, then index and pick canon at the pace of the
+     * story (pipeline/adopt.js). The queue holds until it is done, and a chat change or
+     * `cancelAdoption` stops it between calls. It is activity in the chat (D-0088).
+     *
+     * @param {{onProgress?: (update: object) => void, redo?: boolean}} [options] `redo`
+     *        summarises every message again and rebuilds the index and canon from nothing.
+     * @returns {Promise<{ok: boolean, reason?: string, imported?: number, summarised?: number,
+     *            steps?: number, cancelled?: boolean}>}
+     */
+    async function adopt({ onProgress, redo = false } = {}) {
+        const preview = adoptionPreview({ redo });
+        if (!preview.ok) return preview;
+        const { chatId } = getContext();
+        const run = { cancelled: false, chatId, redo };
+        adopting = run;
+        activeIn = chatId;
+        try {
+            await (active ?? Promise.resolve());
+            const config = settings?.() ?? {};
+            const result = await adoption.run(config, {
+                every: preview.every,
+                slots: config.keepCanon === false ? 0 : (config.canonSlots || DEFAULT_SLOTS),
+                pending: () => (redo ? redoScenes : pendingScenes)(getContext().chat),
+                redo,
+                cancelled: () => run.cancelled || getContext().chatId !== chatId,
+                progress: (update) => {
+                    debug(`Adopting: ${JSON.stringify(update)}`);
+                    notify();
+                    try {
+                        onProgress?.(update);
+                    } catch (err) {
+                        warn('Could not report adoption progress.', err);
+                    }
+                },
+            });
+            return { ok: true, ...result };
+        } catch (err) {
+            error('Adopting the chat failed.', err);
+            return { ok: false, reason: 'error' };
+        } finally {
+            adopting = null;
+            notify();
+            drain('the adoption finishing');
+        }
+    }
+
     /** A request for the chat being left is abandoned; the new chat's queue starts. */
     function onChatChanged() {
+        if (adopting) adopting.cancelled = true;
         controller?.abort();
         const { chatId } = getContext();
         if (chatId !== statsChat) {
@@ -396,11 +698,12 @@ export function createSummarizer(getContext, {
             statsChat = chatId;
         }
         notify();
-        drain();
+        drain('a chat change');
     }
 
     const listeners = [
-        ['MESSAGE_RECEIVED', onMessageReceived],
+        ['CHARACTER_MESSAGE_RENDERED', onMessageRendered],
+        ['GENERATION_STARTED', onGenerationStarted],
         ['MESSAGE_EDITED', onMessageEdited],
         ['CHAT_CHANGED', onChatChanged],
     ];
@@ -412,7 +715,7 @@ export function createSummarizer(getContext, {
             for (const [event, listener] of listeners) eventSource.on(eventTypes[event], listener);
             statsChat = chatId;
             running = true;
-            drain();
+            drain('start');
         },
 
         stop() {
@@ -422,12 +725,29 @@ export function createSummarizer(getContext, {
             running = false;
             again = false;
             asked.length = 0;
+            askedStates.length = 0;
+            if (adopting) adopting.cancelled = true;
             controller?.abort();
         },
 
         drain,
 
         resummarise,
+
+        restate,
+
+        adoptionPreview,
+
+        adopt,
+
+        /** Stop an adoption between calls; what it has written stays. */
+        cancelAdoption() {
+            if (adopting) adopting.cancelled = true;
+        },
+
+        get adopting() {
+            return adopting !== null;
+        },
 
         /** Resolves when no run is under way. */
         idle() {
@@ -460,7 +780,9 @@ export function createSummarizer(getContext, {
                 const context = getContext();
                 const profile = memoryProfile(context, config.memoryProfileId);
                 status.model = profile?.model ?? null;
-                status.reasoning = requestOverrides(context, profile).reasoning_effort ?? null;
+                status.reasoning = requestOverrides(
+                    context, profile, refusedFor(config, refusalKey(profile)), config.memoryReasoning,
+                ).reasoning_effort ?? null;
                 status.pending = pendingScenes(context.chat).length;
                 status.failed = failed();
                 status.givenUp = status.failed.filter((entry) => entry.attempts >= MAX_ATTEMPTS).map((entry) => entry.index);

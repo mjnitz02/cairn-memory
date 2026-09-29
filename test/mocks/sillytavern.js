@@ -247,6 +247,11 @@ function makeEventSource() {
             if (!handlers.has(type)) handlers.set(type, []);
             handlers.get(type).push(fn);
         },
+        /** public/lib/eventemitter.js:90 */
+        makeFirst(type, fn) {
+            if (!handlers.has(type)) handlers.set(type, []);
+            handlers.get(type).unshift(fn);
+        },
         removeListener(type, fn) {
             const list = handlers.get(type) ?? [];
             const at = list.indexOf(fn);
@@ -303,6 +308,11 @@ export function createContext({
             MESSAGE_SENT: 'message_sent',
             MESSAGE_RECEIVED: 'message_received',
             MESSAGE_EDITED: 'message_edited',
+            /** public/scripts/events.js:12, :49 */
+            MESSAGE_UPDATED: 'message_updated',
+            CHARACTER_MESSAGE_RENDERED: 'character_message_rendered',
+            /** public/scripts/events.js:23; emitted with (type, params, dryRun), public/script.js:4299 */
+            GENERATION_STARTED: 'generation_started',
             CHAT_CHANGED: 'chat_id_changed',
         },
 
@@ -405,12 +415,19 @@ export function createContext({
 
 /**
  * A reply arriving: ST puts it in `chat`, then emits the message's index and the
- * generation type, and awaits every listener before it renders the message
- * (public/script.js:6780-6782, public/lib/eventemitter.js:146).
+ * generation type, and awaits every listener before it renders the message; once it is
+ * rendered, the same again as CHARACTER_MESSAGE_RENDERED (public/script.js:6781-6783,
+ * streamed :3799-3800; public/lib/eventemitter.js:146).
  */
 export async function receiveMessage(context, message, type = 'normal') {
     context.chat.push(message);
-    await context.eventSource.emit(context.eventTypes.MESSAGE_RECEIVED, context.chat.length - 1, type);
+    await received(context, type);
+}
+
+async function received(context, type) {
+    const { eventSource, eventTypes, chat } = context;
+    await eventSource.emit(eventTypes.MESSAGE_RECEIVED, chat.length - 1, type);
+    await eventSource.emit(eventTypes.CHARACTER_MESSAGE_RENDERED, chat.length - 1, type);
 }
 
 /**
@@ -429,7 +446,7 @@ export async function sendMessage(context, message) {
  */
 export async function swipeReply(context, mes) {
     newSwipe(context.chat.at(-1), mes);
-    await context.eventSource.emit(context.eventTypes.MESSAGE_RECEIVED, context.chat.length - 1, 'swipe');
+    await received(context, 'swipe');
 }
 
 /**
@@ -438,19 +455,40 @@ export async function swipeReply(context, mes) {
  */
 export async function continueReply(context, text) {
     context.chat.at(-1).mes += text;
-    await context.eventSource.emit(context.eventTypes.MESSAGE_RECEIVED, context.chat.length - 1, 'continue');
+    await received(context, 'continue');
 }
 
 /**
  * An edit through the message editor: `updateMessage` writes the new text to `mes`
  * and to the current swipe (public/script.js:8178-8182), then `messageEditDone`
- * emits the index and awaits every listener before re-rendering (:8405).
+ * emits the index and awaits every listener before re-rendering (:8405), then
+ * MESSAGE_UPDATED once it is re-rendered (:8431).
  */
 export async function editMessage(context, index, mes) {
     const message = context.chat[index];
     message.mes = mes;
     if (message.swipe_id !== undefined) message.swipes[message.swipe_id] = mes;
     await context.eventSource.emit(context.eventTypes.MESSAGE_EDITED, index);
+    await context.eventSource.emit(context.eventTypes.MESSAGE_UPDATED, index);
+}
+
+/**
+ * A markdown formatter such as WeatherPack (github.com/bmen25124/SillyTavern-WeatherPack
+ * at 7f81ffa, src/index.ts:138-151, :611-615): after a reply renders, and after an edit,
+ * it rewrites `mes` in place, saves, and emits nothing. `format` is its rewrite.
+ */
+export function installFormatter(context, format) {
+    const rewrite = async (index) => {
+        const message = context.chat[index];
+        const next = message ? format(message.mes) : undefined;
+        if (next !== undefined && next !== message.mes) {
+            message.mes = next;
+            await context.saveChat();
+        }
+    };
+    const { eventSource, eventTypes } = context;
+    eventSource.on(eventTypes.MESSAGE_UPDATED, rewrite);
+    eventSource.makeFirst(eventTypes.CHARACTER_MESSAGE_RENDERED, rewrite);
 }
 
 /**
@@ -458,6 +496,29 @@ export async function editMessage(context, index, mes) {
  * (public/script.js:7658), then emits the new chat id (:7700). Reloading the
  * current chat takes the same path with the same id (:1710-1717).
  */
+/**
+ * The user starts a generation — a send, swipe, continue or impersonate. ST emits it
+ * with the type, the params and whether it is a dry run (public/script.js:4299).
+ */
+export function startGeneration(context, { type = 'normal', dryRun = false } = {}) {
+    return context.eventSource.emit(context.eventTypes.GENERATION_STARTED, type, {}, dryRun);
+}
+
+/**
+ * Tests that begin where the user is already playing: opening a chat makes no memory
+ * call (docs/decisions.md D-0088), so `start` is followed by a generation in the chat,
+ * which unlocks the queue, and a run, as the reply landing would start.
+ */
+export function startActive(summarizer, context) {
+    const start = summarizer.start;
+    summarizer.start = () => {
+        start();
+        startGeneration(context);
+        summarizer.drain('the test');
+    };
+    return summarizer;
+}
+
 export async function openChat(context, { chatId, messages }) {
     context.chatId = chatId;
     context.chat.splice(0, context.chat.length, ...messages);

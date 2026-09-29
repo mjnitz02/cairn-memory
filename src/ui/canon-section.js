@@ -2,10 +2,10 @@
  * The Established facts shown under the message that carries a canon batch, beside
  * the summary and the world state (src/ui/chat-marks.js draws them).
  *
- * The chat shows what the prompt carries, so a promotion is visible where it happened
- * rather than only in a log. It matters more here than for the other two tiers: a fact
- * is permanent for its branch and P4 gives no lever to remove one, so the only way to
- * see a wrong one is to be shown it (docs/p4-plan.md decision 2, §5).
+ * The chat shows each pick where it was written, so a wrong fact can be seen rather than
+ * inferred from a log. Each pick replaces the last (docs/decisions.md D-0079), so only the
+ * newest batch is in force; the older ones under earlier messages are the answers given
+ * then, left visible as history.
  *
  * Pure: a chat in, text out. The DOM glue is the caller's.
  */

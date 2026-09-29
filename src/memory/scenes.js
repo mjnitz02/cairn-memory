@@ -135,6 +135,26 @@ export function pendingScenes(chat, { key = QVINK_KEY } = {}) {
     return pending;
 }
 
+/**
+ * Messages a redo summarises, oldest first (docs/decisions.md D-0092): every summarisable
+ * one from the first, whatever summary it has now — but never the last, never one Qvink's
+ * user excluded, and never a newer Cairn's store.
+ *
+ * @returns {number[]} Chat indexes.
+ */
+export function redoScenes(chat, { key = QVINK_KEY } = {}) {
+    const list = chat ?? [];
+    const redo = [];
+    for (let index = 0; index < list.length - 1; index++) {
+        const message = list[index];
+        if (!summarisable(message) || readScene(message).status === 'future') continue;
+        const qvink = message.extra?.[key];
+        if (qvink?.exclude && !qvink.remember) continue;
+        redo.push(index);
+    }
+    return redo;
+}
+
 /** Scenes sent back with each summary request (docs/decisions.md D-0037). */
 export const SCENE_HISTORY = 5;
 

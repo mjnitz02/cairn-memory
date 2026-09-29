@@ -8,6 +8,228 @@ what we believed and why it changed.
 
 ---
 
+## D-0094 — Failed calls keep where they broke; JSON prompts end on a whole example
+**2026-09-29.** Redoing Aleanna Nightingale on GLM-5.3 lost 4 of 22 index batches to
+`format` and one canon pick to `truncated`. Every failed reply was as long as the successful
+ones (index 3.1k–4.2k characters against 3.1k–3.9k; canon 2,279 at 602 of 4,096 tokens), so
+none ran out of tokens. The model finished and its JSON did not parse. The likeliest cause
+is an unescaped `"` around dialogue inside a value. That throws off `closingIndex`, which is
+why a malformed canon reply came back as `truncated`. This is unconfirmed, because the log
+held no reply text. The cost is more than the count: batches 40, 76 and 100 were never
+retried, so those scenes have no index records canon can pick, and each failure re-ran the
+previous step's canon pick.
+
+**Two changes.**
+1. **A failed read keeps evidence.** A `state`, `index` or `canon` call that failed because
+   its reply could not be read logs `reply_error`, `reply_at`, `reply_near` (80 characters
+   either side) and `reply_tail`. This supersedes D-0093's "never the model's reply" for
+   these fields only: the log is local, and a reason alone cannot tell a cut-off from a
+   stray quote.
+2. **The index, canon and state prompts are rewritten for a lighter model** (Matt:
+   good-tier models do not reliably assemble JSON from parts shown in different places).
+   The order is now: task, fields one line each, rules, reply format, one complete example
+   reply, the data, then a one-line ask. The old prompts closed on an abbreviated
+   `{"records":[{…}]}` shape (the state prompt showed none). Each prompt now also says to
+   write speech inside a value in single quotes, and the index example shows a quoted line
+   of dialogue being converted. Tests parse each example reply with the real parser and
+   pin the key order. What the prompts ask for is unchanged; only the layout is. DESIGN.md
+   §12 carries the rule.
+
+**Not done:** OpenRouter's generation id and `finish_reason`. ST returns them only with
+`extractData: false` (`public/scripts/extensions/shared.js:416`,
+`public/scripts/custom-request.js:133`), and then Cairn would have to extract the content
+itself. That change touches the transport, so it gets its own decision. `/api/v1/activity`
+is no substitute: it reports daily totals per model and provider for completed days only.
+
+**Would reopen it:** a logged failure whose `reply_near` is not a quote problem, or the new
+layout doing worse than the old on the stage 0 replay.
+
+---
+
+## D-0093 — Every memory call gets a line in the chat's log
+**2026-09-29.** Matt adopted a chat (Christine Byrne) and several memory calls failed, but nothing
+reached `user/files/`. The disk log wrote only from the observer's snapshots, which means one line per
+*generation*. Memory calls showed up only as running counters on the next generation's line, and an
+adoption makes no generation. OpenRouter's export crashed, and it has no API that lists requests by
+time, so the failures could not be read back from anywhere.
+
+**One line per call, in the same file**, with `kind: "call"` (generation lines have no `kind`). This
+keeps one ordered trail per chat (D-0085), so a failure sits next to the turn it affected. The line is
+written once the job settles it: each tally tells the summarizer of every `fail`, `succeed` and
+`discard`, and `send` holds that call's sizes, timing, model and transport error until then. There
+are two edge cases. A failure before any call, such as a prompt that would not build, still gets a
+line, with empty call fields. A call its job never settled is logged as `unsettled` when the next
+call goes out, so its numbers never end up on another call's line. Lines carry sizes, reasons and
+error text, **never the model's reply**.
+
+**Not done:** OpenRouter's `gen-…` id, which would let `GET /api/v1/generation` return the real cost
+and reasoning tokens per call. First check whether ST's Connection Manager passes the response `id`
+through.
+
+**Would reopen it:** call lines crowding the generation lines out of a normal chat's trail, or a
+reader that needs them in a file of their own.
+
+---
+
+## D-0092 — "Redo from scratch": the adoption walk with nothing kept
+**2026-09-29.** Matt has long chats from before Cairn, summarised by Qvink on older models, and wants
+them redone end to end on a current memory model: a set of complete 100+ message runs, with logs,
+to add to the corpus. Adopt keeps any summary it finds, so it could not do this.
+
+**A second button, not a setting.** It is a one-off action, so it gets no knob (CLAUDE.md §4.15).
+It runs the same walk (`pipeline/adopt.js`) with three differences:
+1. **Every message is summarised again** (`redoScenes`): from the first, whatever it carries, except
+   the last, a newer Cairn's store, and any message Qvink's user excluded.
+2. **Nothing is imported from Qvink.**
+3. **The index and all canon are cleared before the first call** (`clearDerived`). This is the part
+   that matters. A resummary already makes the old records stale. But a step's pick carries forward
+   the newest batch at or before it (`canonFor`), and an old batch whose cited records get re-indexed
+   comes back valid. Left in place, it would be fed into the new picks. The test for this fails
+   without the clear.
+
+A summary that fails keeps the old one and is indexed from it. The world state is not touched: it
+is rebuilt by hand on the newest message (D-0089) if wanted. Clearing stored memory is allowed
+while we are pre-release (D-0077).
+
+**Would reopen it:** wanting the state replayed at the story's pace too, or a redo on a chat Matt
+means to keep. That second case needs the pre-release suspension lifted first.
+
+---
+
+## D-0091 — The queue starts after the reply renders, and a state re-reads once when its messages change
+**2026-09-29.** On the Yuzuha chat (GLM-5.3, 24 messages) the world state stopped updating at
+message 14 and vanished at the next step. The log: from then on every state call's reply was
+discarded, "a message it read changed", one call per turn, the injected state sinking from depth 1
+to 9 until the step passed it (`behind-step`). The cause was WeatherPack, which Matt runs as a
+leash on the model's markdown: it rewrites `mes` in a `makeFirst` listener to
+`CHARACTER_MESSAGE_RENDERED` (WeatherPack `7f81ffa`, `src/index.ts:146`, `:611-615`) and emits
+nothing. ST emits that right after `MESSAGE_RECEIVED` (public/script.js:6781-6783), where Cairn had
+already hashed the raw reply. Early replies were clean, so the rewrite was a no-op and the state
+landed; once the model's markdown drifted, WeatherPack rewrote nearly every reply.
+
+**1. The queue's reply trigger is `CHARACTER_MESSAGE_RENDERED`.** ST awaits every listener in turn
+(public/lib/eventemitter.js:146), so a formatter's `makeFirst` rewrite is done before Cairn reads.
+Every `MESSAGE_RECEIVED` emit in ST 1.19.0 is followed by this one, greetings and `/sendas` included.
+
+**2. A state discarded because a message it read changed is read again at once, once per run.**
+The trigger fixes the common case in one call; the re-read covers what it can't: a formatter
+listening later, or WeatherPack's rewrite of an edit on `MESSAGE_UPDATED` (:8431), after the
+`MESSAGE_EDITED` that started the job (:8405). Once, so a message that never settles cannot loop.
+A deletion or hide is now also re-read at once rather than a turn later.
+
+**Not done:** normalising the hash to ignore markdown. It would spare the second call, but it changes
+what a state is checked against (CLAUDE.md §8.32), and "the text changed" is the honest rule.
+
+**Would reopen it:** a formatter that rewrites later than the render, or a second call per turn
+showing up in `state_discarded` with WeatherPack loaded.
+
+---
+
+## D-0090 — Canon at the pace of the story: a carry-forward pick, a replay, and "Adopt this chat"
+**2026-09-28.** Matt's observation from Shaerra: canon built up over 18 messages read well, and one
+pick over a finished 85-message story is the approach 0d showed tops out at 3–4 of 5 (D-0084). But a
+shipped pick never sees the canon before it — `canonPick.build` took the index and the slot count —
+so "built up as the story grows" was really a series of independent picks, and a replay's last pick
+would have asked 0d's question again.
+
+**1. A carry-forward pick.** `canonPick.build` takes an optional `previous`: the canon so far, each
+fact cited by row in the current index, appended to `{{index}}` (so an edited prompt carries it too)
+with the instruction to keep, correct or replace to fill exactly N. Absent, the prompt is unchanged
+byte for byte. **The queue does not use it yet**; only an adoption does. Whether the queue's picks
+should carry forward, and how often canon should be picked, is the next question, not this one.
+
+**2. `scripts/replay-canon.mjs`**, on the shared client 0d now uses too (`scripts/tier-client.mjs`):
+index 8 summaries at a time in story order, then a carry-forward pick, every step kept in the corpus.
+**Esin on GLM-5.3, one run: 4 of 5 spine lines, register kept, $0.100** — against 0d's 3, 4 and 4 at
+~$0.044. The same ceiling, reached steadily: eight of ten facts were settled by summary 64 and stayed.
+Line 1 was lost the way 0d lost it (the index calls row 62's promise `filler`, "a promise years ago"),
+and once more besides — it was in the canon at 64 and displaced at 72 by the move to the coast. Early
+loud events entrench: the first orc attack held a slot throughout. Verdict in
+`~/workspaces/cairn-corpus/p5-stage0/replay/verdict.md`.
+
+**3. "Adopt this chat"**, in a collapsed section of the settings panel, never on a message. It imports
+Qvink's summaries as Cairn's own where Cairn has none (free; index records hang off Cairn's), summarises
+what still waits through the queue's summary job, then every `step` summaries indexes the new ones and
+makes a carry-forward pick, each stored on the newest record it read so the history shows under the
+messages. A confirmation states the counts and the call total, and answers Enter with no
+(`POPUP_RESULT.NEGATIVE`). The queue holds while it runs, it is activity in the chat (D-0088), a chat
+change or **Stop adopting** ends it between calls, and afterwards the assembler resets so the next
+prompt is a rebuild. It also answers open decision #7: a Qvink-summarised chat can now get records and
+canon.
+
+**Reopens if:** more runs show carry-forward below independent picks, or displacement losing a spine
+line that an independent pick keeps — the fix then is in the slots or the prompt, not in the replay.
+
+---
+
+## D-0089 — The world state can be rebuilt by hand
+**2026-09-28.** The Shaerra chat has no state on messages 2, 6 and 14: one failed (5.3's reasoning)
+and two were discarded because the messages they read changed while they were out (now counted in
+the log, `state_discarded`). The next reply's update reads everything since the last saved state, so
+the gaps heal, but nothing let the user redo one, and a gap on the newest message costs the next
+reply its state.
+
+**Decided.** A second button in each message's actions menu, **Rebuild the world state**
+(`fa-boxes-stacked`), beside **Summarise with Cairn** (`fa-cubes-stacked`), which keeps redoing the
+summary and its index record. A rebuild is the state job ending at that message, built on the newest
+valid state *before* it (`stateJobAt`), so it replaces a state already there rather than reading it;
+later states are untouched, since each is its own snapshot. It waits on the state's own gate, is
+activity in the chat (D-0088), goes ahead of the queue as a resummarise does, gives a given-up job a
+fresh count, and ignores a second click while one is out.
+
+**Reopens if:** a rebuild in the middle of the chat is shown to mislead — a state rebuilt from fewer
+messages than the one after it read, say — which would argue for rebuilding forward from there.
+
+---
+
+## D-0088 — Opening a chat makes no memory call, and a refused effort is latched
+**2026-09-28.** Two things from the Shaerra replay, both traced with the queue's new debug log
+(`Queue: run started by …`, `Queue: sending …`).
+
+**1. The queue waits for activity in the chat.** It ran on page load and on every chat change, so
+opening a chat with work left over — a state behind its newest reply, a summary a reload
+interrupted — made calls at once, and clicking the wrong character cost money. Worse, ST re-emits
+`MESSAGE_RECEIVED` with type `first_message` every time a greeting-only chat is opened
+(`script.js:7703-7706`), which read as a reply. Now a chat's queue is locked until the user acts in
+it: a reply, an edit or a resummarise runs it; a generation the user starts (`GENERATION_STARTED`,
+`script.js:4299`, not a dry run and not `quiet`) unlocks it without running it, so work still
+starts when the reply lands and never races the prompt being built. A greeting, a chat change, a
+page load and a settings change run only a queue already unlocked. The cost is that the first reply
+after opening is built with the stored state, as it is whenever a state update is still in flight.
+
+**2. `memoryReasoning` is a setting, and a refusal is saved** (supersedes D-0087's per-session
+memory). None (the default), Low, or the preset's own. D-0087's ladder starts where the setting
+says, and a refused effort is written to `reasoningRefused` under the profile and model, so a reload
+starts past it instead of paying a refused call on every page load. Changing the setting clears
+the latch. It is a knob because "none" and "low" are a real trade on a provider that must reason,
+and the one sentence it needs is plain (CLAUDE.md §4.15).
+
+**Reopens if:** a state or summary left from the last session turns out to matter on the first reply
+after opening (then run the state alone on the first generation), or an extension's ordinary
+generations arrive without `quiet` and unlock the queue.
+
+---
+
+## D-0087 — An endpoint that must reason refuses `none`, so the ask steps down
+**2026-09-28.** D-0086's first play test failed every call: OpenRouter answered GLM-5.3 with
+`400 Reasoning is mandatory for this endpoint and cannot be disabled.` The profile's preset was
+written for a Custom source, so its provider list never went out (ST sends it only when the
+preset's own source is OpenRouter, `openai.js:2890-2892`) and OpenRouter routed to an endpoint
+that cannot stop thinking. D-0086 assumed an unsupported ask would be ignored; it is refused.
+
+**Decided.** On a `Bad Request` to a request that carried an effort, Cairn asks again one step
+down — `none`, then `low`, then nothing, which is the preset's own setting — and remembers the
+refusal for that profile and model for the session, so it is paid for once. The browser sees only
+the status text (`chat-completions.js:2705-2710`), so the test is the 400 itself, and only a
+request that carried an effort is retried: any other failure costs one request, as before. One
+toast names the refused effort and the real fix, a provider that allows reasoning off.
+
+**Reopens if:** a 400 turns out to be common for another reason on an OpenRouter profile (the
+retry then doubles its cost), or OpenRouter starts returning its reason to the browser, which
+would let the test read it instead of the status.
+
+---
+
 ## D-0086 — Memory calls ask for no reasoning, and a growing index batch still gives up
 **2026-09-28.** The first chain played entirely on Cairn (18 real messages, long on both sides) ran
 its memory profile on GLM-5.3 through OpenRouter, then GLM-4.7 through a custom endpoint with

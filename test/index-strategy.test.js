@@ -101,6 +101,22 @@ describe('building an index pass', () => {
         expect(content).toContain('an empty changed over a guessed one');
     });
 
+    it('ends on a complete example the parser reads whole, then the summaries, then the ask (D-0094)', () => {
+        const example = INDEX_PROMPT.match(/^the reply is:\n(\{"records":\[\n[\s\S]*?\n\]\})$/m)[1];
+        const parsed = parseIndexReply(example, { count: 3 });
+
+        expect(parsed).toMatchObject({ ok: true, dropped: [], clipped: [] });
+        expect(parsed.records.map((record) => record.n)).toEqual([1, 2, 3]);
+        for (const record of JSON.parse(example).records) {
+            expect(Object.keys(record)).toEqual(['n', 'kind', 'who', 'what', 'changed', 'because', 'background', 'line']);
+        }
+        // The summary quotes speech in double quotes and the reply turns them single.
+        expect(INDEX_PROMPT).toContain('said "I crewed the winter run with him."');
+        expect(example).toContain('\'I crewed the winter run with him\'');
+        expect(INDEX_PROMPT).toContain('write speech with single quotes, never double quotes');
+        expect(INDEX_PROMPT.endsWith('{{summaries}}\n\nNow reply with the JSON object: one record for every summary above, numbered as they are.')).toBe(true);
+    });
+
     it('shows a filled changed beside an empty one, and says why', () => {
         // The include/exclude pair DESIGN.md §12 asks for: the distinction the slot turns
         // on is what survives the scene, and mood is named as excluded (D-0043).

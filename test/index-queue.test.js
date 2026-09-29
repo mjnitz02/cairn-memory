@@ -6,7 +6,7 @@ import { readIndex, readScene, writeScene } from '../src/store/chat-store.js';
 import { resetToasts } from '../src/util/log.js';
 import { badIndexOutputs, createRequestService, deferred } from './mocks/llm.js';
 import { cairnSummary, makeMixedChat } from './mocks/cairn.js';
-import { createContext, openChat } from './mocks/sillytavern.js';
+import { createContext, openChat, startActive } from './mocks/sillytavern.js';
 
 /**
  * The queue's index job (docs/decisions.md D-0070, D-0075): one batch of summaries at a
@@ -56,6 +56,7 @@ function harness({ responses = [], chat, settings = {}, writing = true, clock = 
         clock,
         memory: () => ({ writing }),
     });
+    startActive(summarizer, context);
     return { context, service, summarizer, chat: live };
 }
 

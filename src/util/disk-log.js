@@ -9,6 +9,9 @@
  * session reads the file back (`/user/files/`, src/users.js:1218) and every write
  * after carries what was already there.
  *
+ * Two kinds of line (D-0093): one per generation, with no `kind`, and one per memory
+ * call, `kind: "call"` — so an adoption, which makes no generation, still leaves a trail.
+ *
  * Lands in `data/<user>/user/files/`.
  */
 import { nearPromptLimit } from './context-size.js';
@@ -75,6 +78,17 @@ export function createDiskLog({ delayMs = WRITE_DELAY_MS } = {}) {
         debug(`Wrote ${taken} snapshot(s) to ${lastPath}`);
     }
 
+    function queue(entry, chatId, getContext) {
+        if (!enabled) return;
+        const name = logFilename(chatId);
+        if (!files.has(name)) files.set(name, { base: null, entries: [] });
+        files.get(name).entries.push({ ...entry, chat_id: chatId, session });
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+            writing = writing.then(() => flush(getContext));
+        }, delayMs);
+    }
+
     async function flush(getContext) {
         timer = null;
         const context = getContext();
@@ -97,16 +111,13 @@ export function createDiskLog({ delayMs = WRITE_DELAY_MS } = {}) {
 
         /** Queue a snapshot for the open chat's file. Writes are debounced, not per-turn. */
         append(snapshot, getContext) {
-            if (!enabled) return;
+            queue(toEntry(snapshot), getContext()?.chatId ?? null, getContext);
+        },
 
-            const chatId = getContext()?.chatId ?? null;
-            const name = logFilename(chatId);
-            if (!files.has(name)) files.set(name, { base: null, entries: [] });
-            files.get(name).entries.push({ ...toEntry(snapshot), chat_id: chatId, session });
-            clearTimeout(timer);
-            timer = setTimeout(() => {
-                writing = writing.then(() => flush(getContext));
-            }, delayMs);
+        /** Queue a memory call's line for the chat it was made for, which may not be the open one. */
+        appendCall(entry, getContext) {
+            const { chat_id: chatId = null, ...rest } = entry;
+            queue(rest, chatId ?? getContext()?.chatId ?? null, getContext);
         },
 
         /**
@@ -360,6 +371,8 @@ function summaryFields(status) {
         summary_written: status.written,
         summary_failures: status.failures,
         summary_last_reason: status.lastReason ?? null,
+        summary_discarded: status.discarded ?? null,
+        summary_last_discard: status.lastDiscard ?? null,
         summary_ms: status.ms,
         summary_last_ms: status.lastMs ?? null,
         // Counted with ST's tokenizer, which is the chat model's: close, not billed.
@@ -406,6 +419,9 @@ function compactionFields(status) {
         compaction_clipped: status.clipped ?? null,
         compaction_failed: status.failures ?? null,
         compaction_last_reason: status.lastReason ?? null,
+        // Replies thrown away because the chat moved on: not failures, but no write either.
+        compaction_discarded: status.discarded ?? null,
+        compaction_last_discard: status.lastDiscard ?? null,
         compaction_ms: status.ms ?? null,
         compaction_last_ms: status.lastMs ?? null,
         compaction_tokens_in: status.tokensIn ?? null,
@@ -441,6 +457,8 @@ function indexFields(status) {
         index_unanswered: status.missed ?? null,
         index_failed: status.failures ?? null,
         index_last_reason: status.lastReason ?? null,
+        index_discarded: status.discarded ?? null,
+        index_last_discard: status.lastDiscard ?? null,
         index_ms: status.ms ?? null,
         index_last_ms: status.lastMs ?? null,
         index_tokens_in: status.tokensIn ?? null,
@@ -475,6 +493,8 @@ function stateFields(placement, status) {
         state_written: status?.written ?? null,
         state_failures: status?.failures ?? null,
         state_last_reason: status?.lastReason ?? null,
+        state_discarded: status?.discarded ?? null,
+        state_last_discard: status?.lastDiscard ?? null,
         state_dropped_fields: status?.dropped ?? null,
         state_ms: status?.ms ?? null,
         state_last_ms: status?.lastMs ?? null,

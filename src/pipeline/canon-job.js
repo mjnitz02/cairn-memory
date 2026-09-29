@@ -68,6 +68,8 @@ export function createCanonJob({ getContext, send, save, discard, report, clock,
                     slots: job.slots,
                     template: canonPrompt,
                     expand: (text) => context.substituteParams(text),
+                    // Only an adoption carries the canon forward; the queue asks afresh (D-0090).
+                    ...(job.previous?.length ? { previous: job.previous } : {}),
                 });
             } catch (err) {
                 return fail(chatId, job, 'error', err);

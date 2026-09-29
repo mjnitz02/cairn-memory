@@ -85,3 +85,45 @@ function closingIndex(text, start) {
     }
     return -1;
 }
+
+/**
+ * Where a reply stopped being JSON, for the log of a failed call (docs/decisions.md
+ * D-0094): the engine's own parse error and a short window of the reply around it,
+ * because the reason alone cannot tell a cut-off from a stray quote.
+ *
+ * @param {unknown} content The reply's `content`.
+ * @param {number} [span] Characters kept either side of the spot.
+ * @returns {{error: string|null, at: number|null, near: string, tail: string}}
+ *          `error` is null when a JSON span parsed and only its shape was wrong.
+ */
+export function describeReply(content, span = 80) {
+    const raw = typeof content === 'string' ? content : '';
+    const thought = stripThinking(raw);
+    const text = thought.truncated ? raw : unfence(thought.text);
+    const tail = text.slice(-span);
+    const start = text.search(/[{[]/);
+    if (start < 0) return { error: 'no JSON', at: null, near: text.slice(0, 2 * span), tail };
+    if (firstJson(text).parsed) return { error: null, at: null, near: text.slice(start, start + 2 * span), tail };
+
+    const body = text.slice(start);
+    let error = null;
+    try {
+        JSON.parse(body);
+    } catch (err) {
+        error = String(err?.message ?? err).slice(0, 200);
+    }
+    const offset = errorOffset(error, body);
+    const at = offset === null ? null : start + offset;
+    const near = at === null ? body.slice(0, 2 * span) : text.slice(Math.max(0, at - span), at + span);
+    return { error, at, near, tail };
+}
+
+/** The offset a JSON.parse message names, as V8 ("position N") or Firefox ("line L column C") word it. */
+function errorOffset(message, body) {
+    const position = /position (\d+)/.exec(message ?? '');
+    if (position) return Number(position[1]);
+    const lineColumn = /line (\d+) column (\d+)/.exec(message ?? '');
+    if (!lineColumn) return null;
+    const lines = body.split('\n').slice(0, Number(lineColumn[1]) - 1);
+    return lines.reduce((sum, line) => sum + line.length + 1, 0) + Number(lineColumn[2]) - 1;
+}

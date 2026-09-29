@@ -314,6 +314,24 @@ function wellFormedRecord(record) {
         && typeof record.because === 'string';
 }
 
+/**
+ * Drop a message's index record and canon batch, keeping its summary and state. A redo
+ * re-derives both, and an old batch left in place would be carried into its picks (D-0092).
+ *
+ * @param {object} message The live chat message.
+ * @returns {boolean} Whether anything was removed.
+ */
+export function clearDerived(message) {
+    const { status, store } = migrateStore(message?.extra?.[SLUG]);
+    if (status !== 'ok' || (store.index === undefined && store.canon === undefined)) return false;
+
+    const next = { ...store, v: STORE_VERSION };
+    delete next.index;
+    delete next.canon;
+    message.extra[SLUG] = next;
+    return true;
+}
+
 /** Set one tier's key, keeping the others' and upgrading the envelope to the current version. */
 function writeKey(message, key, entry) {
     const { status, store } = migrateStore(message.extra?.[SLUG]);

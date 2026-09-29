@@ -16,6 +16,26 @@
 export const NO_REASONING = 'none';
 
 /**
+ * What to ask for, in order. Some OpenRouter endpoints cannot turn reasoning off and
+ * refuse `none` outright ("Reasoning is mandatory for this endpoint"); `low` still
+ * keeps the thinking short. Past the last, the request goes out as the preset has it.
+ */
+export const EFFORTS = [NO_REASONING, 'low'];
+
+/**
+ * The efforts to try for the `memoryReasoning` setting, most restrained first: it is
+ * where the ladder starts, and `preset` asks nothing at all.
+ *
+ * @param {string} [setting]
+ * @returns {string[]}
+ */
+export function effortsFor(setting = NO_REASONING) {
+    if (setting === 'preset') return [];
+    const start = EFFORTS.indexOf(setting);
+    return EFFORTS.slice(start < 0 ? 0 : start);
+}
+
+/**
  * @param {object} context `SillyTavern.getContext()`
  * @param {string} [memoryProfileId]
  * @returns {object|null} The Connection Manager profile, or null.
@@ -44,8 +64,30 @@ export function profileSource(context, profile) {
  * as it is and not every provider accepts `none`. A custom endpoint turns reasoning
  * off in its own request body, as the profile's preset already can.
  *
+ * @param {Set<string>} [refused] Efforts this profile's model has refused.
+ * @param {string} [setting] The `memoryReasoning` setting: where the ladder starts.
  * @returns {{reasoning_effort?: string}}
  */
-export function requestOverrides(context, profile) {
-    return profileSource(context, profile) === 'openrouter' ? { reasoning_effort: NO_REASONING } : {};
+export function requestOverrides(context, profile, refused = new Set(), setting = NO_REASONING) {
+    if (profileSource(context, profile) !== 'openrouter') return {};
+    const effort = effortsFor(setting).find((value) => !refused.has(value));
+    return effort ? { reasoning_effort: effort } : {};
+}
+
+/** Refusals are remembered per profile and model: another model on the same profile may accept. */
+export function refusalKey(profile) {
+    return `${profile?.id ?? ''}\n${profile?.model ?? ''}`;
+}
+
+/**
+ * Whether a failed request was refused as malformed. ST's server hands the browser only
+ * the HTTP status text (src/endpoints/backends/chat-completions.js:2705-2710), wrapped
+ * once more by `sendRequest` (public/scripts/extensions/shared.js:490), so the provider's
+ * own reason is not visible here — only that it was a 400.
+ */
+export function isBadRequest(err) {
+    for (let at = err, depth = 0; at && depth < 5; at = at.cause, depth++) {
+        if (/bad request/i.test(String(at.message ?? ''))) return true;
+    }
+    return false;
 }

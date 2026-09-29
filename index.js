@@ -15,6 +15,7 @@ import { createChatMarks } from './src/ui/chat-marks.js';
 import { createInspector } from './src/ui/inspector.js';
 import { renderSettingsPanel } from './src/ui/panel.js';
 import { installResummariseButton } from './src/ui/resummarise-button.js';
+import { installAdoptControls } from './src/ui/adopt-panel.js';
 import { error, info, setDebugEnabled } from './src/util/log.js';
 
 (async function init() {
@@ -66,6 +67,8 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
             // works out each turn comes through rather than being derived twice
             // (docs/p4-plan.md decision 6).
             memory: () => assembler.pendingPass,
+            // Every memory call gets its own line, adoptions included (D-0093).
+            onCall: (entry) => diskLog.appendCall(entry, getContext),
             onUpdate: () => {
                 inspector?.summaries(summarizer.status);
                 marks.refresh();
@@ -109,16 +112,18 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
             onOwnMemoryBlockChange: (enabled) => assembler.setOwnEnabled(enabled),
             // Off takes effect at the next generation; on may have a state to bring up to date.
             onWorldStateChange: () => {
-                summarizer.drain();
+                summarizer.drain('the world state setting');
                 marks.refresh();
             },
             // Off takes effect at the next generation; on waits for the next pressure.
-            onKeepCanonChange: () => summarizer.drain(),
+            onKeepCanonChange: () => summarizer.drain('the keep canon setting'),
             // A newly chosen profile may have a backlog waiting for it.
-            onMemoryProfileChange: () => summarizer.drain(),
+            onMemoryProfileChange: () => summarizer.drain('the memory profile setting'),
         }), { canon: () => assembler.canonView });
         inspector.render(observer.latest);
         inspector.summaries(summarizer.status);
+        // An adopted chat has new memory throughout, so the next prompt is a rebuild (D-0090).
+        installAdoptControls(context, summarizer, { onAdopted: () => assembler.reset() });
 
         // Both follow `enabled` alone: observing is free, and holding degrades
         // to ST's own scan rather than to a broken prompt (CLAUDE.md §4.17).

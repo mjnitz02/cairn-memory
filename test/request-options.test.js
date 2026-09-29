@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NO_REASONING, memoryProfile, profileSource, requestOverrides } from '../src/pipeline/request-options.js';
+import { EFFORTS, NO_REASONING, effortsFor, isBadRequest, memoryProfile, profileSource, refusalKey, requestOverrides } from '../src/pipeline/request-options.js';
 import { createContext } from './mocks/sillytavern.js';
 
 /**
@@ -38,5 +38,39 @@ describe('asking for no reasoning', () => {
         expect(requestOverrides(context(), CUSTOM)).toEqual({});
         expect(requestOverrides(context(), LOCAL)).toEqual({});
         expect(requestOverrides(context(), null)).toEqual({});
+    });
+});
+
+describe('when an endpoint refuses an effort', () => {
+    it('asks for the next one down, and nothing once all are refused', () => {
+        expect(EFFORTS).toEqual(['none', 'low']);
+        expect(requestOverrides(context(), OPENROUTER, new Set(['none']))).toEqual({ reasoning_effort: 'low' });
+        expect(requestOverrides(context(), OPENROUTER, new Set(EFFORTS))).toEqual({});
+    });
+
+    it('remembers per profile and model', () => {
+        expect(refusalKey(OPENROUTER)).not.toBe(refusalKey({ ...OPENROUTER, model: 'z-ai/glm-4.7' }));
+    });
+
+    it('knows a refusal by the status text, however deep sendRequest wrapped it (extensions/shared.js:490)', () => {
+        const wrapped = new Error('API request failed', { cause: new Error('Bad Request') });
+        expect(isBadRequest(wrapped)).toBe(true);
+        expect(isBadRequest(new Error('API request failed', { cause: new Error('Bad Gateway') }))).toBe(false);
+        expect(isBadRequest(undefined)).toBe(false);
+    });
+});
+
+describe('the reasoning setting (D-0088)', () => {
+    it('starts the ladder where it says', () => {
+        expect(effortsFor('none')).toEqual(['none', 'low']);
+        expect(effortsFor('low')).toEqual(['low']);
+        expect(effortsFor('preset')).toEqual([]);
+        expect(effortsFor(undefined)).toEqual(['none', 'low']);
+        expect(effortsFor('something-else')).toEqual(['none', 'low']);
+    });
+
+    it('asks for low, or nothing, when set to', () => {
+        expect(requestOverrides(context(), OPENROUTER, new Set(), 'low')).toEqual({ reasoning_effort: 'low' });
+        expect(requestOverrides(context(), OPENROUTER, new Set(), 'preset')).toEqual({});
     });
 });

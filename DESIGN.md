@@ -415,6 +415,11 @@ profile. Prompts may assume that floor (`docs/decisions.md` D-0036).
 - **Exception: the default summary prompt** does not follow this structure. It is Matt's qvink
   prompt, verbatim, because a prompt measured in play beats one written to these rules
   (`docs/decisions.md` D-0039).
+- **A JSON prompt is written for the lightest model it must run on** (`docs/decisions.md`
+  D-0094). In order: the task; the fields, one line each; the rules; the reply format with
+  **one complete example reply**, every key present, that the parser accepts (a test
+  checks it); then the data; then a one-line ask. The model copies a whole reply; it is
+  never left to assemble one from pieces shown in different places.
 - Bake guidance into the prompt rather than making it selectable.
 - Anything reported back to the user must reflect the **actual change**, not the model's claimed
   output. Capture pre-state before applying, so counts are real.
