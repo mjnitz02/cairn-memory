@@ -12,18 +12,6 @@ which degrades uniformly until everything is equally vague, and still develops
 holes. Cairn treats memory as **state**: what is true right now, plus a sparse
 set of retrievable past events.
 
-> **Status: pre-alpha, P1.** Cairn *measures* — it reports what your prompt is
-> made of and how stable it is — and makes two changes to it. Lorebook entries are
-> held in place once they have activated, so a keyword-scan miss cannot make the
-> whole lore block vanish and come back. And it assembles the memory block from
-> the summaries your existing memory extension has already written, injecting it
-> and keeping the messages it covers out of the history — but only once that
-> extension has been silenced and Cairn has proved it renders the same block, byte
-> for byte. Until then it plans and compares and leaves the prompt alone, so it
-> stays safe to run alongside. Once that extension stops summarising, Cairn writes
-> its own summaries too, one per message. The features below are being built in
-> phases; see [`DESIGN.md`](DESIGN.md).
-
 ## The major choices
 
 - **Memory is typed, not tiered by age.** Current world state, scene summaries,
@@ -73,30 +61,39 @@ Reload SillyTavern afterwards.
 ## Use
 
 Open **Extensions → Cairn-Memory**. There is very little to configure — send a
-message and read the inspector.
+message and open **Last generation**.
 
-Point **Memory connection** at a profile that is *not* your roleplay model.
-Without one, Cairn never calls a model. Each summary appears under its message,
-with a collapsed **World state** below it, and Cairn never blocks sending, so you
-can keep chatting while it works. To redo a summary, choose **Summarise with
-Cairn** (the stacked-cubes icon) in the message's actions menu; to redo the world
-state on a message, choose **Rebuild the world state** (the stacked-boxes icon).
+Point **Memory model → Connection profile** at a profile that is *not* your
+roleplay model. Without one, Cairn never calls a model. Each summary appears under
+its message, with a collapsed **World state** below it, and Cairn never blocks
+sending, so you can keep chatting while it works. To redo a summary, choose
+**Summarise with Cairn** (the stacked-cubes icon) in the message's actions menu; to
+redo the world state on a message, choose **Rebuild the world state** (the
+stacked-boxes icon).
+
+Everything below is on by default and works unconfigured.
 
 | Setting | What it does |
 |---|---|
 | Enabled | Turns Cairn off without uninstalling. Existing memory is kept. |
-| Memory connection | The profile Cairn uses to write summaries, the index, canon and the world state. Must not be your roleplay model. |
-| Show inspector | Shows what was injected, from where, how stable the prompt is, and the canon in the prompt. |
-| Write inspector log to disk | Appends each generation and each memory call to one file per chat, `user/files/cairn-<chat>-<id>.jsonl`, across sessions. |
-| Hold World Info entries | Keeps a lorebook entry in the prompt once it has activated, instead of letting it drop out when the keyword scan misses it. On by default; off restores stock SillyTavern behaviour. |
-| Lorebook cap | The most tokens your lorebook may take. Written into SillyTavern's own setting, so it applies to every chat. **0** leaves SillyTavern's budget alone. |
-| Write the memory block | Lets Cairn inject the summaries and keep the messages they cover out of the history. On by default, but Cairn waits until your existing memory extension is silent — see below. |
-| Keep the world state | Tracks where the scene is, the weather, who is there, and each character's hair and outfit, and puts it just above your newest message. On by default. Waits while WTracker or WTrackerLite is loaded. |
+| **Memory model** | |
+| Connection profile | The profile Cairn uses to write summaries, the index, canon and the world state. Must not be your roleplay model. |
+| Reasoning | How much the memory model may think: None (the default), Low, or whatever the profile's preset says. |
+| **What Cairn keeps** | |
+| Replace old messages with summaries | Cairn injects the summaries and keeps the messages they cover out of the history. It waits until your existing memory extension is silent — see below. |
+| Track the world state | Where the scene is, who is there, the weather, and each character's hair and outfit, just above your newest message. Waits while WTracker or WTrackerLite is loaded. |
 | Keep canon | Picks the few facts the story cannot be understood without from the whole index, and keeps them at the top of the memory block. Picked again as the story grows. |
-| Canon lines | How many canon facts to pick. |
-| **Budget** | The memory block's share of the prompt, canon's share of the block, the one-line summaries' share of what is left, how many recent messages stay in full, and how many build up before they are summarised. The defaults work; changing the last two rebuilds the block once. |
-| **Memory prompts** | The summary, index, canon and world-state prompts. Each has **Reset to default**, and falls back to its default if an edit loses the placeholder it needs. |
-| Debug logging | Verbose browser-console output. Only needed for bug reports. |
+| Canon entries | How many canon facts to pick. |
+| Drop example dialogue once summarised | Strips the card's example dialogue once summaries stand in for the early chat, and puts SillyTavern's own setting back when off. |
+| Hold lorebook entries | Keeps a lorebook entry in the prompt once it has activated, instead of letting it drop out when the keyword scan misses it. Off restores stock SillyTavern behaviour. |
+| **Advanced settings** | Collapsed by default. |
+| Memory budget | The memory block's share of the prompt, canon's share of the block, the one-line summaries' share of what is left, how many recent messages stay in full, how many build up before they are summarised, and the lorebook cap — the most tokens your lorebook may take, written into SillyTavern's own setting so it applies to every chat (**0** leaves it alone). |
+| Memory prompts | The summary, index, canon and world-state prompts. Each has **Reset to default**, and falls back to its default if an edit loses the placeholder it needs. |
+| Adopt this chat | Brings a chat started before Cairn up to date, or redoes an old one from scratch. |
+| Diagnostics | **Show last generation** (the inspector), **Log each generation to disk** (`user/files/cairn-<chat>-<id>.jsonl`, one file per chat), and **Debug logging** for bug reports. |
+
+**Last generation**, folded under the settings, shows what was injected, from
+where, how stable the prompt is, and the canon in the prompt.
 
 ### Handing over from Qvink Memory
 

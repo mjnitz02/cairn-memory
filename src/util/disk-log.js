@@ -120,12 +120,6 @@ export function createDiskLog({ delayMs = WRITE_DELAY_MS } = {}) {
             queue(rest, chatId ?? getContext()?.chatId ?? null, getContext);
         },
 
-        /**
-         * A chat change. Nothing is dropped: queued entries belong to their own chat's
-         * file and are still written. Only what this session knows of each file is kept.
-         */
-        reset() {},
-
         /** Entries queued and not yet written, across every chat. */
         get count() {
             let count = 0;
@@ -270,7 +264,7 @@ function memoryFields(memory) {
         // Non-zero makes the next pick due, so it should clear itself rather than persist.
         memory_canon_lost_sources: memory.canonLostSources ?? null,
         // Why a pick is or is not due: no-canon, new-records, lost-facts, slots-changed,
-        // covered, too-few, no-slots (pipeline/compactor.js).
+        // covered, too-few, no-slots (pipeline/canon-pick.js).
         memory_canon_reason: memory.canonReason ?? null,
         memory_canon_tokens: memory.canonTokens ?? null,
         memory_canon_cap: memory.canonCap ?? null,
@@ -399,7 +393,7 @@ function compactionFields(status) {
         // ready, off, not-writing, no-profile, group-chat, no-chat or profile-missing.
         compaction_gate: status.gate ?? null,
         compaction_in_flight: status.inFlight != null,
-        // Why a pick is or is not due (pipeline/compactor.js): no-canon, new-records,
+        // Why a pick is or is not due (pipeline/canon-pick.js): no-canon, new-records,
         // lost-facts, slots-changed, covered, too-few or no-slots. `covered` on every
         // turn after the first pick is the steady state.
         compaction_reason: status.reason ?? null,

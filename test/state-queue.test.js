@@ -1,26 +1,28 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MAX_ATTEMPTS, createSummarizer } from '../src/pipeline/summarizer.js';
-import { QVINK_EXTENSION } from '../src/memory/scenes.js';
-import { pendingStateJob, WTRACKERS } from '../src/memory/state.js';
+import { describe, expect, it, vi } from 'vitest';
+import { createSummarizer } from '../src/pipeline/summarizer.js';
+import { MAX_ATTEMPTS } from '../src/pipeline/tally.js';
+import { QVINK_EXTENSION } from '../src/interop/qvink.js';
+import { pendingStateJob } from '../src/memory/state.js';
+import { WTRACKERS } from '../src/interop/wtracker.js';
 import { STATE_MAX_TOKENS, STATE_PROMPT, stateRecord } from '../src/memory/state-strategy.js';
-import { hashRange, readScene, readState, writeState } from '../src/store/chat-store.js';
+import { hashRange, readScene, readState } from '../src/store/chat-store.js';
 import { STORE_VERSION } from '../src/store/schema.js';
 import { hashString } from '../src/util/hash.js';
 import { restateRefusalMessage } from '../src/ui/resummarise-button.js';
-import { resetToasts } from '../src/util/log.js';
 import { badStateOutputs, createRequestService, deferred } from './mocks/llm.js';
 import { makeMixedChat } from './mocks/cairn.js';
 import {
-    continueReply, createContext, editMessage, installFormatter, makeChat, makeMessage, openChat, receiveMessage, sendMessage, swipeReply, swipeTo, startActive, startGeneration,
+    continueReply, createContext, editMessage, installFormatter, makeChat, makeMessage, openChat, receiveMessage, sendMessage, swipeReply, swipeTo, startGeneration,
 } from './mocks/sillytavern.js';
+import { MEMORY, ROLEPLAY, queueHarness } from './helpers/summarizer.js';
+import { stubToastr } from './helpers/toastr.js';
+import { putState } from './helpers/state.js';
 
 /**
  * The queue's state job (docs/decisions.md D-0044, D-0045): ahead of summaries, one per run,
  * discarded when the chat moves under it, and failing on its own streak.
  */
 
-const MEMORY = { id: 'memory-profile', name: 'GLM (memory)' };
-const ROLEPLAY = { id: 'roleplay-profile', name: 'Local (roleplay)' };
 const CLOCK = Date.parse('2026-09-16T18:00:00.000Z');
 
 /** Synthetic states and patches, the shape of test/fixtures/store-v2.js. */
@@ -43,41 +45,26 @@ const summary = (index) => `Wren and Aster settled matter ${index} before the ti
     + 'They decided to wait for the ferry rather than cross the causeway in the fog, and Wren said, "Not a word to the keeper."';
 
 /** A state on `chat[index]` that read `read` visible messages, as the queue writes it. */
-function putState(chat, index, value, read = 2) {
-    expect(writeState(chat, index, { value, read, changed: [], prompt: 'h:1', at: 'T' })).toBe(true);
-}
 
 /** Six short messages, too short to summarise, with the state brought up to the reply at 3. */
 function playedChat() {
     const chat = makeChat(6);
-    putState(chat, 3, PIER, 4);
+    putState(chat, 3, PIER, { read: 4 });
     putState(chat, 5, PIER);
     return chat;
 }
 
-function harness({ responses = [], chat, settings = {}, context: contextOptions = {}, stateStrategy, clock = () => CLOCK, onUpdate } = {}) {
-    const service = createRequestService({ responses });
-    const context = createContext({
+function harness({ chat, ...options } = {}) {
+    return queueHarness({
         chat: chat ?? makeChat(6),
-        profiles: [MEMORY, ROLEPLAY],
-        selectedProfile: ROLEPLAY.id,
-        requestService: service,
-        ...contextOptions,
-    });
-    const summarizer = createSummarizer(() => context, {
-        settings: () => ({ memoryProfileId: MEMORY.id, ...settings }),
-        clock,
-        onUpdate,
+        clock: () => CLOCK,
         // The block is qvink's in these tests, which shuts the index gate the way
         // `worldState: false` shuts the state's: a record nothing would read is not
         // written (pipeline/gates.js, docs/decisions.md D-0075). The index batch has its
         // own tests in test/index-queue.test.js.
         memory: () => ({ writing: false }),
-
-        ...(stateStrategy ? { stateStrategy } : {}),
+        ...options,
     });
-    startActive(summarizer, context);
-    return { context, service, summarizer };
 }
 
 /** The user's message and the reply to it, as ST adds them. */
@@ -90,20 +77,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 const isStateCall = (call) => call.prompt[0].content.startsWith(STATE_PROMPT.slice(0, 60));
 const stateOf = (chat, index) => readState(chat, index).state;
 
-let warning;
-
-beforeEach(() => {
-    warning = vi.fn();
-    vi.stubGlobal('toastr', { warning });
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-});
-
-afterEach(() => {
-    resetToasts();
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-});
+const toastr = stubToastr();
 
 describe('bringing the state up to date', () => {
     it('starts cold from the newest messages, and stores what it applied on the last one', async () => {
@@ -368,7 +342,7 @@ describe('when it runs', () => {
         expect(service.calls.some(isStateCall)).toBe(false);
         expect(summarizer.status.state).toMatchObject({ gate: 'wtracker-loaded', tracker: 'WTrackerLite' });
         expect(summarizer.status.written).toBe(3);
-        expect(warning).not.toHaveBeenCalled();
+        expect(toastr.warning).not.toHaveBeenCalled();
     });
 
     it('keeps the state while qvink is still summarising, which holds only the summaries', async () => {
@@ -408,7 +382,7 @@ describe('a state reply that arrives after the chat moved on', () => {
         expect(left.extra.cairn).toBeUndefined();
         expect(stateOf(context.chat, 1).value).toEqual(TO_DECK);
         expect(summarizer.status.state.failures).toBe(0);
-        expect(warning).not.toHaveBeenCalled();
+        expect(toastr.warning).not.toHaveBeenCalled();
     });
 
     it('is discarded when a message it read is edited, and the edit is read next', async () => {
@@ -569,7 +543,7 @@ describe('state failure', () => {
 
             expect(context.chat.some((message) => message.extra.cairn)).toBe(false);
             expect(context.saved.chat).toBe(0);
-            expect(warning).toHaveBeenCalledTimes(1);
+            expect(toastr.warning).toHaveBeenCalledTimes(1);
             expect(summarizer.status.state).toMatchObject({ calls: 1, written: 0, failures: 1, lastReason: stateRecord.parse(badStateOutputs[name](TO_PIER, {})).reason });
         });
     }
@@ -581,7 +555,7 @@ describe('state failure', () => {
         await summarizer.idle();
 
         expect(context.chat.some((message) => message.extra.cairn)).toBe(false);
-        expect(warning).toHaveBeenCalledTimes(1);
+        expect(toastr.warning).toHaveBeenCalledTimes(1);
         expect(summarizer.status.state.lastReason).toBe('error');
     });
 
@@ -603,7 +577,7 @@ describe('state failure', () => {
         await summarizer.idle();
 
         // The state's failure toasts, and so does the first summary's, on its own streak.
-        expect(warning).toHaveBeenCalledTimes(2);
+        expect(toastr.warning).toHaveBeenCalledTimes(2);
         expect(summarizer.status).toMatchObject({ failures: 1, streak: 1, state: { failures: 1, streak: 1 } });
         expect(readScene(context.chat[10]).status).toBe('none');
     });
@@ -616,13 +590,13 @@ describe('state failure', () => {
         summarizer.start();
         await summarizer.idle();
         await summarizer.drain();
-        expect(warning).toHaveBeenCalledTimes(1);
+        expect(toastr.warning).toHaveBeenCalledTimes(1);
 
         await summarizer.drain();
         expect(summarizer.status.state.streak).toBe(0);
         await exchange(context, 6);
         await summarizer.idle();
-        expect(warning).toHaveBeenCalledTimes(2);
+        expect(toastr.warning).toHaveBeenCalledTimes(2);
     });
 
     it(`gives up on what it read after ${MAX_ATTEMPTS} failures, and tries again once a new message arrives`, async () => {
@@ -667,7 +641,7 @@ describe('state failure', () => {
         await expect(exchange(context, 6)).resolves.toBeUndefined();
         await expect(summarizer.idle()).resolves.toBeUndefined();
         expect(readState(context.chat, 7).status).toBe('none');
-        expect(warning).toHaveBeenCalledTimes(1);
+        expect(toastr.warning).toHaveBeenCalledTimes(1);
     });
 });
 
@@ -809,7 +783,7 @@ describe('rebuilding the world state on a message', () => {
         expect(summarizer.restate(4)).toEqual({ queued: false, reason: 'hidden' });
         expect(summarizer.restate(40)).toEqual({ queued: false, reason: 'no-message' });
 
-        expect(restateRefusalMessage(4, 'off')).toBe('Cairn can\'t rebuild the world state on message #4: Keep the world state is turned off.');
+        expect(restateRefusalMessage(4, 'off')).toBe('Cairn can\'t rebuild the world state on message #4: Track the world state is turned off.');
         expect(restateRefusalMessage(4, 'no-profile')).toBe('Cairn can\'t rebuild the world state on message #4: no memory connection chosen.');
     });
 });

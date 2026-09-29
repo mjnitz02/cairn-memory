@@ -6,16 +6,10 @@
  * memory cap is a share of (pipeline/budgeter.js), and not one
  * we should be re-deriving (CLAUDE.md §2.5).
  * `getContext()` does not expose it (st-context.js:115), so it comes from
- * `script.js` the way every bundled extension imports it.
- *
- * The import is dynamic and specified absolutely. `/script.js` is the URL ST
- * itself loaded (public/index.html:8218) and the one every relative
- * `../../../script.js` resolves to, so it is the same module instance without
- * depending on how deeply we are installed. Dynamic because a failed import at
- * module scope would stop the extension loading, and a missing diagnostic number
- * must never do that (CLAUDE.md §4.17).
+ * `script.js` the way every bundled extension imports it (util/st-modules.js).
  */
 import { debug, warn } from './log.js';
+import { loadScript } from './st-modules.js';
 
 /**
  * Reserve when ST's own answer is unavailable. Deliberately generous:
@@ -24,14 +18,12 @@ import { debug, warn } from './log.js';
  */
 export const FALLBACK_RESERVE_FRACTION = 0.125;
 
-const ST_SCRIPT = '/script.js';
-
 /**
  * @param {{load?: () => Promise<object>}} [options] Injected in tests; there is
  *        no `/script.js` outside the browser.
  * @returns {(context: object) => Promise<number>}
  */
-export function createMaxPromptTokens({ load = () => import(/* @vite-ignore */ ST_SCRIPT) } = {}) {
+export function createMaxPromptTokens({ load = loadScript } = {}) {
     /** undefined = not tried yet, null = tried and unavailable. */
     let resolved;
 

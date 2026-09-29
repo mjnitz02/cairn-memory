@@ -67,7 +67,7 @@ export function makeQvinkData({
  * a fixture whose messages are placeholders makes the history it stands for look
  * cheaper than its summary.
  */
-export function makeMessage(index, chars) {
+export function makeProse(index, chars) {
     const head = `Aster speaks at turn ${index}. `;
     const filler = `The room settles, a small thing is noticed, and turn ${index} carries on. `;
     let text = head;
@@ -110,7 +110,7 @@ export function makeQvinkChat({
 
     for (let index = 0; index < length; index++) {
         const isUser = index % 2 === 0;
-        const mes = makeMessage(index, isUser ? userMesChars : mesChars);
+        const mes = makeProse(index, isUser ? userMesChars : mesChars);
         chat.push({
             name: isUser ? 'Wren' : 'Aster',
             is_user: isUser,

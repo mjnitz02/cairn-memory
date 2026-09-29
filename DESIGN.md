@@ -363,32 +363,47 @@ settings.html
 style.css
 src/
   constants.js            slug, extension path, display name
-  store/
-    schema.js             types + schema versioning + migrations
+  settings.js             defaults + settings versioning + migrations
+  store/                  the bottom layer: imports nothing above it (lint-enforced, D-0079)
+    schema.js             stored-data versioning + migrations
     chat-store.js         message.extra + chatMetadata access, checkpoint/rollback
-    entity-index.js       entity -> {canon ids, episode ids}
-  memory/
-    state.js              tier 1
-    scenes.js             tier 2
+    entity-index.js       entity -> {canon ids, episode ids} (planned)
+  interop/                the other extensions, detected and never driven
+    qvink.js              loaded? injecting, excluding, summarising, displaying?
+    wtracker.js           WTracker / WTrackerLite loaded?
+  memory/                 the tiers, pure
+    state.js              tier 1 — which state counts
+    state-schema.js       tier 1's fields, caps and merge
+    scenes.js             tier 2 — scene summaries, qvink's and ours
     index-record.js       tier 2 — the per-summary index record (P5)
+    canon.js              tier 3 — the pick and its fold
     examples.js           the derived example-dialogue latch (P5)
-    canon.js              tier 3
-    episodes.js           tier 4
+    *-strategy.js         one per kind of call: its prompt and its reply parser
+    model-reply.js        cleanup every parser does first
   pipeline/
-    scheduler.js          when work runs; batching; see-saw thresholds
-    budgeter.js           token allocation across tiers under pressure
-    compactor.js          promote / merge / drop
-    summarizer.js         all LLM calls, via ConnectionManagerRequestService
+    scheduler.js          the see-saw: growth cadence
+    budgeter.js           token allocation across tiers; eviction cadence
+    canon-pick.js         when a canon pick is due, and what its reply becomes
+    index-reads.js        which summaries wait for a record; every record there is
+    summarizer.js         the queue and all LLM calls, via ConnectionManagerRequestService
+    job.js                what every kind shares: tally, retry key, failure policy, send
+    *-job.js              one kind of memory work each: summary, state, index, canon
+    gates.js              whether memory calls may run now, and why not
+    tally.js              per-kind cost and failure bookkeeping
+    request-options.js    what every memory request asks for
+    adopt.js              adopting a chat: import, summarise, replay
   prompt/
     assembler.js          builds the ordered block from the tiers
     injector.js           setExtensionPrompt + prompt-ready rewrite + interceptor
-    lorebook.js           outlet routing, WI observation, dedup
+    lorebook.js           WI observation, dedup
+    observer.js           read-only prompt observation (P0)
+    …                     handover, rebuild turn, reserves, state placement, lore cap
   ui/
     panel.js              settings
     inspector.js          section 10
+    …                     chat marks, message buttons, adopt panel, sections
   util/
-    tokens.js
-    log.js
+    tokens.js, log.js, disk-log.js, …
 test/
   mocks/                  ST + memory-model mocks, each citing the shape it mirrors
 ```

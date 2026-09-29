@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BLOCK_PLACEMENT, BLOCK_RENDERING, blockChars, createAssembler, renderBlock } from '../src/prompt/assembler.js';
-import { QVINK_EXTENSION, readScenes } from '../src/memory/scenes.js';
+import { readScenes } from '../src/memory/scenes.js';
+import { QVINK_EXTENSION } from '../src/interop/qvink.js';
 import { CAP_FRACTION, createBudget } from '../src/pipeline/budgeter.js';
 import { RAW_WINDOW, STEP, createSeeSaw } from '../src/pipeline/scheduler.js';
 import { createObserver } from '../src/prompt/observer.js';
@@ -264,6 +265,16 @@ describe('the example-dialogue latch, over a played chat', () => {
         expect(run.context.powerUserSettings.strip_examples).toBe(true);
 
         run.assembler.reset();
+        expect(run.context.powerUserSettings.strip_examples).toBe(false);
+    });
+
+    it('never strips with Drop example dialogue off, and gives the user\'s value back', async () => {
+        const cairnSettings = { dropExamples: true };
+        const run = harness({ cairnSettings });
+        expect((await run.turn(60)).examplesStripped).toBe(true);
+
+        cairnSettings.dropExamples = false;
+        expect((await run.turn(61)).examplesStripped).toBe(false);
         expect(run.context.powerUserSettings.strip_examples).toBe(false);
     });
 });

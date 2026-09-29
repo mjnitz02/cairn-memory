@@ -14,6 +14,7 @@
  * matched. A probe match is a lead, not a fact, and callers must not round it
  * up to one.
  */
+import { round1 } from '../util/values.js';
 
 /** Below this, a macro-free head is too generic to identify a block. */
 const MIN_PROBE = 24;
@@ -127,8 +128,4 @@ function placement(prompt, offset, endOffset, match, ambiguous) {
         match,
         ambiguous,
     };
-}
-
-function round1(value) {
-    return Math.round(value * 10) / 10;
 }

@@ -10,6 +10,75 @@
     margin-top: 0.75em;
 }
 
+/* Hints sit under their control, tucked in to line up with the checkbox's text. */
+.cairn-settings .checkbox_label + .cairn-hint {
+    margin-left: 1.9em;
+}
+
+/* Each part of the panel is its own card, so they read apart at a glance. */
+.cairn-card {
+    margin: 0.8em 0;
+    padding: 0.4em 0.8em 0.6em 0.8em;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    background: var(--black30a, rgba(0, 0, 0, 0.15));
+}
+
+.cairn-section {
+    margin: 0.3em 0 0.4em 0;
+    padding-bottom: 0.3em;
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+}
+
+/* Diagnostics is a heading inside the Advanced card, one step quieter. */
+.cairn-group .cairn-section {
+    margin-top: 1em;
+    font-size: 0.95em;
+    opacity: 0.9;
+}
+
+/* A number beside its label, so a column of them reads as a table. */
+.cairn-settings .cairn-field {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1em;
+    margin-top: 0.5em;
+}
+
+.cairn-settings .cairn-field label {
+    margin: 0;
+}
+
+.cairn-settings .cairn-field input {
+    width: 6em;
+    flex: none;
+    margin: 0;
+}
+
+.cairn-indent {
+    margin-left: 1.9em;
+}
+
+.cairn-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4em;
+}
+
+/* Top-level folds: Advanced settings, Last generation. */
+.cairn-group > summary {
+    cursor: pointer;
+    font-weight: bold;
+    padding: 0.2em 0;
+}
+
+.cairn-group[open] > summary {
+    margin-bottom: 0.4em;
+    padding-bottom: 0.3em;
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+}
+
 /* Long runs must not blow the drawer out. */
 .cairn-inspector {
     max-height: 60vh;
@@ -35,10 +104,6 @@
 }
 
 /* Inspector (DESIGN.md §10). */
-
-.cairn-inspector-block h4 {
-    margin: 0.6em 0 0.4em 0;
-}
 
 .cairn-inspector-empty {
     opacity: 0.7;
@@ -101,9 +166,24 @@
     font-size: 0.9em;
 }
 
+.cairn-group > .cairn-details {
+    margin: 0;
+    padding: 0.4em 0;
+    border-bottom: 1px dashed var(--SmartThemeBorderColor);
+}
+
 .cairn-details summary {
     cursor: pointer;
     opacity: 0.85;
+}
+
+.cairn-group > .cairn-details[open] {
+    padding-left: 0.8em;
+    border-left: 2px solid var(--SmartThemeBorderColor);
+}
+
+.cairn-group > .cairn-details[open] > summary {
+    margin-left: -0.8em;
 }
 
 .cairn-table {
@@ -129,6 +209,11 @@
     word-break: break-word;
     font-size: 0.8em;
     margin: 0.3em 0;
+}
+
+/* Story text, not a diff: the chat's own font. */
+.cairn-diff.cairn-prose {
+    font-family: inherit;
 }
 
 .cairn-was { color: var(--fullred, #d05050); }

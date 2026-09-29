@@ -208,7 +208,6 @@ describe('one log per chat, appended to', () => {
         const first = context.chatId;
 
         log.append(snapshot(), getContext);
-        log.reset();
         context.chatId = 'another-chat';
         log.append(snapshot({ promptTokens: 999 }), getContext);
         await vi.waitFor(() => expect(uploads()).toHaveLength(2));

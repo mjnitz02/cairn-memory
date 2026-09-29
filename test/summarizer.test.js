@@ -1,18 +1,20 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MAX_ATTEMPTS, createSummarizer, failureDetail } from '../src/pipeline/summarizer.js';
+import { describe, expect, it, vi } from 'vitest';
+import { createSummarizer } from '../src/pipeline/summarizer.js';
+import { failureDetail } from '../src/pipeline/job.js';
+import { MAX_ATTEMPTS } from '../src/pipeline/tally.js';
 import { DEFAULT_SUMMARY_PROMPT, SUMMARY_MAX_TOKENS, perMessage } from '../src/memory/scene-strategy.js';
-import { QVINK_EXTENSION, pendingScenes } from '../src/memory/scenes.js';
+import { pendingScenes } from '../src/memory/scenes.js';
+import { QVINK_EXTENSION } from '../src/interop/qvink.js';
 import { readScene } from '../src/store/chat-store.js';
 import { STORE_VERSION } from '../src/store/schema.js';
 import { hashString } from '../src/util/hash.js';
-import { resetToasts } from '../src/util/log.js';
 import { badOutputs, createRequestService, deferred } from './mocks/llm.js';
 import { makeMixedChat } from './mocks/cairn.js';
-import { makeMessage as makeProse, makeSummary } from './mocks/qvink.js';
+import { makeProse, makeSummary } from './mocks/qvink.js';
 import { createContext, openChat, receiveMessage, startActive, startGeneration } from './mocks/sillytavern.js';
+import { MEMORY, ROLEPLAY, queueHarness } from './helpers/summarizer.js';
+import { stubToastr } from './helpers/toastr.js';
 
-const MEMORY = { id: 'memory-profile', name: 'GLM (memory)' };
-const ROLEPLAY = { id: 'roleplay-profile', name: 'Local (roleplay)' };
 const CLOCK = Date.parse('2026-09-16T18:00:00.000Z');
 
 /** Synthetic, finished, and the length of a real reply: the corpus median is ~350 characters. */
@@ -26,30 +28,19 @@ function reply(index) {
 }
 
 /** A chat of 14 where qvink summarised 0-9, so Cairn's queue is 10, 11, 12. */
-function harness({ responses = [], settings = {}, chat, service, context: contextOptions = {}, strategy, clock = () => CLOCK, onUpdate } = {}) {
-    const requests = service ?? createRequestService({ responses });
-    const context = createContext({
+function harness({ chat, ...options } = {}) {
+    return queueHarness({
         chat: chat ?? makeMixedChat({ length: 14, qvinkThrough: 9, cairnThrough: 9 }),
-        profiles: [MEMORY, ROLEPLAY],
-        selectedProfile: ROLEPLAY.id,
-        requestService: requests,
-        ...contextOptions,
-    });
-    const summarizer = createSummarizer(() => context, {
         // The state tier has its own tests (test/state-queue.test.js); these are the summaries'.
-        settings: () => ({ memoryProfileId: MEMORY.id, worldState: false, ...settings }),
-        clock,
-        onUpdate,
+        defaults: { worldState: false },
+        clock: () => CLOCK,
         // The block is qvink's in these tests, which shuts the index gate the way
         // `worldState: false` shuts the state's: a record nothing would read is not
         // written (pipeline/gates.js, docs/decisions.md D-0075). The index batch has its
         // own tests in test/index-queue.test.js.
         memory: () => ({ writing: false }),
-
-        ...(strategy ? { strategy } : {}),
+        ...options,
     });
-    startActive(summarizer, context);
-    return { context, service: requests, summarizer };
 }
 
 /** Let a request go out: the summarizer awaits nothing before it sends. */
@@ -57,20 +48,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const written = (chat) => chat.flatMap((message, index) => (message.extra?.cairn ? [index] : []));
 
-let warning;
-
-beforeEach(() => {
-    warning = vi.fn();
-    vi.stubGlobal('toastr', { warning });
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-});
-
-afterEach(() => {
-    resetToasts();
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-});
+const toastr = stubToastr();
 
 describe('summarising the queue', () => {
     it('writes one scene per waiting message, oldest first, and saves the chat', async () => {
@@ -171,8 +149,8 @@ describe('summarising the queue', () => {
         expect(service.calls).toHaveLength(3);
         expect(service.calls[0].prompt[0].content).toContain('Message to summarize:');
         expect(context.chat[10].extra.cairn.scene.prompt).toBe(hashString(DEFAULT_SUMMARY_PROMPT));
-        expect(warning).toHaveBeenCalledTimes(1);
-        expect(warning.mock.calls[0][0]).toMatch(/\{\{message\}\}/);
+        expect(toastr.warning).toHaveBeenCalledTimes(1);
+        expect(toastr.warning.mock.calls[0][0]).toMatch(/\{\{message\}\}/);
     });
 });
 
@@ -231,7 +209,7 @@ describe('when it runs', () => {
 
         expect(service.calls).toHaveLength(0);
         expect(written(context.chat)).toEqual([]);
-        expect(warning).not.toHaveBeenCalled();
+        expect(toastr.warning).not.toHaveBeenCalled();
         expect(summarizer.status.gate).toBe('no-profile');
     });
 
@@ -261,7 +239,7 @@ describe('when it runs', () => {
         await summarizer.drain();
 
         expect(service.calls).toHaveLength(0);
-        expect(warning).toHaveBeenCalledTimes(1);
+        expect(toastr.warning).toHaveBeenCalledTimes(1);
     });
 
     it('warns once when the memory profile is the chat\'s own, and still summarises', async () => {
@@ -274,7 +252,7 @@ describe('when it runs', () => {
         await summarizer.idle();
 
         expect(written(context.chat)).toEqual([10, 11, 12]);
-        expect(warning).toHaveBeenCalledTimes(1);
+        expect(toastr.warning).toHaveBeenCalledTimes(1);
     });
 
     it('stops listening and abandons the request in flight when stopped', async () => {
@@ -295,7 +273,7 @@ describe('when it runs', () => {
         expect(written(context.chat)).toEqual([]);
         expect(context.eventSource.listenerCount(CHARACTER_MESSAGE_RENDERED)).toBe(0);
         expect(context.eventSource.listenerCount(CHAT_CHANGED)).toBe(0);
-        expect(warning).not.toHaveBeenCalled();
+        expect(toastr.warning).not.toHaveBeenCalled();
     });
 });
 
@@ -415,8 +393,8 @@ describe('what it asks of the memory model (D-0086)', () => {
 
         expect(service.calls.map((call) => call.overridePayload.reasoning_effort)).toEqual(['none', 'low', 'low', 'low']);
         expect(summarizer.status).toMatchObject({ written: 3, failures: 0, calls: 4, reasoning: 'low' });
-        expect(warning).toHaveBeenCalledTimes(1);
-        expect(warning.mock.calls[0][0]).toMatch(/refused reasoning effort "none"/);
+        expect(toastr.warning).toHaveBeenCalledTimes(1);
+        expect(toastr.warning.mock.calls[0][0]).toMatch(/refused reasoning effort "none"/);
     });
 
     it('saves a refusal, so the next page load starts at the lower effort with no refused call (D-0088)', async () => {
@@ -526,7 +504,7 @@ describe('a reply that arrives after the world moved on', () => {
         expect(service.calls[0].custom.signal.aborted).toBe(true);
         expect(written(left)).toEqual([]);
         expect(written(context.chat)).toEqual([]);
-        expect(warning).not.toHaveBeenCalled();
+        expect(toastr.warning).not.toHaveBeenCalled();
         expect(summarizer.status.failures).toBe(0);
     });
 
@@ -617,7 +595,7 @@ describe('failure', () => {
             expect(service.calls).toHaveLength(1);
             expect(written(context.chat)).toEqual([]);
             expect(context.saved.chat).toBe(0);
-            expect(warning).toHaveBeenCalledTimes(1);
+            expect(toastr.warning).toHaveBeenCalledTimes(1);
         });
     }
 
@@ -630,7 +608,7 @@ describe('failure', () => {
         await summarizer.idle();
 
         expect([10, 11, 12].map((index) => context.chat[index].extra.cairn.scene.text)).toEqual([summary(10), summary(11), summary(12)]);
-        expect(warning).not.toHaveBeenCalled();
+        expect(toastr.warning).not.toHaveBeenCalled();
     });
 
     it('names the likely cause when a reply comes back empty or cut off (D-0086)', async () => {
@@ -638,7 +616,7 @@ describe('failure', () => {
 
         summarizer.start();
         await summarizer.idle();
-        expect(warning.mock.calls[0][0]).toMatch(/spent its reply budget reasoning/);
+        expect(toastr.warning.mock.calls[0][0]).toMatch(/spent its reply budget reasoning/);
 
         // A refusal or an outage says nothing about the budget.
         expect(failureDetail('It failed.', 'refusal')).toBe('It failed.');
@@ -653,7 +631,7 @@ describe('failure', () => {
         await summarizer.idle();
 
         expect(written(context.chat)).toEqual([]);
-        expect(warning).toHaveBeenCalledTimes(1);
+        expect(toastr.warning).toHaveBeenCalledTimes(1);
         expect(summarizer.status).toMatchObject({ calls: 1, failures: 1, lastReason: 'error' });
     });
 
@@ -676,11 +654,11 @@ describe('failure', () => {
         summarizer.start();
         await summarizer.idle();
         await summarizer.drain();
-        expect(warning).toHaveBeenCalledTimes(1);
+        expect(toastr.warning).toHaveBeenCalledTimes(1);
 
         // 10 succeeds, and the run goes on to 11, which fails.
         await summarizer.drain();
-        expect(warning).toHaveBeenCalledTimes(2);
+        expect(toastr.warning).toHaveBeenCalledTimes(2);
     });
 
     it(`gives up on a message after ${MAX_ATTEMPTS} failures, and the step holds before it`, async () => {
@@ -728,7 +706,7 @@ describe('failure', () => {
         await summarizer.idle();
 
         expect(summarizer.status.failures).toBe(0);
-        expect(warning).not.toHaveBeenCalled();
+        expect(toastr.warning).not.toHaveBeenCalled();
     });
 
     it('fails without writing when a newer Cairn stored a scene on the message meanwhile', async () => {
@@ -754,7 +732,7 @@ describe('failure', () => {
         await expect(receiveMessage(context, reply(14))).resolves.toBeUndefined();
         await expect(summarizer.idle()).resolves.toBeUndefined();
         expect(written(context.chat)).toEqual([]);
-        expect(warning).toHaveBeenCalledTimes(1);
+        expect(toastr.warning).toHaveBeenCalledTimes(1);
     });
 
     it('survives a context that throws', async () => {

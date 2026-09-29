@@ -1,15 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { STATE_WRITING_HTML, markMessages, renderMark, stateTexts, stateWriting } from '../src/ui/chat-marks.js';
-import { QVINK_EXTENSION, qvinkDisplaying } from '../src/memory/scenes.js';
+import { QVINK_EXTENSION, qvinkDisplaying } from '../src/interop/qvink.js';
 import { STATE_HEADER } from '../src/memory/state-schema.js';
 import { writeState } from '../src/store/chat-store.js';
-import { MAX_ATTEMPTS, createSummarizer } from '../src/pipeline/summarizer.js';
-import { resetToasts } from '../src/util/log.js';
+import { createSummarizer } from '../src/pipeline/summarizer.js';
+import { MAX_ATTEMPTS } from '../src/pipeline/tally.js';
 import { cairnStore, cairnSummary, makeMixedChat } from './mocks/cairn.js';
 import { badOutputs, createRequestService, deferred } from './mocks/llm.js';
 import { createContext, makeChat, startActive } from './mocks/sillytavern.js';
-
-const MEMORY = { id: 'memory-profile', name: 'GLM (memory)' };
+import { MEMORY } from './helpers/summarizer.js';
+import { stubToastr } from './helpers/toastr.js';
 
 /** A finished reply the parser accepts; `cairnSummary` is cut mid-sentence to a length. */
 const finished = (index) => `Wren and Aster settled matter ${index} before the tide turned, and agreed to wait for the ferry.`;
@@ -159,16 +159,7 @@ describe('how a mark reads', () => {
 
 /** The marks against a real summarizer run, so the status they read has the real shape. */
 describe('following a summarizer run', () => {
-    beforeEach(() => {
-        vi.stubGlobal('toastr', { warning: vi.fn() });
-        vi.spyOn(console, 'warn').mockImplementation(() => {});
-    });
-
-    afterEach(() => {
-        resetToasts();
-        vi.unstubAllGlobals();
-        vi.restoreAllMocks();
-    });
+    stubToastr();
 
     function run(responses) {
         const context = createContext({
@@ -216,16 +207,7 @@ describe('following a summarizer run', () => {
 describe('while a world state is being written', () => {
     const DECK = { location: 'The ferry, upper deck', characters: { Wren: { outfit: 'Wool coat, boots' } } };
 
-    beforeEach(() => {
-        vi.stubGlobal('toastr', { warning: vi.fn() });
-        vi.spyOn(console, 'warn').mockImplementation(() => {});
-    });
-
-    afterEach(() => {
-        resetToasts();
-        vi.unstubAllGlobals();
-        vi.restoreAllMocks();
-    });
+    stubToastr();
 
     it('names the message whose state request is out, and nothing otherwise', () => {
         expect(stateWriting({ state: { inFlight: 5 } })).toBe(5);

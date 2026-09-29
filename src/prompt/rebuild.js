@@ -17,9 +17,7 @@
  *
  * Pure: two numbers in, a boolean out.
  */
-
-/** The see-saw's reason for a cold first turn (pipeline/scheduler.js). */
-export const FIRST_TURN = 'first-turn';
+import { FIRST_TURN } from '../pipeline/scheduler.js';
 
 /**
  * Whether this turn rewrites the block's head.

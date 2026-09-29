@@ -234,3 +234,30 @@ describe('canon as text (docs/decisions.md D-0085)', () => {
         expect(renderCanonView(null)).toBe('');
     });
 });
+
+describe('where the cap came from', () => {
+    const budget = (overrides) => ({
+        limitedBy: 'share', share: 8_064, room: 9_500, margin: 1_152, minimum: 2_304,
+        card: 4_500, lore: 3_500, loreBound: 'budget', loreBudget: 3_500, window: 5_000, state: 330,
+        ...overrides,
+    });
+
+    it('names the share the settings actually hold, not the default', () => {
+        // The share is a setting (docs/decisions.md D-0085): a fixed "35%" here would
+        // misreport every chat whose owner moved it.
+        const html = renderSnapshot(snapshot({
+            memory: { maxPromptTokens: 23_040, budget: budget({ share: 9_216 }) },
+        }));
+
+        expect(rowFor(html, 'Cap from')).toContain('the 40% share of the prompt');
+    });
+
+    it('names the minimum from the budgeter, when the rest of the prompt starves the block', () => {
+        const html = renderSnapshot(snapshot({
+            memory: { maxPromptTokens: 23_040, budget: budget({ limitedBy: 'starved', room: 1_200 }) },
+        }));
+
+        expect(rowFor(html, 'Cap from')).toContain('the 10% minimum');
+        expect(html).toContain('less than 10% of the prompt');
+    });
+});

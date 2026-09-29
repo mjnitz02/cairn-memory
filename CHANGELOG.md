@@ -11,6 +11,9 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ### Added
 
+- **Drop example dialogue once summarised**, a switch for what Cairn already did:
+  on by default; off leaves SillyTavern's own example-messages setting alone.
+
 - **Adopt this chat**, in a collapsed section of the settings panel. It walks a chat
   started before Cairn from its first message: takes Qvink's summaries as its own,
   summarises what has none, then indexes the story and re-picks canon a step at a
@@ -30,6 +33,15 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ### Changed
 
+- **The settings panel is regrouped and shorter.** **Memory model** (connection
+  profile, reasoning), then **What Cairn keeps** (the feature switches), with the
+  budget, prompts, adopt and diagnostics folded under **Advanced settings** and
+  the inspector folded under **Last generation**. The lorebook cap moved into the
+  memory budget. Renamed: *Write the memory block* is **Replace old messages with
+  summaries**, *Keep the world state* is **Track the world state**, *Canon lines*
+  is **Canon entries**, *Hold World Info entries* is **Hold lorebook entries**,
+  *Show inspector* is **Show last generation**. Nothing stored changed.
+- The world state in the inspector is in the chat's font, not monospace.
 - **The index, canon and world state prompts are laid out for lighter models**: the
   task, the fields one by one, one complete example reply, then your chat, then a
   one-line ask. They also say to write speech inside a value in single quotes, the
@@ -66,6 +78,8 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ### Fixed
 
+- The inspector's "Cap from" line said the block's share was 35% whatever the setting
+  held. It now names the share you set.
 - **The world state stopped updating alongside WeatherPack** or any extension that
   tidies a reply's markdown after it arrives. Cairn read the reply before the tidy,
   saw it change, threw the update away and did not try again until the next reply,

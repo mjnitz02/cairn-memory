@@ -15,6 +15,7 @@ import { attributeOffset, locateInjections } from './locate.js';
 import { comparePrompts, flattenPrompt } from '../util/prefix.js';
 import { countTokens } from '../util/tokens.js';
 import { debug, warn } from '../util/log.js';
+import { round1 } from '../util/values.js';
 
 const DEFAULT_HISTORY = 20;
 
@@ -229,8 +230,4 @@ function textsOf(extensionPrompts) {
         texts[key] = prompt?.value ?? '';
     }
     return texts;
-}
-
-function round1(value) {
-    return Math.round(value * 10) / 10;
 }

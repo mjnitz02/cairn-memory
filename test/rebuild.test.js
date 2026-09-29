@@ -1,7 +1,8 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { FIRST_TURN, isRebuild } from '../src/prompt/rebuild.js';
+import { FIRST_TURN } from '../src/pipeline/scheduler.js';
+import { isRebuild } from '../src/prompt/rebuild.js';
 
 /**
  * D-0067's invariant: the rebuild turn is the only turn discontinuous work happens on,

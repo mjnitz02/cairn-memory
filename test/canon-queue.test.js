@@ -1,12 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MAX_ATTEMPTS, createSummarizer } from '../src/pipeline/summarizer.js';
+import { describe, expect, it } from 'vitest';
+import { MAX_ATTEMPTS } from '../src/pipeline/tally.js';
 import { CANON_PROMPT, HARD_FACT_CHARS } from '../src/memory/canon-strategy.js';
 import { canonFor } from '../src/memory/canon.js';
 import { readCanon, readIndex } from '../src/store/chat-store.js';
-import { resetToasts } from '../src/util/log.js';
-import { badCanonOutputs, createRequestService, deferred } from './mocks/llm.js';
+import { badCanonOutputs, deferred } from './mocks/llm.js';
 import { cairnIndexStore } from './mocks/cairn.js';
-import { createContext, makeChat as rawChat, startActive } from './mocks/sillytavern.js';
+import { makeChat as rawChat } from './mocks/sillytavern.js';
+import { queueHarness } from './helpers/summarizer.js';
+import { stubToastr } from './helpers/toastr.js';
 
 /** The store's readers, which `canonFor` takes rather than imports (memory/canon.js). */
 const READERS = { readCanon, readIndex };
@@ -31,11 +32,9 @@ function makeChat(length) {
  * The pending pick is worked out in the assembler, so it comes in through `memory`
  * exactly as index.js wires it. These tests stand that getter in directly, which is
  * also how they say what a pick is *given* rather than how it is worked out —
- * test/compactor.test.js covers the working-out.
+ * test/canon-pick.test.js covers the working-out.
  */
 
-const MEMORY = { id: 'memory-profile', name: 'GLM (memory)' };
-const ROLEPLAY = { id: 'roleplay-profile', name: 'Local (roleplay)' };
 const CLOCK = Date.parse('2026-09-17T09:00:00.000Z');
 
 const MEANT = [
@@ -76,49 +75,27 @@ function pass(chat, { covers = [0, 3], slots = 8, due = true, writing = true } =
     };
 }
 
-function harness({ responses = [], chat, settings = {}, context: contextOptions = {}, memory, clock = () => CLOCK } = {}) {
-    const service = createRequestService({ responses });
+function harness({ chat, memory, ...options } = {}) {
     const live = chat ?? makeChat(12);
-    const context = createContext({
+    return queueHarness({
         chat: live,
-        profiles: [MEMORY, ROLEPLAY],
-        selectedProfile: ROLEPLAY.id,
-        requestService: service,
-        ...contextOptions,
-    });
-    const summarizer = createSummarizer(() => context, {
         // The world state off unless a test says otherwise: it runs ahead of every
         // other kind, and these tests are about the one that runs last.
-        settings: () => ({ memoryProfileId: MEMORY.id, worldState: false, ...settings }),
-        clock,
-        // The assembler's once-per-cycle test in miniature: a pass stops being due
-        // once a batch in the chat has read that far (memory/canon.js `coveredThrough`).
+        defaults: { worldState: false },
+        clock: () => CLOCK,
         // `pendingPick` in miniature: a pick stops being due once a batch in the chat
-        // has read that far (pipeline/compactor.js).
+        // has read that far (pipeline/canon-pick.js).
         memory: memory ?? (() => {
             const covered = canonFor(live, READERS).coveredThrough;
             return pass(live, { due: covered === null || covered < 3 });
         }),
+        ...options,
     });
-    startActive(summarizer, context);
-    return { context, service, summarizer, chat: live };
 }
 
 const isCanonCall = (call) => call.prompt[0].content.startsWith(CANON_PROMPT.slice(0, 60));
 
-let warning;
-
-beforeEach(() => {
-    warning = vi.fn();
-    vi.stubGlobal('toastr', { warning });
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    resetToasts();
-});
-
-afterEach(() => {
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
-});
+const toastr = stubToastr();
 
 describe('running a canon pick', () => {
     it('writes the batch on the newest record it read, and saves the chat', async () => {
@@ -319,7 +296,7 @@ describe('when a pick fails', () => {
         await run.summarizer.drain();
         await run.summarizer.drain();
 
-        expect(warning).toHaveBeenCalledTimes(1);
+        expect(toastr.warning).toHaveBeenCalledTimes(1);
         expect(run.summarizer.status.canon.streak).toBe(3);
     });
 

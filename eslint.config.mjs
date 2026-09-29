@@ -37,6 +37,19 @@ export default [
         },
     },
     {
+        // The store is the bottom layer: one reaching up is the import cycle that only
+        // showed up outside the test runner (docs/decisions.md D-0079).
+        files: ['src/store/**/*.js'],
+        rules: {
+            'no-restricted-imports': ['error', {
+                patterns: [{
+                    group: ['../memory/*', '../pipeline/*', '../prompt/*', '../ui/*', '../interop/*', '../settings.js'],
+                    message: 'store/ imports only store/, util/ and constants (docs/decisions.md D-0079).',
+                }],
+            }],
+        },
+    },
+    {
         // The logger is the one place allowed to touch console.
         files: ['src/util/log.js'],
         rules: { 'no-console': 'off' },

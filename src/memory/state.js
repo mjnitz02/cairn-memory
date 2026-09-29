@@ -9,29 +9,10 @@
  *
  * Pure: plain data in, plain data out. No ST, no DOM, no network.
  */
-import { hashRange, readRange, readState } from '../store/chat-store.js';
+import { hashRange, readRange, readState, visible } from '../store/chat-store.js';
 import { sceneHistory } from './scenes.js';
 import { validState } from './state-schema.js';
 import { STATE_MAX_EARLIER, STATE_MAX_MESSAGES } from './state-strategy.js';
-
-/**
- * The two state writers Cairn stands aside for (D-0046). Folders are the ones
- * their repositories clone into, under ST's `third-party/` prefix
- * (src/endpoints/extensions.js:518). Interceptor names are from their manifests:
- * WTrackerLite's manifest.json, and WTracker's at github.com/bmen25124/SillyTavern-WTracker.
- */
-export const WTRACKERS = Object.freeze([
-    Object.freeze({
-        name: 'WTrackerLite',
-        extension: 'third-party/SillyTavern-WTrackerLite',
-        interceptor: 'wtrackerliteGenerateInterceptor',
-    }),
-    Object.freeze({
-        name: 'WTracker',
-        extension: 'third-party/SillyTavern-WTracker',
-        interceptor: 'wtrackerGenerateInterceptor',
-    }),
-]);
 
 /**
  * The newest usable state at or before `through`, walking back. A state counts
@@ -159,25 +140,6 @@ export function jobStillCurrent(chat, job) {
 }
 
 /**
- * Which state writer is loaded, if any: a second one in the prompt is what this
- * project exists to end. Loaded means its interceptor is defined, which only its
- * running code does (ST calls it by that name, public/scripts/extensions.js:2035),
- * or its manifest is installed and not disabled (:524, :626). Its settings are
- * never read: they outlive it (docs/decisions.md D-0040).
- *
- * @param {object} context SillyTavern.getContext()
- * @param {{scope?: object}} [options] Where interceptors are defined; `globalThis` in ST.
- * @returns {string|null} Its display name.
- */
-export function wtrackerLoaded(context, { scope = globalThis } = {}) {
-    const { extensionSettings, getExtensionManifest } = context ?? {};
-    const disabled = extensionSettings?.disabledExtensions ?? [];
-    const loaded = WTRACKERS.find((tracker) => typeof scope?.[tracker.interceptor] === 'function'
-        || (Boolean(getExtensionManifest?.(tracker.extension)) && !disabled.includes(tracker.extension)));
-    return loaded?.name ?? null;
-}
-
-/**
  * The state stored on `chat[index]`, if it is one the reader would use: its range
  * still hashes the same and the schema accepts its value.
  *
@@ -186,8 +148,4 @@ export function wtrackerLoaded(context, { scope = globalThis } = {}) {
 export function usableState(chat, index) {
     const { status, state } = readState(chat, index);
     return status === 'valid' && validState(state.value) ? { index, state } : null;
-}
-
-function visible(message) {
-    return Boolean(message) && !message.is_system;
 }

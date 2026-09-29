@@ -14,6 +14,11 @@ export const GATES = Object.freeze({
     'qvink-summarising': 'waiting — Qvink\'s Auto Summarize is on',
 });
 
+/** A closed gate's reason on its own, without the panel's "off —" or "waiting —" lead, for a sentence of its own. */
+export function gateReason(reason) {
+    return GATES[reason]?.replace(/^\w+ — /, '');
+}
+
 export function row(label, value) {
     return `<div class="${SLUG}-row"><span>${label}</span><b>${value}</b></div>`;
 }

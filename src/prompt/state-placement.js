@@ -7,7 +7,8 @@
  * popped or deleted message can't supply it (memory/state.js `stateForPrompt`).
  */
 import { SLUG } from '../constants.js';
-import { stateForPrompt, wtrackerLoaded } from '../memory/state.js';
+import { stateForPrompt } from '../memory/state.js';
+import { wtrackerLoaded } from '../interop/wtracker.js';
 import { renderState } from '../memory/state-schema.js';
 import { countTokens } from '../util/tokens.js';
 

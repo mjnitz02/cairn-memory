@@ -1,63 +1,40 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MAX_ATTEMPTS, createSummarizer } from '../src/pipeline/summarizer.js';
-import { QVINK_EXTENSION, readScenes } from '../src/memory/scenes.js';
+import { describe, expect, it } from 'vitest';
+import { MAX_ATTEMPTS } from '../src/pipeline/tally.js';
+import { readScenes } from '../src/memory/scenes.js';
+import { QVINK_EXTENSION } from '../src/interop/qvink.js';
 import { readScene } from '../src/store/chat-store.js';
 import { refusalMessage } from '../src/ui/resummarise-button.js';
-import { resetToasts } from '../src/util/log.js';
-import { badOutputs, createRequestService, deferred } from './mocks/llm.js';
+import { badOutputs, deferred } from './mocks/llm.js';
 import { cairnSummary, makeMixedChat } from './mocks/cairn.js';
-import { createContext, startActive } from './mocks/sillytavern.js';
+import { queueHarness } from './helpers/summarizer.js';
+import { stubToastr } from './helpers/toastr.js';
 
 /**
  * Summarising a message on the user's word (docs/decisions.md D-0050): the same request
  * as the queue's, for any message long enough, replacing what is there only on success.
  */
 
-const MEMORY = { id: 'memory-profile', name: 'GLM (memory)' };
-const ROLEPLAY = { id: 'roleplay-profile', name: 'Local (roleplay)' };
-
 /** Synthetic and finished, so the parser accepts it. */
 const summary = (index) => `Wren and Aster went back over matter ${index} by the harbour wall, and agreed to wait for the ferry.`;
 
 /** qvink summarised 0-9 and Cairn 10-12, so nothing waits: every request here is asked for. */
-function harness({ responses = [], settings = {}, chat, context: contextOptions = {} } = {}) {
-    const service = createRequestService({ responses });
-    const context = createContext({
+function harness({ chat, ...options } = {}) {
+    return queueHarness({
         chat: chat ?? makeMixedChat({ length: 14, qvinkThrough: 9, cairnThrough: 12 }),
-        profiles: [MEMORY, ROLEPLAY],
-        selectedProfile: ROLEPLAY.id,
-        requestService: service,
-        ...contextOptions,
-    });
-    const summarizer = createSummarizer(() => context, {
-        settings: () => ({ memoryProfileId: MEMORY.id, worldState: false, ...settings }),
+        defaults: { worldState: false },
         // The block is qvink's in these tests, which shuts the index gate the way
         // `worldState: false` shuts the state's: a record nothing would read is not
         // written (pipeline/gates.js, docs/decisions.md D-0075). The index batch has its
         // own tests in test/index-queue.test.js.
         memory: () => ({ writing: false }),
+        ...options,
     });
-    startActive(summarizer, context);
-    return { context, service, summarizer };
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 const sceneText = (message) => readScene(message).scene?.text;
 
-let warning;
-
-beforeEach(() => {
-    warning = vi.fn();
-    vi.stubGlobal('toastr', { warning });
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-});
-
-afterEach(() => {
-    resetToasts();
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-});
+const toastr = stubToastr();
 
 describe('summarising a message again', () => {
     it('replaces a written summary with a fresh one, sent the way the queue sends it', async () => {
@@ -107,8 +84,8 @@ describe('summarising a message again', () => {
         await summarizer.idle();
 
         expect(sceneText(context.chat[11])).toBe(cairnSummary(11));
-        expect(warning).toHaveBeenCalledTimes(2);
-        expect(warning.mock.calls[1][0]).toContain('Summarising message #11 failed (truncated). Nothing was changed.');
+        expect(toastr.warning).toHaveBeenCalledTimes(2);
+        expect(toastr.warning.mock.calls[1][0]).toContain('Summarising message #11 failed (truncated). Nothing was changed.');
     });
 
     it('discards the reply when the message is edited while the request is out', async () => {

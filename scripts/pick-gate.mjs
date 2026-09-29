@@ -22,7 +22,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { canonPick, parseCanonReply } from '../src/memory/canon-strategy.js';
-import { applyPick } from '../src/pipeline/compactor.js';
+import { applyPick } from '../src/pipeline/canon-pick.js';
 import { DEFAULT_SLOTS } from '../src/memory/canon.js';
 import { renderBlock, CANON_RENDERING } from '../src/prompt/assembler.js';
 import { estimateTokens } from '../src/util/tokens.js';

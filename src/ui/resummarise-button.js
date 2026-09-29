@@ -8,7 +8,7 @@
  */
 import { SLUG } from '../constants.js';
 import { toast, warn } from '../util/log.js';
-import { GATES } from './html.js';
+import { gateReason } from './html.js';
 
 export const RESUMMARISE_CLASS = `${SLUG}-resummarise`;
 export const RESTATE_CLASS = `${SLUG}-restate`;
@@ -28,15 +28,14 @@ const REFUSED = Object.freeze({
  * @returns {string}
  */
 export function refusalMessage(index, reason) {
-    // A gate's panel wording, without its "off —" or "waiting —" lead.
-    const why = REFUSED[reason] ?? GATES[reason]?.replace(/^\w+ — /, '') ?? reason;
+    const why = REFUSED[reason] ?? gateReason(reason) ?? reason;
     return `Cairn can't summarise message #${index}: ${why}.`;
 }
 
 /** Why a message's world state can't be rebuilt, for the refusals that aren't a closed gate. */
 const STATE_REFUSED = Object.freeze({
     'disabled': 'Cairn is turned off',
-    'off': 'Keep the world state is turned off',
+    'off': 'Track the world state is turned off',
     'wtracker-loaded': 'WTracker is keeping the world state',
     'no-message': 'the message is no longer in the chat',
     'hidden': 'hidden messages have no world state',
@@ -49,7 +48,7 @@ const STATE_REFUSED = Object.freeze({
  * @returns {string}
  */
 export function restateRefusalMessage(index, reason) {
-    const why = STATE_REFUSED[reason] ?? GATES[reason]?.replace(/^\w+ — /, '') ?? reason;
+    const why = STATE_REFUSED[reason] ?? gateReason(reason) ?? reason;
     return `Cairn can't rebuild the world state on message #${index}: ${why}.`;
 }
 

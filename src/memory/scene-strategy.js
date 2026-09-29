@@ -8,7 +8,7 @@
  *
  * Pure: no ST, no network. ST's macro expansion comes in as `expand`.
  */
-import { looksLikeRefusal, straightQuotes, stripThinking, unfence } from './model-reply.js';
+import { looksLikeRefusal, reject, straightQuotes, stripThinking, unfence } from './model-reply.js';
 import { hashString } from '../util/hash.js';
 import { renderTemplate, resolvePrompt } from '../util/template.js';
 
@@ -120,8 +120,4 @@ export function parseSummary(content) {
     if (text.length > MAX_SUMMARY_CHARS) return reject('too-long');
     if (!FINISHED.test(text)) return reject('truncated');
     return { ok: true, text };
-}
-
-function reject(reason) {
-    return { ok: false, reason };
 }
