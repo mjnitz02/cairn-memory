@@ -19,6 +19,7 @@
 import { pendingScenes, redoScenes, sceneHistory } from '../memory/scenes.js';
 import { stateJobAt } from '../memory/state.js';
 import { perMessage, resolveSummaryPrompt } from '../memory/scene-strategy.js';
+import { describeReply } from '../memory/model-reply.js';
 import { readScene, summarisable, writeScene } from '../store/chat-store.js';
 import { hashString } from '../util/hash.js';
 import { countTokens } from '../util/tokens.js';
@@ -42,6 +43,8 @@ const PROMPT_FALLBACK = 'Cairn\'s summary prompt has no {{message}}, so the defa
 /** An empty or cut-off reply is nearly always a budget spent reasoning (docs/decisions.md D-0086). */
 const REASONING_HINT = 'The memory model most likely spent its reply budget reasoning: turn reasoning off in the memory profile\'s preset.';
 const BUDGET_REASONS = new Set(['empty', 'truncated']);
+/** Reasons a reply arrived and could not be read, as against a transport or write failure. */
+const READ_FAILURES = new Set(['empty', 'refusal', 'format', 'truncated', 'no-facts']);
 const EFFORT_REFUSED = (effort) => `The memory model's provider refused reasoning effort "${effort}", so Cairn asks it for `
     + 'less from now on. Changing Cairn\'s reasoning setting tries again.';
 
@@ -292,7 +295,7 @@ export function createSummarizer(getContext, {
         call = {
             tally, chatId: context.chatId, at: new Date(started).toISOString(), message: index,
             model: memoryProfile(context, memoryProfileId)?.model ?? null,
-            tokensIn: null, tokensOut: null, replyChars: null, error: null, ms: null,
+            tokensIn: null, tokensOut: null, replyChars: null, reply: null, error: null, ms: null,
         };
         const open = call;
         try {
@@ -305,6 +308,7 @@ export function createSummarizer(getContext, {
             const reply = await sendAskingLittleReasoning(context, memoryProfileId, request, signal, counting);
             open.tokensOut = await countTokens(context, `${reply?.content ?? ''}${reply?.reasoning ?? ''}`);
             open.replyChars = (reply?.content ?? '').length;
+            open.reply = reply?.content ?? '';
             counting.tokensOut += open.tokensOut;
             return { reply, signal };
         } catch (err) {
@@ -356,10 +360,14 @@ export function createSummarizer(getContext, {
         if (sent) call = null;
         if (!onCall) return;
         try {
+            const job = jobOf(tally);
+            // A structured reply that could not be read keeps where it broke (D-0094).
+            const detail = outcome === 'failed' && job !== 'summary' && READ_FAILURES.has(reason) && sent?.reply
+                ? describeReply(sent.reply) : null;
             onCall({
                 kind: 'call',
                 at: sent?.at ?? new Date(clock()).toISOString(),
-                job: jobOf(tally),
+                job,
                 message: sent?.message ?? null,
                 during: adopting ? (adopting.redo ? 'redo' : 'adopt') : 'queue',
                 outcome,
@@ -370,6 +378,9 @@ export function createSummarizer(getContext, {
                 tokens_in: sent?.tokensIn ?? null,
                 tokens_out: sent?.tokensOut ?? null,
                 reply_chars: sent?.replyChars ?? null,
+                ...(detail && {
+                    reply_error: detail.error, reply_at: detail.at, reply_near: detail.near, reply_tail: detail.tail,
+                }),
                 model: sent?.model ?? null,
                 chat_id: sent?.chatId ?? getContext().chatId ?? null,
             });

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.jpg" alt="Cairn Memory" width="600">
+</p>
+
 # Cairn-Memory
 
 A memory extension for [SillyTavern](https://github.com/SillyTavern/SillyTavern).

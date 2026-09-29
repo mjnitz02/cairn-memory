@@ -48,38 +48,44 @@ export const INDEX_MAX_TOKENS = 6144;
 
 const KIND_LINES = KINDS.map((kind) => `- ${kind} — ${KIND_MEANINGS[kind]}.`).join('\n');
 
-export const INDEX_PROMPT = `You are indexing a roleplay's scene summaries. Each summary gets one record, so that later a single pass over the whole index can pick out the few summaries that carry the story's spine. Below are the summaries, numbered. Reply with one record for every number.
+export const INDEX_PROMPT = `Your task: write one JSON record for each numbered scene summary you are given. The records become an index of the whole story, so that later a single pass over it can pick out the few scenes that carry the story's spine.
 
-IMPORTANT: Fill the slots from what the summary says, and do not judge whether the summary matters. The ranking happens later, over the whole story at once. A record that reads as trivial is still a record, and a summary you skip is a summary that can never be picked.
+IMPORTANT: Write a record for every number, in order, and do not judge whether the summary matters. The ranking happens later, over the whole story at once. A summary that reads as trivial still gets a full record, because a summary you skip is a summary that can never be picked.
 
-kind is exactly one of:
+Each record has these eight fields:
+- n — the summary's number.
+- kind — exactly one of these four words:
 ${KIND_LINES}
+- who — a list of the people the summary is about: at most ${MAX_WHO} names, each at most ${MAX_WHO_CHARS} characters. Names, never pronouns. Use [] when the summary is about a place or an event rather than a person.
+- what — what happened, in one clause of at most ${MAX_SLOT_CHARS} characters. Names rather than pronouns, so the clause stands alone.
+- changed — what is still different long after this scene ends, in at most ${MAX_SLOT_CHARS} characters. Usually "".
+- because — what brought it about, in at most ${MAX_SLOT_CHARS} characters. "" unless the summary says.
+- background — something the summary says was already true before this scene: where someone is from, what was promised years ago, who owns what, how long ago something happened. At most ${MAX_SLOT_CHARS} characters. Usually "".
+- line — the whole summary as one sentence of story, past tense, names rather than pronouns, at most ${MAX_LINE_CHARS} characters. It stands in for the summary once the scene is far behind, so write a sentence that reads on its own, not a list of the other fields.
 
-The slots:
-- who — the people the summary is about, at most ${MAX_WHO} names, each at most ${MAX_WHO_CHARS} characters. Names, never pronouns. An empty list is right when the summary is about a place or an event rather than a person.
-- what — what happened, one clause of at most ${MAX_SLOT_CHARS} characters. Names rather than pronouns, so the clause stands alone.
-- changed — what is lastingly different now, in at most ${MAX_SLOT_CHARS} characters. Empty for most summaries: fill it only when something is still true long after this scene ends.
-- because — what brought it about, in at most ${MAX_SLOT_CHARS} characters. Empty unless the summary says. This is the slot that keeps a fact from reading as trivia once the scene around it is gone.
-- background — something the summary mentions as *already* true before this scene: where someone is from, what was promised years ago, who owns what, how long ago something happened. At most ${MAX_SLOT_CHARS} characters, and empty unless the summary actually says it. Most summaries have none.
+Rules:
+- Every record has all eight fields. Write "" or [] for an empty one; never leave a field out.
+- Never record how anyone felt or seemed.
+- Where you cannot tell, make the smaller claim: {{smaller}}. A thin record is useful and a guessed one is not.
 
-And one thing that is not a slot:
-- line — the whole summary in one sentence of at most ${MAX_LINE_CHARS} characters, past tense, names rather than pronouns. It stands in for the summary itself once the scene is far behind, so write a sentence of story that reads on its own, not a list of the slots.
+Reply format: only the JSON object, with no other text before or after it, one record per line. Inside a value, write speech with single quotes, never double quotes.
 
-Example.
-Summaries:
-1. Wren asked Aster whether she had known her brother, who drowned in the spring flood. Aster went quiet and admitted she had crewed the winter run with him the year before. Wren was not sure whether to believe her.
+Example. For these three summaries:
+1. Wren asked Aster whether she had known her brother, who drowned in the spring flood. Aster went quiet, then said "I crewed the winter run with him." Wren was not sure whether to believe her.
 2. Aster led Wren along the sea wall to the ferry terminal, where the board over the ticket window read DELAYED in chalk. They sat in a waiting room that smelled of wet wool and diesel while the fog came in off the water.
 3. Aster promised to get Wren across the water before the feast day, whatever the harbourmaster decided about the ferry, and showed her a small green boat tied below the stones.
-Reply: {"records":[{"n":1,"kind":"major","who":["Wren","Aster"],"what":"Aster admitted she had crewed the winter run with Wren's drowned brother","changed":"Aster knew Wren's brother","because":"Wren asked her outright","background":"Wren's brother drowned in the spring flood","line":"Aster admitted she had crewed the winter run with Wren's brother, who drowned in the spring flood, and Wren was unsure whether to believe her."},{"n":2,"kind":"description","who":["Aster","Wren"],"what":"Aster and Wren waited in the ferry terminal","changed":"","because":"the last crossing was posted delayed","background":"","line":"Aster and Wren waited out the fog in the ferry terminal with the crossing posted delayed."},{"n":3,"kind":"major","who":["Aster","Wren"],"what":"Aster promised to get Wren across the water before the feast day","changed":"Wren has a crossing promised, by boat if not by ferry","because":"the ferry was delayed and the harbourmaster had not decided","background":"","line":"Aster promised to get Wren across before the feast day and showed her a small green boat tied below the sea wall."}]}
+the reply is:
+{"records":[
+{"n":1,"kind":"major","who":["Wren","Aster"],"what":"Aster admitted she had crewed the winter run with Wren's drowned brother","changed":"Aster knew Wren's brother","because":"Wren asked her outright","background":"Wren's brother drowned in the spring flood","line":"Aster told Wren 'I crewed the winter run with him' about her brother, who drowned in the spring flood, and Wren was unsure whether to believe her."},
+{"n":2,"kind":"description","who":["Aster","Wren"],"what":"Aster and Wren waited in the ferry terminal","changed":"","because":"the last crossing was posted delayed","background":"","line":"Aster and Wren waited out the fog in the ferry terminal with the crossing posted delayed."},
+{"n":3,"kind":"major","who":["Aster","Wren"],"what":"Aster promised to get Wren across the water before the feast day","changed":"Wren has a crossing promised, by boat if not by ferry","because":"the ferry was delayed and the harbourmaster had not decided","background":"","line":"Aster promised to get Wren across before the feast day and showed her a small green boat tied below the sea wall."}
+]}
+Record 1 gets a changed and record 2 does not: that Aster knew him is still true once the conversation ends, while a delayed board and a smell of diesel belong to the evening they happened in. Record 1 gets a background because the drowning happened long before this scene; records 2 and 3 have none, which is the usual case. Neither record says anything about how Wren felt, or whether she was right to doubt. Aster's words are in single quotes in record 1's line.
 
-Record 1 gets a changed and record 2 does not: that Aster knew him is still true once the conversation ends, while a delayed board and a smell of diesel belong to the evening they happened in. Record 1 gets a background because the drowning happened long before this scene; records 2 and 3 have none, which is the usual case. Neither record says anything about how Wren felt, or whether she was right to doubt.
-
-Where you cannot tell, make the smaller claim: {{smaller}}. A thin record is useful and a guessed one is not.
-
-Summaries:
+The summaries to index:
 {{summaries}}
 
-Reply with JSON of the form {"records":[{"n":1,"kind":"…","who":["…"],"what":"…","changed":"…","because":"…","background":"…","line":"…"}]}, one record per number and nothing else.`;
+Now reply with the JSON object: one record for every summary above, numbered as they are.`;
 
 /** The template to send for an `indexPrompt` setting (`resolvePrompt`). */
 export function resolveIndexPrompt(setting) {

@@ -23,11 +23,18 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
   index and canon call writes its own line: what it was for, whether it was written,
   failed or thrown away and why, how long it took and how big it was. Before this an
   adoption left no trace in the log, because it makes no generation.
+- **A failed memory call logs where its reply broke**: the parse error and a short
+  window of the reply around it, so a malformed reply can be told from a cut-off one.
 - `scripts/replay-canon.mjs`, the same walk offline over the stage 0 fixture, scored
   against the yardstick as 0d was.
 
 ### Changed
 
+- **The index, canon and world state prompts are laid out for lighter models**: the
+  task, the fields one by one, one complete example reply, then your chat, then a
+  one-line ask. They also say to write speech inside a value in single quotes, the
+  likeliest reason a reply's JSON would not parse. If you have edited any of these
+  prompts, your edit is kept; clear it to get the new default.
 - **Memory calls ask the model not to reason.** On an OpenRouter memory profile a
   reasoning model spent its whole reply budget thinking, came back empty, and was
   billed for it: in one chat GLM-5.3 cost ten times what GLM-4.7 did for worse

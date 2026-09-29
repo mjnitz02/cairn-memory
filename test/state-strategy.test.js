@@ -91,6 +91,11 @@ describe('the state prompt', () => {
         expect(STATE_PROMPT).toContain('Write every field every time');
     });
 
+    it('names the reply\'s keys and how to write speech inside a value (D-0094)', () => {
+        expect(STATE_PROMPT).toContain('only a JSON object with the keys "location", "weather" and "characters"');
+        expect(STATE_PROMPT).toContain('write speech with single quotes, never double quotes');
+    });
+
     it('has no macros ST would expand', () => {
         expect(STATE_PROMPT.replace(/\{\{(?:state|earlier|messages|#if earlier|\/if)\}\}/g, '')).not.toContain('{{');
     });
@@ -110,7 +115,7 @@ describe('building one state request', () => {
             role: 'user',
             content: `${INSTRUCTIONS}Current record:\n${JSON.stringify(STATE)}\n\n`
                 + `New messages:\nWren: ${MESSAGES[0].mes}\n\nAster: ${MESSAGES[1].mes}\n\n`
-                + 'Reply with the complete record as JSON, and nothing else.',
+                + 'Now reply with the complete record as JSON, and nothing else.',
         }]);
     });
 

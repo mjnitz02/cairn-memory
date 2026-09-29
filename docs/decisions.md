@@ -8,6 +8,44 @@ what we believed and why it changed.
 
 ---
 
+## D-0094 — Failed calls keep where they broke; JSON prompts end on a whole example
+**2026-09-29.** Redoing Aleanna Nightingale on GLM-5.3 lost 4 of 22 index batches to
+`format` and one canon pick to `truncated`. Every failed reply was as long as the successful
+ones (index 3.1k–4.2k characters against 3.1k–3.9k; canon 2,279 at 602 of 4,096 tokens), so
+none ran out of tokens. The model finished and its JSON did not parse. The likeliest cause
+is an unescaped `"` around dialogue inside a value. That throws off `closingIndex`, which is
+why a malformed canon reply came back as `truncated`. This is unconfirmed, because the log
+held no reply text. The cost is more than the count: batches 40, 76 and 100 were never
+retried, so those scenes have no index records canon can pick, and each failure re-ran the
+previous step's canon pick.
+
+**Two changes.**
+1. **A failed read keeps evidence.** A `state`, `index` or `canon` call that failed because
+   its reply could not be read logs `reply_error`, `reply_at`, `reply_near` (80 characters
+   either side) and `reply_tail`. This supersedes D-0093's "never the model's reply" for
+   these fields only: the log is local, and a reason alone cannot tell a cut-off from a
+   stray quote.
+2. **The index, canon and state prompts are rewritten for a lighter model** (Matt:
+   good-tier models do not reliably assemble JSON from parts shown in different places).
+   The order is now: task, fields one line each, rules, reply format, one complete example
+   reply, the data, then a one-line ask. The old prompts closed on an abbreviated
+   `{"records":[{…}]}` shape (the state prompt showed none). Each prompt now also says to
+   write speech inside a value in single quotes, and the index example shows a quoted line
+   of dialogue being converted. Tests parse each example reply with the real parser and
+   pin the key order. What the prompts ask for is unchanged; only the layout is. DESIGN.md
+   §12 carries the rule.
+
+**Not done:** OpenRouter's generation id and `finish_reason`. ST returns them only with
+`extractData: false` (`public/scripts/extensions/shared.js:416`,
+`public/scripts/custom-request.js:133`), and then Cairn would have to extract the content
+itself. That change touches the transport, so it gets its own decision. `/api/v1/activity`
+is no substitute: it reports daily totals per model and provider for completed days only.
+
+**Would reopen it:** a logged failure whose `reply_near` is not a quote problem, or the new
+layout doing worse than the old on the stage 0 replay.
+
+---
+
 ## D-0093 — Every memory call gets a line in the chat's log
 **2026-09-29.** Matt adopted a chat (Christine Byrne) and several memory calls failed, but nothing
 reached `user/files/`. The disk log wrote only from the observer's snapshots, which means one line per

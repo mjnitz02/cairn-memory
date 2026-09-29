@@ -141,6 +141,27 @@ describe('adopting a chat', () => {
         expect(lines.slice(1).every((line) => line.outcome === 'written')).toBe(true);
     });
 
+    it('logs where an unreadable reply broke, and only on a failed call (D-0094)', async () => {
+        const { plan, sizes } = expected();
+        // An unescaped quote around dialogue, the shape a roleplay summary invites.
+        const broken = '{"records":[{"n":1,"kind":"filler","who":["Wren"],"what":"Wren said "not yet" to Aster"}]}';
+        const lines = [];
+        const { summarizer } = harness({
+            onCall: (entry) => lines.push(entry),
+            responses: [summary(18), broken, ...replies(plan.steps, sizes).slice(2)],
+        });
+        summarizer.start();
+
+        await summarizer.adopt();
+
+        const failed = lines.find((line) => line.job === 'index' && line.outcome === 'failed');
+        expect(failed).toMatchObject({ reason: 'format', reply_at: broken.indexOf('not yet') });
+        expect(failed.reply_error).toEqual(expect.any(String));
+        expect(failed.reply_near).toContain('said "not yet"');
+        expect(failed.reply_tail).toBe(broken.slice(-80));
+        for (const line of lines) expect('reply_error' in line).toBe(line.outcome === 'failed' && line.job !== 'summary');
+    });
+
     it('holds the queue while it runs, and lets it go when it is done', async () => {
         const { plan, sizes } = expected();
         const { service, summarizer } = harness({ responses: replies(plan.steps, sizes) });

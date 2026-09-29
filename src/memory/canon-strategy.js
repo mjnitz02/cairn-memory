@@ -48,11 +48,11 @@ export const CANON_MAX_TOKENS = 4096;
 /** Where a fact is cut rather than kept; the prompt states `MAX_FACT_CHARS` (D-0085). */
 export const HARD_FACT_CHARS = hardCap(MAX_FACT_CHARS);
 
-export const CANON_PROMPT = `You are choosing the permanent spine of a long roleplay. Below is an index of the whole story so far: one numbered row per scene, in order, with the columns \`${INDEX_HEADER}\`. The storyteller will soon have room for only these few lines and the most recent scenes — everything else is already gone.
+export const CANON_PROMPT = `You are choosing the permanent spine of a long roleplay. You are given an index of the whole story: one numbered row per scene, oldest first, with the columns \`${INDEX_HEADER}\`. Soon the storyteller will have room for only the facts you pick and the most recent scenes. Everything else will be gone.
 
-IMPORTANT: Choose exactly {{slots}} facts. Not more, and fewer only if the story genuinely holds fewer. This is a choice between rows, not a judgement of each row on its own: a fact earns a slot by being one the rest of the story does not make sense without, not by being true.
+IMPORTANT: Choose exactly {{slots}} facts. Not more, and fewer only if the story genuinely holds fewer. Compare the rows against each other: a fact earns a slot by being one the rest of the story does not make sense without, not by being true.
 
-What earns a slot:
+Pick facts like these:
 - Who these people are to each other, and where they came from.
 - What was permanently won, lost, destroyed, paid or promised.
 - Someone entering the story or leaving it for good.
@@ -64,33 +64,39 @@ Leave out:
 - What might happen next, what someone intends, or what a scene is building towards.
 - A journey, a meal, a purchase or a conversation that nothing later rests on.
 
-**Read every row.** A quiet row can hold the fact the whole story turns on — a purchase is small until it turns out to be where they settled, and a confession can be the only place an old promise is written down — while a loud row can be a battle nothing later refers to. Read \`changed\`, \`because\` and \`background\` as closely as \`what\`.
+How to choose:
+1. Read every row. A quiet row can hold the fact the whole story turns on, and a loud row can be a battle nothing later refers to. Read \`changed\`, \`because\` and \`background\` as closely as \`what\`.
+2. Chain the causes. Write why it happened as well as what happened: "he destroyed the army to buy her freedom", not "he destroyed an army".
+3. Where two rows say the same thing, write the fact once and cite both rows.
+4. Where you cannot tell whether a fact matters, prefer the one a reader would have to be told to follow the rest of the story.
 
-**Chain the causes.** A fact stripped of why it happened reads as trivia once the scene around it is gone, and a row's \`because\` is there to be used. Prefer "he destroyed the army to buy her freedom" over "he destroyed an army".
+Each fact has three fields:
+- fact — one plain sentence of at most ${MAX_FACT_CHARS} characters, with names rather than pronouns so it stands alone. A much longer one is cut short.
+- entities — a list of who or what the fact is about: at most ${MAX_ENTITIES}, each at most ${MAX_ENTITY_CHARS} characters.
+- from — a list of the row numbers the fact comes from: at least one, at most ${MAX_SOURCES}.
 
-Example, over a five-row index and three slots.
+Reply format: only a JSON object whose one key, "canon", holds exactly {{slots}} facts, oldest first, one fact per line, with no other text before or after it. Every fact has all three fields. Inside a value, write speech with single quotes, never double quotes.
+
+Example, for a five-row index and three slots.
+Index:
+${INDEX_HEADER}
 1 | Wren, Aster | Wren asked Aster about the ferry timetable | | | Wren's brother drowned in the spring flood
 2 | Aster | Aster admitted she crewed the winter run with Wren's brother | Aster knew Wren's brother | Wren asked her outright |
 3 | Aster, Wren | Aster and Wren waited out the fog in the ferry terminal | | the crossing was posted delayed |
 4 | Aster | Aster rowed Wren across the water before the feast day | Wren is across the water | the ferry never sailed | Aster promised her a crossing
 5 | Wren | Wren walked up from the harbour into the town | | |
-Reply: {"canon":[{"fact":"Wren's brother drowned in the spring flood.","entities":["Wren"],"from":[1]},{"fact":"Aster crewed the winter run with Wren's brother the year before he drowned.","entities":["Aster","Wren"],"from":[2]},{"fact":"Aster rowed Wren across the water before the feast day, as she had promised, because the ferry never sailed.","entities":["Aster","Wren"],"from":[4]}]}
-
+Reply:
+{"canon":[
+{"fact":"Wren's brother drowned in the spring flood.","entities":["Wren"],"from":[1]},
+{"fact":"Aster crewed the winter run with Wren's brother the year before he drowned.","entities":["Aster","Wren"],"from":[2]},
+{"fact":"Aster rowed Wren across the water before the feast day, as she had promised, because the ferry never sailed.","entities":["Aster","Wren"],"from":[4]}
+]}
 Row 1 is a question about a timetable and is still picked, because its \`background\` carries the death the rest of the story rests on. Rows 3 and 5 are a wait and a walk: nothing later needs them. Nothing says Aster seemed shaken or that Wren doubted her — those are feelings, and they passed with the scene.
-
-Rules:
-- Exactly {{slots}} facts, ordered oldest first as the rows are.
-- One plain sentence a fact, at most ${MAX_FACT_CHARS} characters. A much longer one is cut short.
-- Write each fact so it stands alone, with names rather than pronouns.
-- from lists the row numbers the fact comes from: at least one, at most ${MAX_SOURCES}.
-- entities names who or what the fact is about: at most ${MAX_ENTITIES}, each at most ${MAX_ENTITY_CHARS} characters.
-
-Where two rows say the same thing, pick the one that says it most completely and cite both. Where you cannot tell whether a fact matters, prefer the one a reader would have to be told to follow the rest of the story.
 
 The index:
 {{index}}
 
-Reply with JSON of the form {"canon":[{"fact":"…","entities":["…"],"from":[1]}]}, and nothing else.`;
+Now reply with the JSON object: exactly {{slots}} facts from the index above.`;
 
 /**
  * The canon so far, shown after the index when a pick carries forward (D-0090): each fact

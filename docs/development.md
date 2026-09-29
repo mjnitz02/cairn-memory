@@ -117,10 +117,14 @@ it was (`summary`, `state`, `index`, `canon`), which `message` it was for, and
 `during` (`queue`, `adopt`, `redo`). It also has the `outcome` (`written`, `failed`,
 `discarded`, `unsettled`), the `reason` and `attempt` for a failure, the transport
 `error`, `ms`, `tokens_in`/`tokens_out` (ST's tokenizer, a size and not a bill),
-`reply_chars` and `model`. It never holds the model's text. To see what failed:
+`reply_chars` and `model`. A structured call (`state`, `index`, `canon`) that failed
+because its reply could not be read also keeps where it broke (D-0094): `reply_error`
+(the parse error, or null when the JSON parsed and only its shape was wrong),
+`reply_at` (the offset), `reply_near` (80 characters either side) and `reply_tail`
+(the last 80). That is the only model text the log holds. To see what failed:
 
 ```sh
-jq -c 'select(.kind == "call" and .outcome != "written") | [.at, .during, .job, .message, .outcome, .reason, .error]' \
+jq -c 'select(.kind == "call" and .outcome != "written") | [.at, .during, .job, .message, .outcome, .reason, .error, .reply_error, .reply_near]' \
   ~/workspaces/SillyTavern/data/default-user/user/files/cairn-<chat>-<id>.jsonl
 ```
 
