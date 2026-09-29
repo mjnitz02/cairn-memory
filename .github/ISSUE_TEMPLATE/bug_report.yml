@@ -1,0 +1,70 @@
+name: Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Keep it as short as it needs to be.
+
+        **This repository is public.** Do not paste chat text, character cards, persona
+        details or API keys. Describe what happened in your own words, and redact any
+        log lines that quote the story.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you see, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: false
+  - type: input
+    id: cairn-version
+    attributes:
+      label: Cairn version
+      description: Extensions → Manage extensions, or `manifest.json`.
+      placeholder: "0.12.0"
+    validations:
+      required: true
+  - type: input
+    id: st-version
+    attributes:
+      label: SillyTavern version
+      description: Cairn needs 1.19.0 or newer.
+      placeholder: "1.19.0 (release)"
+    validations:
+      required: true
+  - type: input
+    id: memory-model
+    attributes:
+      label: Memory connection
+      description: The API source and model on the profile Cairn uses — not your roleplay model.
+      placeholder: "OpenRouter, z-ai/glm-4.7"
+    validations:
+      required: false
+  - type: textarea
+    id: other-extensions
+    attributes:
+      label: Other memory or tracker extensions loaded
+      description: Qvink Memory, WTracker, WTrackerLite, anything else that writes to the prompt.
+    validations:
+      required: false
+  - type: textarea
+    id: inspector
+    attributes:
+      label: Inspector and console output
+      description: |
+        The inspector's **Writing** line, and any `cairn` errors from the browser console
+        (turn on **Debug logging** first). Redact anything that quotes the story.
+      render: text
+    validations:
+      required: false

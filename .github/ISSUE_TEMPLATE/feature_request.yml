@@ -1,0 +1,32 @@
+name: Idea / feature
+description: A change or addition to consider
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Cairn keeps its knobs few: if a setting can be derived, it is derived. Ideas that
+        add a setting need to say why it can't be worked out automatically.
+
+        Settled choices are logged in [`docs/decisions.md`](https://github.com/mjnitz02/cairn-memory/blob/main/docs/decisions.md),
+        with what would reopen each one. If your idea revisits one, say what's new.
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: What should change, and what problem does it solve in play?
+    validations:
+      required: true
+  - type: textarea
+    id: st-lever
+    attributes:
+      label: Does SillyTavern already have a lever for this?
+      description: A setting or API that does the mechanism, where Cairn would only supply the timing.
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
