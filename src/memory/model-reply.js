@@ -6,6 +6,11 @@
  * Pure: text in, text out.
  */
 
+/** A parser's refusal of a reply: why it could not be read. */
+export function reject(reason) {
+    return { ok: false, reason };
+}
+
 const REFUSAL = /^(?:I'?m sorry|I am sorry|sorry\b|I apologi[sz]e|I can(?:not|'t)\b|I won't\b|I will not\b|I'?m (?:not able|unable)|I am (?:not able|unable)|as an AI\b|I must decline|I'?m afraid)/i;
 
 /**

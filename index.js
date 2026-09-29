@@ -140,7 +140,6 @@ import { error, info, setDebugEnabled } from './src/util/log.js';
             injector.reset();
             assembler.reset();
             statePlacement.reset();
-            diskLog.reset();
             inspector.render(null);
             inspector.summaries(summarizer.status);
         });

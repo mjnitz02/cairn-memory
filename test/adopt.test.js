@@ -1,15 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createSummarizer } from '../src/pipeline/summarizer.js';
+import { describe, expect, it } from 'vitest';
 import { IMPORTED_PROMPT, adoptionPlan } from '../src/pipeline/adopt.js';
 import { pendingScenes, redoScenes } from '../src/memory/scenes.js';
 import { INDEX_PROMPT } from '../src/memory/index-strategy.js';
 import { canonFor } from '../src/memory/canon.js';
 import { readCanon, readIndex, readScene } from '../src/store/chat-store.js';
 import { adoptionMessage, adoptionRefusal, doneText, progressText } from '../src/ui/adopt-panel.js';
-import { resetToasts } from '../src/util/log.js';
-import { createRequestService, deferred } from './mocks/llm.js';
+import { deferred } from './mocks/llm.js';
 import { cairnCanonStore, cairnIndexStore, cairnSummary, makeMixedChat } from './mocks/cairn.js';
-import { createContext } from './mocks/sillytavern.js';
+import { queueHarness } from './helpers/summarizer.js';
+import { stubToastr } from './helpers/toastr.js';
 
 /**
  * Adopting a chat (docs/decisions.md D-0090): Qvink's summaries imported, the rest
@@ -17,8 +16,6 @@ import { createContext } from './mocks/sillytavern.js';
  * forward — every write through the queue's own jobs.
  */
 
-const MEMORY = { id: 'memory-profile', name: 'GLM (memory)' };
-const ROLEPLAY = { id: 'roleplay-profile', name: 'Local (roleplay)' };
 const SLOTS = 3;
 const EVERY = 8;
 
@@ -40,29 +37,20 @@ function replies(steps, sizes) {
     return [summary(18), ...Array.from({ length: steps }, (_, i) => [indexReply(sizes[i]), canonReply(i + 1)]).flat()];
 }
 
-function harness({ responses = [], settings = {}, live = chat(), onCall } = {}) {
-    const service = createRequestService({ responses });
-    const context = createContext({ chat: live, profiles: [MEMORY, ROLEPLAY], selectedProfile: ROLEPLAY.id, requestService: service });
-    const summarizer = createSummarizer(() => context, {
-        settings: () => ({ memoryProfileId: MEMORY.id, worldState: false, step: EVERY, canonSlots: SLOTS, ...settings }),
+function harness({ live = chat(), ...options } = {}) {
+    return queueHarness({
+        chat: live,
+        defaults: { worldState: false, step: EVERY, canonSlots: SLOTS },
         memory: () => ({ writing: true }),
-        onCall,
+        start: false,
+        ...options,
     });
-    return { context, service, summarizer };
 }
 
 const isIndex = (call) => call.prompt[0].content.startsWith(INDEX_PROMPT.slice(0, 60));
 const isPick = (call) => call.prompt[0].content.startsWith('You are choosing the permanent spine');
 
-beforeEach(() => {
-    vi.stubGlobal('toastr', { warning: vi.fn() });
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-});
-afterEach(() => {
-    resetToasts();
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-});
+stubToastr();
 
 describe('what an adoption would do', () => {
     it('counts the imports, the summaries and the steps before making a call', () => {

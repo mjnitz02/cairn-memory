@@ -120,12 +120,6 @@ export function createDiskLog({ delayMs = WRITE_DELAY_MS } = {}) {
             queue(rest, chatId ?? getContext()?.chatId ?? null, getContext);
         },
 
-        /**
-         * A chat change. Nothing is dropped: queued entries belong to their own chat's
-         * file and are still written. Only what this session knows of each file is kept.
-         */
-        reset() {},
-
         /** Entries queued and not yet written, across every chat. */
         get count() {
             let count = 0;

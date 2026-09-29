@@ -8,7 +8,7 @@
  *
  * Pure: no ST, no network. ST's macro expansion comes in as `expand`.
  */
-import { firstJson, looksLikeRefusal, stripThinking, unfence } from './model-reply.js';
+import { firstJson, looksLikeRefusal, reject, stripThinking, unfence } from './model-reply.js';
 import {
     CHARACTER_FIELDS,
     MAX_CHARACTERS,
@@ -18,6 +18,7 @@ import {
 } from './state-schema.js';
 import { hashString } from '../util/hash.js';
 import { renderTemplate, resolvePrompt } from '../util/template.js';
+import { isObject } from '../util/values.js';
 
 /** As for summaries: room for a reasoning model's thinking before a short record. */
 export const STATE_MAX_TOKENS = 2048;
@@ -141,12 +142,4 @@ export function parseStateReply(content) {
     if (looksLikeRefusal(text)) return reject('refusal');
     if (found.unclosed) return reject('truncated');
     return reject('format');
-}
-
-function reject(reason) {
-    return { ok: false, reason };
-}
-
-function isObject(value) {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

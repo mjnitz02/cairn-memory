@@ -9,7 +9,7 @@
  */
 import { SLUG } from '../constants.js';
 import { toast, warn } from '../util/log.js';
-import { GATES } from './html.js';
+import { gateReason } from './html.js';
 
 const REFUSED = Object.freeze({
     disabled: 'Cairn is turned off',
@@ -18,7 +18,7 @@ const REFUSED = Object.freeze({
 
 /** Why the chat can't be adopted, in the panel's words. */
 export function adoptionRefusal(reason) {
-    const why = REFUSED[reason] ?? GATES[reason]?.replace(/^\w+ — /, '') ?? reason;
+    const why = REFUSED[reason] ?? gateReason(reason) ?? reason;
     return `Cairn can't adopt this chat: ${why}.`;
 }
 

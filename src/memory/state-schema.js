@@ -18,6 +18,7 @@
  *
  * Pure: plain data in, new plain data out. Inputs are never mutated.
  */
+import { isObject } from '../util/values.js';
 
 /** Top-level text fields, in render order, with their caps in characters. */
 export const TEXT_FIELDS = Object.freeze({ location: 120, weather: 80 });
@@ -274,8 +275,4 @@ function fold(name) {
 
 function oneLine(text) {
     return text.replace(/\s+/g, ' ').trim();
-}
-
-function isObject(value) {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

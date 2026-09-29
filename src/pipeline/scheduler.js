@@ -43,6 +43,9 @@ export const RAW_WINDOW = 8;
  */
 export const STEP = 8;
 
+/** The step reason for a cold first turn: no previous block, so the head moves anyway (prompt/rebuild.js). */
+export const FIRST_TURN = 'first-turn';
+
 /**
  * @param {{rawWindow?: number, step?: number}} [options]
  */
@@ -71,7 +74,7 @@ export function createSeeSaw({ rawWindow = RAW_WINDOW, step = STEP } = {}) {
 
             if (summarisedThrough === null) {
                 summarisedThrough = reach;
-                return { summarisedThrough, stepped: true, reason: 'first-turn', waiting: reach < base };
+                return { summarisedThrough, stepped: true, reason: FIRST_TURN, waiting: reach < base };
             }
 
             // The chat got shorter: a branch or a swipe (DESIGN.md §9). Holding the

@@ -24,9 +24,7 @@
  * raise, lower or switch off, not something derived behind their back.
  */
 import { warn } from '../util/log.js';
-
-/** As `prompt/reserves.js` imports it, and for the same reasons. */
-const ST_WORLD_INFO = '/scripts/world-info.js';
+import { loadWorldInfo } from '../util/st-modules.js';
 
 /**
  * Cairn's default, in tokens. Sized from the P4 run: the book weighed 4,982
@@ -40,7 +38,7 @@ export const DEFAULT_LORE_CAP = 3_500;
  *        `load` is injected in tests; there is no `/scripts/world-info.js`
  *        outside the browser.
  */
-export function createLoreCap({ load = () => import(/* @vite-ignore */ ST_WORLD_INFO), doc = globalThis.document } = {}) {
+export function createLoreCap({ load = loadWorldInfo, doc = globalThis.document } = {}) {
     let applied = null;
 
     /**

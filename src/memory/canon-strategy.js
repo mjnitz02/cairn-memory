@@ -29,7 +29,7 @@
  *
  * Pure: no ST, no network. ST's macro expansion comes in as `expand`.
  */
-import { firstJson, looksLikeRefusal, stripThinking, unfence } from './model-reply.js';
+import { firstJson, looksLikeRefusal, reject, stripThinking, unfence } from './model-reply.js';
 import {
     MAX_ENTITIES, MAX_ENTITY_CHARS, MAX_FACT_CHARS, MAX_SLOTS, MAX_SOURCES, MIN_SLOTS,
 } from './canon.js';
@@ -37,6 +37,7 @@ import { INDEX_HEADER, renderIndex } from './index-record.js';
 import { clip, hardCap } from '../util/clip.js';
 import { hashString } from '../util/hash.js';
 import { renderTemplate, resolvePrompt } from '../util/template.js';
+import { isObject } from '../util/values.js';
 
 /**
  * Room for a reasoning model's thinking over a long index before a short list. The
@@ -259,12 +260,4 @@ function readFact(entry, dropped, records) {
 function drop(dropped, reason) {
     dropped.push({ reason });
     return null;
-}
-
-function reject(reason) {
-    return { ok: false, reason };
-}
-
-function isObject(value) {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

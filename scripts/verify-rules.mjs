@@ -3,7 +3,9 @@
  * Checks that every `CLAUDE.md §N.M` reference in the repo resolves to a rule
  * that exists, and that its text still looks like what the citing file claims.
  * Also that every `docs/<page>.md` and `D-NNNN` reference names a page and a
- * decision that exist, so deleting a doc cannot leave pointers to nothing.
+ * decision that exist, so deleting a doc cannot leave pointers to nothing — and that
+ * every source path a comment or doc cites (`pipeline/budgeter.js`) is a file, so a
+ * module can be moved without leaving pointers behind.
  *
  * Rules are numbered, so inserting one silently shifts every reference after it
  * — which happened the first time a rule was added (CLAUDE.md §9.35: if a
@@ -17,6 +19,16 @@ const SKIP = new Set(['node_modules', '.git', 'coverage', '.github']);
 const REFERENCE = /CLAUDE\.md §(\d+)\.(\d+)/g;
 const DOC = /\bdocs\/([\w-]+\.md)\b/g;
 const DECISION = /\bD-(\d{4})\b/g;
+/**
+ * A source file named by its path under src/, with or without the `src/` — the way
+ * comments and docs cite them. The lookbehind keeps ST's own paths
+ * (`public/scripts/...`) and relative imports (`../util/log.js`) out.
+ */
+const SOURCE = /(?<![\w./-])(?:src\/)?((?:pipeline|memory|prompt|store|ui|util)\/[\w-]+\.js)\b/g;
+/** Interfaces DESIGN.md §11 names before they exist; a citation of one is a plan, not a pointer. */
+const PLANNED = new Set(['store/entity-index.js']);
+/** Dated records: they name files as they were then, and a later move does not rewrite them (CLAUDE.md §6.26). */
+const RECORDS = new Set(['CHANGELOG.md', 'docs/decisions.md', 'docs/p4-plan.md']);
 
 const decisions = new Set(
     [...readFileSync('docs/decisions.md', 'utf8').matchAll(/^## D-(\d{4})\b/gm)].map((match) => match[1]),
@@ -36,6 +48,7 @@ for (const line of readFileSync('CLAUDE.md', 'utf8').split('\n')) {
 const failures = [];
 let checked = 0;
 let pointers = 0;
+let sources = 0;
 
 for (const file of walk(ROOT)) {
     if (file.endsWith('CLAUDE.md')) continue;
@@ -71,6 +84,14 @@ for (const file of walk(ROOT)) {
         pointers++;
         if (!decisions.has(number)) failures.push(`${relative(ROOT, file)} → D-${number}: no such decision.`);
     }
+
+    if (RECORDS.has(relative(ROOT, file))) continue;
+    for (const [, path] of text.matchAll(SOURCE)) {
+        sources++;
+        if (!PLANNED.has(path) && !existsSync(join(ROOT, 'src', path))) {
+            failures.push(`${relative(ROOT, file)} → ${path}: no such source file.`);
+        }
+    }
 }
 
 function* walk(dir) {
@@ -85,8 +106,8 @@ function* walk(dir) {
 if (failures.length) {
     console.error(`✗ ${failures.length} stale reference(s):\n`);
     for (const failure of failures) console.error(`  ${failure}`);
-    console.error('\nA rule was renumbered, or a page or decision removed. Fix the references.');
+    console.error('\nA rule was renumbered, or a page, decision or source file moved or removed. Fix the references.');
     process.exit(1);
 }
 
-console.log(`✓ ${checked} rule references and ${pointers} doc and decision references resolve`);
+console.log(`✓ ${checked} rule references, ${pointers} doc and decision references and ${sources} source paths resolve`);

@@ -8,7 +8,7 @@
  */
 import { SLUG } from '../constants.js';
 import { toast, warn } from '../util/log.js';
-import { GATES } from './html.js';
+import { gateReason } from './html.js';
 
 export const RESUMMARISE_CLASS = `${SLUG}-resummarise`;
 export const RESTATE_CLASS = `${SLUG}-restate`;
@@ -28,8 +28,7 @@ const REFUSED = Object.freeze({
  * @returns {string}
  */
 export function refusalMessage(index, reason) {
-    // A gate's panel wording, without its "off —" or "waiting —" lead.
-    const why = REFUSED[reason] ?? GATES[reason]?.replace(/^\w+ — /, '') ?? reason;
+    const why = REFUSED[reason] ?? gateReason(reason) ?? reason;
     return `Cairn can't summarise message #${index}: ${why}.`;
 }
 
@@ -49,7 +48,7 @@ const STATE_REFUSED = Object.freeze({
  * @returns {string}
  */
 export function restateRefusalMessage(index, reason) {
-    const why = STATE_REFUSED[reason] ?? GATES[reason]?.replace(/^\w+ — /, '') ?? reason;
+    const why = STATE_REFUSED[reason] ?? gateReason(reason) ?? reason;
     return `Cairn can't rebuild the world state on message #${index}: ${why}.`;
 }
 

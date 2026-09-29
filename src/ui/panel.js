@@ -4,6 +4,7 @@ import { INDEX_PROMPT } from '../memory/index-strategy.js';
 import { DEFAULT_SUMMARY_PROMPT } from '../memory/scene-strategy.js';
 import { STATE_PROMPT } from '../memory/state-strategy.js';
 import { setDebugEnabled } from '../util/log.js';
+import { escapeHtml } from './html.js';
 
 /**
  * Settings panel. Every control here has a one-sentence description in
@@ -29,25 +30,26 @@ export async function renderSettingsPanel(context, handlers = {}) {
     document.getElementById('extensions_settings').insertAdjacentHTML('beforeend', html);
 
     // The panel reports the change; index.js decides what it means.
-    bindCheckbox(context, 'enabled', (value) => handlers.onEnabledChange?.(value));
-    bindCheckbox(context, 'showInspector', (value) => toggleInspector(value));
-    bindCheckbox(context, 'logToDisk', (value) => handlers.onLogToDiskChange?.(value));
-    bindCheckbox(context, 'holdWorldInfo', (value) => handlers.onHoldWorldInfoChange?.(value));
-    bindNumber(context, 'loreCap', (value) => handlers.onLoreCapChange?.(value));
-    bindCheckbox(context, 'ownMemoryBlock', (value) => handlers.onOwnMemoryBlockChange?.(value));
-    bindCheckbox(context, 'worldState', (value) => handlers.onWorldStateChange?.(value));
-    bindCheckbox(context, 'keepCanon', (value) => handlers.onKeepCanonChange?.(value));
-    bindNumber(context, 'canonSlots', (value) => handlers.onCanonSlotsChange?.(value));
-    // The budget is read afresh every generation, so these need no handler.
-    for (const key of ['memoryFraction', 'canonFraction', 'compactFraction']) bindPercent(context, key);
-    bindNumber(context, 'rawWindow', null, { min: 1 });
-    bindNumber(context, 'step');
-    bindCheckbox(context, 'debugLogging', (value) => setDebugEnabled(value));
+    bind(context, 'enabled', CHECKBOX, (value) => handlers.onEnabledChange?.(value));
+    bind(context, 'showInspector', CHECKBOX, (value) => toggleInspector(value));
+    bind(context, 'logToDisk', CHECKBOX, (value) => handlers.onLogToDiskChange?.(value));
+    bind(context, 'holdWorldInfo', CHECKBOX, (value) => handlers.onHoldWorldInfoChange?.(value));
+    bind(context, 'loreCap', wholeNumber(), (value) => handlers.onLoreCapChange?.(value));
+    bind(context, 'ownMemoryBlock', CHECKBOX, (value) => handlers.onOwnMemoryBlockChange?.(value));
+    bind(context, 'worldState', CHECKBOX, (value) => handlers.onWorldStateChange?.(value));
+    bind(context, 'keepCanon', CHECKBOX, (value) => handlers.onKeepCanonChange?.(value));
+    // The budget and the pick are planned afresh every generation, so these need no
+    // handler: a changed slot count makes the next plan's pick due (pipeline/compactor.js).
+    bind(context, 'canonSlots', wholeNumber());
+    for (const key of ['memoryFraction', 'canonFraction', 'compactFraction']) bind(context, key, PERCENT);
+    bind(context, 'rawWindow', wholeNumber({ min: 1 }));
+    bind(context, 'step', wholeNumber());
+    bind(context, 'debugLogging', CHECKBOX, (value) => setDebugEnabled(value));
 
     populateProfiles(context, settings.memoryProfileId);
-    bindSelect(context, 'memoryProfileId', (value) => handlers.onMemoryProfileChange?.(value));
+    bind(context, 'memoryProfileId', SELECT, (value) => handlers.onMemoryProfileChange?.(value));
     // A new choice is a fresh start: what a provider refused before is asked again (D-0088).
-    bindSelect(context, 'memoryReasoning', () => {
+    bind(context, 'memoryReasoning', SELECT, () => {
         context.extensionSettings[SLUG].reasoningRefused = {};
         context.saveSettingsDebounced();
     });
@@ -102,68 +104,55 @@ function bindPrompt(context, key, fallback) {
     });
 }
 
-function bindCheckbox(context, key, onChange) {
+/**
+ * One control, bound to its setting: it shows the stored value, and a change stores what
+ * the control reads, shows that back (so a clamped number reads as stored), saves, and
+ * tells the caller.
+ *
+ * @param {{show: (input: HTMLElement, value: unknown) => void, read: (input: HTMLElement) => unknown}} kind
+ */
+function bind(context, key, kind, onChange) {
     const input = field(key);
     if (!input) return;
-    input.checked = Boolean(context.extensionSettings[SLUG][key]);
+    kind.show(input, context.extensionSettings[SLUG][key]);
     input.addEventListener('change', () => {
-        context.extensionSettings[SLUG][key] = input.checked;
+        const value = kind.read(input);
+        context.extensionSettings[SLUG][key] = value;
+        kind.show(input, value);
         context.saveSettingsDebounced();
-        onChange?.(input.checked);
+        onChange?.(value);
     });
 }
+
+const CHECKBOX = {
+    show: (input, value) => { input.checked = Boolean(value); },
+    read: (input) => input.checked,
+};
 
 /**
  * A whole number of tokens, never negative and never NaN: a blanked box reads as
  * 0, which is the same "no cap" ST's own field means (src/prompt/lore-cap.js).
  */
-function bindNumber(context, key, onChange, { min = 0 } = {}) {
-    const input = field(key);
-    if (!input) return;
-    input.value = String(context.extensionSettings[SLUG][key] ?? 0);
-    input.addEventListener('change', () => {
-        const value = Math.max(min, Math.floor(Number(input.value)) || 0);
-        input.value = String(value);
-        context.extensionSettings[SLUG][key] = value;
-        context.saveSettingsDebounced();
-        onChange?.(value);
-    });
-}
+const wholeNumber = ({ min = 0 } = {}) => ({
+    show: (input, value) => { input.value = String(value ?? 0); },
+    read: (input) => Math.max(min, Math.floor(Number(input.value)) || 0),
+});
 
 /**
  * A share, shown as a whole percent and stored as a fraction, so the budget reads it as
  * the constant it replaced. Held under 90%: a block that takes the whole prompt leaves
  * nothing for the story.
  */
-function bindPercent(context, key) {
-    const input = field(key);
-    if (!input) return;
-    input.value = String(Math.round((context.extensionSettings[SLUG][key] ?? 0) * 100));
-    input.addEventListener('change', () => {
-        const percent = Math.min(90, Math.max(0, Math.round(Number(input.value)) || 0));
-        input.value = String(percent);
-        context.extensionSettings[SLUG][key] = percent / 100;
-        context.saveSettingsDebounced();
-    });
-}
+const PERCENT = {
+    show: (input, value) => { input.value = String(Math.round((value ?? 0) * 100)); },
+    read: (input) => Math.min(90, Math.max(0, Math.round(Number(input.value)) || 0)) / 100,
+};
 
-function bindSelect(context, key, onChange) {
-    const input = field(key);
-    if (!input) return;
-    if (input.options.length && context.extensionSettings[SLUG][key] !== undefined) input.value = context.extensionSettings[SLUG][key];
-    input.addEventListener('change', () => {
-        context.extensionSettings[SLUG][key] = input.value;
-        context.saveSettingsDebounced();
-        onChange?.(input.value);
-    });
-}
+const SELECT = {
+    show: (input, value) => { if (input.options.length && value !== undefined) input.value = value; },
+    read: (input) => input.value,
+};
 
 function field(key) {
     return document.getElementById(`${SLUG}_${key}`);
-}
-
-function escapeHtml(value) {
-    return String(value).replace(/[&<>"']/g, (c) => (
-        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }[c]
-    ));
 }

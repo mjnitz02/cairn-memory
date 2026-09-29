@@ -17,6 +17,7 @@ import { SLUG } from '../constants.js';
 import { STORE_VERSION, migrateStore } from './schema.js';
 import { hashString } from '../util/hash.js';
 import { estimateTokens } from '../util/tokens.js';
+import { isObject } from '../util/values.js';
 
 /** Matt's qvink `message_length_threshold` (docs/decisions.md D-0037). */
 export const MIN_SUMMARY_TOKENS = 50;
@@ -342,10 +343,7 @@ function writeKey(message, key, entry) {
     return true;
 }
 
-function visible(message) {
+/** Not hidden: ST hides a message by setting `is_system` (public/scripts/chats.js:157). */
+export function visible(message) {
     return Boolean(message) && !message.is_system;
-}
-
-function isObject(value) {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

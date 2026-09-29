@@ -2,7 +2,7 @@
  * The index strategy: what a batch of summaries is asked for, and how the reply is
  * read (docs/decisions.md D-0070).
  *
- * The same interface boundary as `perMessage`, `stateRecord` and `canonPromote`
+ * The same interface boundary as `perMessage`, `stateRecord` and `canonPick`
  * (DESIGN.md §11): the prompt and the parser live here, and the queue, the transport
  * and the store never see either.
  *
@@ -24,12 +24,13 @@
  *
  * Pure: no ST, no network. ST's macro expansion comes in as `expand`.
  */
-import { firstJson, looksLikeRefusal, stripThinking, unfence } from './model-reply.js';
+import { firstJson, looksLikeRefusal, reject, stripThinking, unfence } from './model-reply.js';
 import {
     KINDS, KIND_MEANINGS, MAX_LINE_CHARS, MAX_SLOT_CHARS, MAX_WHO, MAX_WHO_CHARS, normaliseRecord,
 } from './index-record.js';
 import { hashString } from '../util/hash.js';
 import { renderTemplate, resolvePrompt } from '../util/template.js';
+import { isObject } from '../util/values.js';
 
 /**
  * The most summaries one batch may carry. D-0064's 10–15, at the top of that range:
@@ -141,9 +142,8 @@ export const indexBatch = {
  * Find the records in a reply, or reject it. Every drop is counted, so the caller can
  * report the applied change rather than the model's claim (CLAUDE.md §4.18).
  *
- * **A reply with no records is a rejection here, unlike the canon pass.** An empty
- * `promote` is a real answer to "what here is permanent"; there is no real answer to
- * "describe each of these fifteen summaries" that describes none of them. The caller
+ * **A reply with no records is a rejection**, as an empty canon pick is: there is no real
+ * answer to "describe each of these fifteen summaries" that describes none of them. The caller
  * decides whether a partial batch is enough to write — the parser only says what came
  * back and how much of it was usable.
  *
@@ -204,12 +204,4 @@ export function parseIndexReply(content, { count = MAX_BATCH } = {}) {
 
 function textOf(item) {
     return typeof item === 'string' ? item : item?.text ?? '';
-}
-
-function reject(reason) {
-    return { ok: false, reason };
-}
-
-function isObject(value) {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

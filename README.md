@@ -12,18 +12,6 @@ which degrades uniformly until everything is equally vague, and still develops
 holes. Cairn treats memory as **state**: what is true right now, plus a sparse
 set of retrievable past events.
 
-> **Status: pre-alpha, P1.** Cairn *measures* — it reports what your prompt is
-> made of and how stable it is — and makes two changes to it. Lorebook entries are
-> held in place once they have activated, so a keyword-scan miss cannot make the
-> whole lore block vanish and come back. And it assembles the memory block from
-> the summaries your existing memory extension has already written, injecting it
-> and keeping the messages it covers out of the history — but only once that
-> extension has been silenced and Cairn has proved it renders the same block, byte
-> for byte. Until then it plans and compares and leaves the prompt alone, so it
-> stays safe to run alongside. Once that extension stops summarising, Cairn writes
-> its own summaries too, one per message. The features below are being built in
-> phases; see [`DESIGN.md`](DESIGN.md).
-
 ## The major choices
 
 - **Memory is typed, not tiered by age.** Current world state, scene summaries,

@@ -7,6 +7,7 @@
  * of in a forensic afternoon.
  */
 import { SLUG } from '../constants.js';
+import { MIN_CAP_FRACTION } from '../pipeline/budgeter.js';
 import { nearPromptLimit } from '../util/context-size.js';
 import { GATES, escapeHtml, fmt, row } from './html.js';
 import { renderStateSection } from './state-section.js';
@@ -262,7 +263,7 @@ function renderMemory(memory) {
             ${renderFidelity(memory)}
             ${renderIndexTally(memory)}
             ${renderCanon(memory)}
-            ${renderCap(memory.budget)}
+            ${renderCap(memory.budget, memory.maxPromptTokens)}
             ${renderExamples(memory)}
             ${row('Block change', change)}
         </details>`;
@@ -353,13 +354,23 @@ function renderCanon(memory) {
             + `after canon took ${fmt(memory.cap - memory.sceneCap)} of the block's ${fmt(memory.cap)}`);
 }
 
-/** How the cap was arrived at, in words rather than as four bare numbers. */
-const CAP_LIMITS = Object.freeze({
-    share: 'the fixed 35% share of the prompt',
-    room: 'what the rest of the prompt leaves',
-    starved: 'the 10% minimum — the card, lore and history already fill the prompt',
-    unknown: 'the fixed 35% share — the rest of the prompt could not be read',
-});
+/** The floor under the cap, as the percent the panel talks in. */
+const MIN_CAP_PERCENT = Math.round(MIN_CAP_FRACTION * 100);
+
+/**
+ * How the cap was arrived at, in words rather than as four bare numbers. The share is a
+ * setting (docs/decisions.md D-0085), so its percent is read back off the plan.
+ */
+function capLimit(budget, maxPromptTokens) {
+    const percent = maxPromptTokens > 0 ? Math.round((budget.share / maxPromptTokens) * 100) : null;
+    const share = percent === null ? 'the share of the prompt' : `the ${percent}% share of the prompt`;
+    return {
+        share,
+        room: 'what the rest of the prompt leaves',
+        starved: `the ${MIN_CAP_PERCENT}% minimum — the card, lore and history already fill the prompt`,
+        unknown: `${share} — the rest of the prompt could not be read`,
+    }[budget.limitedBy] ?? budget.limitedBy;
+}
 
 /** Where the lore reserve stopped. */
 const LORE_BOUNDS = Object.freeze({
@@ -375,14 +386,14 @@ const LORE_BOUNDS = Object.freeze({
  * inside Cairn that looks identical, because the block is under its cap either
  * way.
  */
-function renderCap(budget) {
+function renderCap(budget, maxPromptTokens) {
     if (!budget) return '';
 
-    const limit = CAP_LIMITS[budget.limitedBy] ?? budget.limitedBy;
+    const limit = capLimit(budget, maxPromptTokens);
     const starved = budget.limitedBy === 'starved'
         ? `<div class="${SLUG}-warn">This chat's card, lorebook and raw history leave the memory block
-            less than a tenth of the prompt, so it is keeping the minimum and SillyTavern is trimming
-            the history to fit.</div>`
+            less than ${MIN_CAP_PERCENT}% of the prompt, so it is keeping the minimum and SillyTavern is
+            trimming the history to fit.</div>`
         : '';
 
     if (budget.limitedBy === 'unknown') return starved + row('Cap from', limit);

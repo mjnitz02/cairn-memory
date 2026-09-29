@@ -9,7 +9,7 @@
  *
  * Pure: plain data in, plain data out. No ST, no DOM, no network.
  */
-import { hashRange, readRange, readState } from '../store/chat-store.js';
+import { hashRange, readRange, readState, visible } from '../store/chat-store.js';
 import { sceneHistory } from './scenes.js';
 import { validState } from './state-schema.js';
 import { STATE_MAX_EARLIER, STATE_MAX_MESSAGES } from './state-strategy.js';
@@ -186,8 +186,4 @@ export function wtrackerLoaded(context, { scope = globalThis } = {}) {
 export function usableState(chat, index) {
     const { status, state } = readState(chat, index);
     return status === 'valid' && validState(state.value) ? { index, state } : null;
-}
-
-function visible(message) {
-    return Boolean(message) && !message.is_system;
 }

@@ -9,6 +9,7 @@
  * Pure string math. No tokenizer: characters are close enough to rank turns
  * against each other, and this runs on every generation.
  */
+import { round1 } from './values.js';
 
 /** @returns {number} Characters shared from the start of both strings. */
 export function commonPrefixLength(a, b) {
@@ -83,8 +84,4 @@ function stringifyContent(content) {
         return content.map((part) => (typeof part?.text === 'string' ? part.text : '')).join('');
     }
     return '';
-}
-
-function round1(value) {
-    return Math.round(value * 10) / 10;
 }

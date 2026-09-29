@@ -1,12 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MAX_ATTEMPTS, createSummarizer } from '../src/pipeline/summarizer.js';
+import { describe, expect, it } from 'vitest';
+import { MAX_ATTEMPTS } from '../src/pipeline/tally.js';
 import { INDEX_PROMPT, MAX_BATCH } from '../src/memory/index-strategy.js';
 import { pendingIndex } from '../src/pipeline/compactor.js';
 import { readIndex, readScene, writeScene } from '../src/store/chat-store.js';
-import { resetToasts } from '../src/util/log.js';
-import { badIndexOutputs, createRequestService, deferred } from './mocks/llm.js';
+import { badIndexOutputs, deferred } from './mocks/llm.js';
 import { cairnSummary, makeMixedChat } from './mocks/cairn.js';
-import { createContext, openChat, startActive } from './mocks/sillytavern.js';
+import { openChat } from './mocks/sillytavern.js';
+import { queueHarness } from './helpers/summarizer.js';
+import { stubToastr } from './helpers/toastr.js';
 
 /**
  * The queue's index job (docs/decisions.md D-0070, D-0075): one batch of summaries at a
@@ -15,8 +16,6 @@ import { createContext, openChat, startActive } from './mocks/sillytavern.js';
  * the records land where the tier will look for them.
  */
 
-const MEMORY = { id: 'memory-profile', name: 'GLM (memory)' };
-const ROLEPLAY = { id: 'roleplay-profile', name: 'Local (roleplay)' };
 const CLOCK = Date.parse('2026-09-25T09:00:00.000Z');
 
 const record = (n) => ({
@@ -40,34 +39,22 @@ function summarised(length = 24) {
     return makeMixedChat({ length, qvinkThrough: -1, cairnThrough: length - 2 });
 }
 
-function harness({ responses = [], chat, settings = {}, writing = true, clock = () => CLOCK } = {}) {
-    const service = createRequestService({ responses });
-    const live = chat ?? summarised();
-    const context = createContext({
-        chat: live,
-        profiles: [MEMORY, ROLEPLAY],
-        selectedProfile: ROLEPLAY.id,
-        requestService: service,
-    });
-    const summarizer = createSummarizer(() => context, {
+function harness({ chat, writing = true, ...options } = {}) {
+    return queueHarness({
+        chat: chat ?? summarised(),
         // The summaries are already written and the state is off: these tests are the
         // index batch's, which runs after both.
-        settings: () => ({ memoryProfileId: MEMORY.id, worldState: false, ...settings }),
-        clock,
+        defaults: { worldState: false },
+        clock: () => CLOCK,
         memory: () => ({ writing }),
+        ...options,
     });
-    startActive(summarizer, context);
-    return { context, service, summarizer, chat: live };
 }
 
 const isIndexCall = (call) => call.prompt[0].content.startsWith(INDEX_PROMPT.slice(0, 60));
 const indexed = (chat) => chat.filter((message) => readIndex(message).status === 'valid').length;
 
-beforeEach(() => {
-    resetToasts();
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-});
-afterEach(() => vi.restoreAllMocks());
+stubToastr();
 
 describe('what is waiting to be indexed', () => {
     it('is every summary with no record, oldest first', () => {

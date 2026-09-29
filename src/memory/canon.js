@@ -1,5 +1,5 @@
 /**
- * Tier 2 — canon: the spine of the story, picked out of the index that every summary
+ * Tier 3 — canon: the spine of the story, picked out of the index that every summary
  * carries (DESIGN.md §8, docs/decisions.md D-0071).
  *
  * **Canon is a pick, not a bag.** Until P5 it was an append-only set of facts promoted

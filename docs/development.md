@@ -28,7 +28,7 @@ run `make check`, you know what CI will say.
 | `make test-watch` | Vitest, watching |
 | `make version-check` | `manifest.json` and `package.json` versions agree |
 | `make verify-st` | Re-check `docs/st-api-surface.md` against a local ST |
-| `make verify-rules` | Every `CLAUDE.md §N.M`, `docs/<page>.md` and `D-NNNN` reference still resolves |
+| `make verify-rules` | Every `CLAUDE.md §N.M`, `docs/<page>.md`, `D-NNNN` and cited source path (`pipeline/budgeter.js`) still resolves |
 
 ## Working against a local SillyTavern
 

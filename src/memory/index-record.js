@@ -35,6 +35,7 @@
  */
 
 import { clip, hardCap } from '../util/clip.js';
+import { isObject } from '../util/values.js';
 
 /**
  * The four kinds of thing roleplay prose is made of (D-0064), in rank order.
@@ -87,6 +88,9 @@ export const HARD_SLOT_CHARS = hardCap(MAX_SLOT_CHARS);
  */
 export const SLOTS = Object.freeze(['what', 'changed', 'because', 'background']);
 
+/** The slots after `what`: present on every record, and usually empty. */
+const OPTIONAL_SLOTS = SLOTS.filter((slot) => slot !== 'what');
+
 /**
  * The column header the rendered index carries once, so each record can be pure content.
  * **No `kind`**: a modest model treats a label it can see as a gate, and at 0d the
@@ -122,7 +126,7 @@ export function validRecord(value) {
     }
     if (typeof value.what !== 'string' || value.what === '' || value.what.length > HARD_SLOT_CHARS) return false;
     if (typeof value.line !== 'string' || value.line.length > HARD_LINE_CHARS) return false;
-    return ['changed', 'because', 'background'].every((slot) =>
+    return OPTIONAL_SLOTS.every((slot) =>
         typeof value[slot] === 'string' && value[slot].length <= HARD_SLOT_CHARS);
 }
 
@@ -172,7 +176,7 @@ export function normaliseRecord(raw) {
     }
 
     const record = { kind, who, what, changed: '', because: '', background: '', line: '' };
-    for (const slot of ['changed', 'because', 'background']) {
+    for (const slot of OPTIONAL_SLOTS) {
         record[slot] = cut(slot, text(raw[slot]), HARD_SLOT_CHARS);
     }
 
@@ -235,8 +239,4 @@ export function renderIndex(records) {
 
 function text(value) {
     return typeof value === 'string' ? value.trim() : '';
-}
-
-function isObject(value) {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

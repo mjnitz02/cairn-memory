@@ -34,8 +34,6 @@ import { STEP } from './scheduler.js';
 import { isBadRequest, memoryProfile, refusalKey, requestOverrides } from './request-options.js';
 import { MAX_ATTEMPTS, createTally } from './tally.js';
 
-export { MAX_ATTEMPTS };
-
 const NO_CONNECTION_MANAGER = 'Cairn needs the Connection Manager extension enabled to write memory summaries.';
 const PROFILE_MISSING = 'Cairn\'s memory connection profile no longer exists. Choose another in Cairn\'s settings.';
 const SAME_PROFILE = 'Cairn\'s memory connection is the profile this chat uses. Memory summaries should come from a separate model.';
@@ -72,6 +70,8 @@ export function createSummarizer(getContext, {
     settings, strategy = perMessage, stateStrategy, canonStrategy, indexStrategy,
     clock = Date.now, onUpdate, memory, onCall,
 } = {}) {
+    /** The settings as they are now: read at the point of use, since the panel changes them live. */
+    const readSettings = () => settings?.() ?? {};
     const summaries = createTally();
     /** The chat the tallies count for. A reload of the same chat keeps them. */
     let statsChat = null;
@@ -183,7 +183,7 @@ export function createSummarizer(getContext, {
         let indexTried = false;
         while (running) {
             const context = getContext();
-            const config = settings?.() ?? {};
+            const config = readSettings();
             const writing = memory?.()?.writing;
             const gates = {
                 summary: assessSummarizing(context, config),
@@ -330,7 +330,7 @@ export function createSummarizer(getContext, {
     async function sendAskingLittleReasoning(context, memoryProfileId, request, signal, counting) {
         const profile = memoryProfile(context, memoryProfileId);
         const key = refusalKey(profile);
-        const config = settings?.() ?? {};
+        const config = readSettings();
         for (;;) {
             const refused = refusedFor(config, key);
             const overrides = requestOverrides(context, profile, refused, config.memoryReasoning);
@@ -585,7 +585,7 @@ export function createSummarizer(getContext, {
         if (!summarisable(message)) return refused('too-short');
         // A newer Cairn's store is not ours to overwrite (store/chat-store.js).
         if (readScene(message).status === 'future') return refused('future');
-        const gate = assessSummarizing(context, settings?.() ?? {});
+        const gate = assessSummarizing(context, readSettings());
         if (!gate.ready) return refused(gate.reason);
 
         // A second click while it is waiting or out changes nothing.
@@ -614,7 +614,7 @@ export function createSummarizer(getContext, {
         const message = context.chat?.[index];
         if (!message || typeof message.mes !== 'string') return refused('no-message');
         if (message.is_system) return refused('hidden');
-        const gate = assessStateUpdates(context, settings?.() ?? {});
+        const gate = assessStateUpdates(context, readSettings());
         if (!gate.ready) return refused(gate.reason);
         if (!stateJobAt(context.chat, index)) return refused('future');
 
@@ -630,7 +630,7 @@ export function createSummarizer(getContext, {
         if (!running) return { ok: false, reason: 'disabled' };
         if (adopting) return { ok: false, reason: 'adopting' };
         const context = getContext();
-        const config = settings?.() ?? {};
+        const config = readSettings();
         const gate = assessSummarizing(context, config);
         if (!gate.ready) return { ok: false, reason: gate.reason };
         const every = config.step || STEP;
@@ -657,7 +657,7 @@ export function createSummarizer(getContext, {
         activeIn = chatId;
         try {
             await (active ?? Promise.resolve());
-            const config = settings?.() ?? {};
+            const config = readSettings();
             const result = await adoption.run(config, {
                 every: preview.every,
                 slots: config.keepCanon === false ? 0 : (config.canonSlots || DEFAULT_SLOTS),
@@ -772,7 +772,7 @@ export function createSummarizer(getContext, {
             };
             try {
                 // The default is what goes out when the prompt is unedited *or* unusable.
-                const config = settings?.() ?? {};
+                const config = readSettings();
                 const prompt = resolveSummaryPrompt(config.summaryPrompt);
                 status.promptDefault = !prompt.edited || prompt.fallback;
                 // Which model the calls went to, and what Cairn asked of it: a run that

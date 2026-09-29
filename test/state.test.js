@@ -9,9 +9,10 @@ import {
 } from '../src/memory/state.js';
 import { STATE_MAX_EARLIER, STATE_MAX_MESSAGES, stateRecord } from '../src/memory/state-strategy.js';
 import { sceneHistory } from '../src/memory/scenes.js';
-import { readState, writeState } from '../src/store/chat-store.js';
+import { readState } from '../src/store/chat-store.js';
 import { cairnSummary, makeMixedChat } from './mocks/cairn.js';
 import { createContext, makeChat, makeCoreChat, makeMessage, newSwipe, swipeTo } from './mocks/sillytavern.js';
+import { putState } from './helpers/state.js';
 
 const IGNORE = Symbol.for('ignore');
 
@@ -21,9 +22,6 @@ const DECK = Object.freeze({ location: 'The ferry, upper deck', weather: 'Cleari
 const CABIN = Object.freeze({ location: 'The ferry, a cabin below deck' });
 
 /** A state on `chat[index]` that read `read` visible messages, as the queue will write it. */
-function putState(chat, index, value, read = 2) {
-    expect(writeState(chat, index, { value, read, changed: [], prompt: 'h:1', at: 'T' })).toBe(true);
-}
 
 /** Wren and Aster alternating, states on the replies at 1 and 3 (each read its exchange). */
 function playedChat(turns = 6) {
@@ -293,7 +291,7 @@ describe('the pending state job', () => {
     it('stores exactly the range it read: once written, the job is done', () => {
         const chat = makeMixedChat({ length: 20, qvinkThrough: 5, cairnThrough: 12, hidden: [16] });
         const job = pendingStateJob(chat);
-        putState(chat, job.index, CABIN, job.read);
+        putState(chat, job.index, CABIN, { read: job.read });
 
         expect(chat[job.index].extra.cairn.state.hash).toBe(job.hash);
         expect(newestState(chat).index).toBe(job.index);

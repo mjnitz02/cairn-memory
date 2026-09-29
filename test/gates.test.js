@@ -4,9 +4,7 @@ import { QVINK_EXTENSION } from '../src/memory/scenes.js';
 import { WTRACKERS } from '../src/memory/state.js';
 import { createRequestService } from './mocks/llm.js';
 import { createContext } from './mocks/sillytavern.js';
-
-const MEMORY = { id: 'memory-profile', name: 'GLM (memory)' };
-const ROLEPLAY = { id: 'roleplay-profile', name: 'Local (roleplay)' };
+import { MEMORY, ROLEPLAY } from './helpers/summarizer.js';
 
 const context = (overrides = {}) => createContext({ profiles: [MEMORY, ROLEPLAY], requestService: createRequestService(), ...overrides });
 

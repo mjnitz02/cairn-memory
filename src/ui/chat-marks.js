@@ -15,7 +15,7 @@ import { pendingScenes, qvinkDisplaying, readScenes } from '../memory/scenes.js'
 import { usableState, wtrackerLoaded } from '../memory/state.js';
 import { canonTexts } from './canon-section.js';
 import { renderState } from '../memory/state-schema.js';
-import { MAX_ATTEMPTS } from '../pipeline/summarizer.js';
+import { MAX_ATTEMPTS } from '../pipeline/tally.js';
 import { warn } from '../util/log.js';
 import { escapeHtml } from './html.js';
 
@@ -183,29 +183,25 @@ export function createChatMarks(getContext, { status, settings }) {
         (element.querySelector(`.${SLUG}-scene`) ?? body).after(node);
     }
 
-    /** Below the summary if there is one. Only the text is rewritten, so an open section stays open. */
+    /**
+     * Below the summary if there is one. A summary drawn later goes directly after the
+     * body, so it still lands above this.
+     */
     function drawState(element, text) {
-        let node = element.querySelector(`.${SLUG}-state`);
-        if (text === undefined) {
-            node?.remove();
-            return;
-        }
-        if (!node) {
-            const body = element.querySelector('.mes_text');
-            if (!body) return;
-            node = document.createElement('details');
-            node.className = `${SLUG}-state`;
-            node.innerHTML = '<summary>World state</summary><pre></pre>';
-            // A summary drawn later goes directly after the body, so it still lands above this.
-            (element.querySelector(`.${SLUG}-state-writing`) ?? element.querySelector(`.${SLUG}-scene`) ?? body).after(node);
-        }
-        const pre = node.querySelector('pre');
-        if (pre.textContent !== text) pre.textContent = text;
+        drawDetails(element, 'state', 'World state', text, ['state-writing', 'scene']);
     }
 
     /** Below the state, so the head of the block reads last where it was written. */
     function drawCanon(element, text) {
-        let node = element.querySelector(`.${SLUG}-canon`);
+        drawDetails(element, 'canon', 'Established facts', text, ['state', 'scene']);
+    }
+
+    /**
+     * A collapsed section under a message, placed after the first of `after` it has, else
+     * after the body. Only the text is rewritten, so an open section stays open.
+     */
+    function drawDetails(element, kind, title, text, after) {
+        let node = element.querySelector(`.${SLUG}-${kind}`);
         if (text === undefined) {
             node?.remove();
             return;
@@ -214,9 +210,10 @@ export function createChatMarks(getContext, { status, settings }) {
             const body = element.querySelector('.mes_text');
             if (!body) return;
             node = document.createElement('details');
-            node.className = `${SLUG}-canon`;
-            node.innerHTML = '<summary>Established facts</summary><pre></pre>';
-            (element.querySelector(`.${SLUG}-state`) ?? element.querySelector(`.${SLUG}-scene`) ?? body).after(node);
+            node.className = `${SLUG}-${kind}`;
+            node.innerHTML = `<summary>${title}</summary><pre></pre>`;
+            const anchor = after.map((name) => element.querySelector(`.${SLUG}-${name}`)).find(Boolean);
+            (anchor ?? body).after(node);
         }
         const pre = node.querySelector('pre');
         if (pre.textContent !== text) pre.textContent = text;

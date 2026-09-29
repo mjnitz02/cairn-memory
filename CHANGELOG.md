@@ -66,6 +66,8 @@ about your accumulated memory, not our internals (CLAUDE.md §8.32).
 
 ### Fixed
 
+- The inspector's "Cap from" line said the block's share was 35% whatever the setting
+  held. It now names the share you set.
 - **The world state stopped updating alongside WeatherPack** or any extension that
   tidies a reply's markdown after it arrives. Cairn read the reply before the tidy,
   saw it change, threw the update away and did not try again until the next reply,

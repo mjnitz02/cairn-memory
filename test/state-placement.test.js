@@ -1,16 +1,18 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createSummarizer } from '../src/pipeline/summarizer.js';
 import { createInjector, MEMORY_INJECTION } from '../src/prompt/injector.js';
 import { buildInventory, summarizeInventory } from '../src/prompt/inventory.js';
 import { STATE_INJECTION, createStatePlacement, placeState } from '../src/prompt/state-placement.js';
 import { WTRACKERS } from '../src/memory/state.js';
 import { MAX_STATE_CHARS, renderState } from '../src/memory/state-schema.js';
-import { readState, writeState } from '../src/store/chat-store.js';
-import { resetToasts } from '../src/util/log.js';
+import { readState } from '../src/store/chat-store.js';
 import { createRequestService, deferred } from './mocks/llm.js';
 import {
     assembleTextPrompt, createContext, makeChat, makeCoreChat, makeMessage, newSwipe, swipeTo, startActive,
 } from './mocks/sillytavern.js';
+import { MEMORY } from './helpers/summarizer.js';
+import { putState } from './helpers/state.js';
+import { stubToastr } from './helpers/toastr.js';
 
 /**
  * The world state in the prompt (docs/decisions.md D-0042, D-0045): after the newest
@@ -19,7 +21,6 @@ import {
  */
 
 const IGNORE = Symbol.for('ignore');
-const MEMORY = { id: 'memory-profile', name: 'GLM (memory)' };
 
 /** Synthetic states, the shape of test/fixtures/store-v2.js. */
 const PIER = Object.freeze({
@@ -34,9 +35,6 @@ const DECK = Object.freeze({
 });
 
 /** A state on `chat[index]` that read `read` visible messages, as the queue writes it. */
-function putState(chat, index, value, { read = 2, changed = [] } = {}) {
-    expect(writeState(chat, index, { value, read, changed, prompt: 'h:1', at: 'T' })).toBe(true);
-}
 
 /** Wren and Aster alternating, states on the replies at 1 and 3, and Wren's message at 4 to answer. */
 function playedChat() {
@@ -65,19 +63,7 @@ function harness({ chat = playedChat(), plan = makePlan(), settings = {}, scope 
     return { context, placement, injector, generate };
 }
 
-let warning;
-
-beforeEach(() => {
-    warning = vi.fn();
-    vi.stubGlobal('toastr', { warning });
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    resetToasts();
-});
-
-afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-});
+const toastr = stubToastr();
 
 describe('which state goes in, and why not', () => {
     const context = (chat) => ({ chat, extensionSettings: { disabledExtensions: [] }, getExtensionManifest: () => null });
@@ -397,7 +383,7 @@ describe('when no state is placed', () => {
 
         expect(context.extensionPrompts[STATE_INJECTION].value).toBe(renderState(DECK));
         expect(context.extensionPrompts[MEMORY_INJECTION].value).toBe('BLOCK');
-        expect(warning).toHaveBeenCalledTimes(1);
+        expect(toastr.warning).toHaveBeenCalledTimes(1);
     });
 
     it('places the state with no clamp when the block\'s plan fails', async () => {

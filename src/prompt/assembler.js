@@ -37,15 +37,16 @@ import { readCanon, readIndex } from '../store/chat-store.js';
 import { admitCanon, canonFor, slotsFor } from '../memory/canon.js';
 import { canonCap, createBudget, deriveCap, recoupled, tierSplit } from '../pipeline/budgeter.js';
 import { indexRecords, pendingPick } from '../pipeline/compactor.js';
-import { createSeeSaw } from '../pipeline/scheduler.js';
+import { FIRST_TURN, createSeeSaw } from '../pipeline/scheduler.js';
 import { createExamplesLatch, examplesSuperseded } from '../memory/examples.js';
 import { assessHandover } from './handover.js';
-import { FIRST_TURN, isRebuild } from './rebuild.js';
+import { isRebuild } from './rebuild.js';
 import { createReserves } from './reserves.js';
 import { comparePrompts } from '../util/prefix.js';
 import { createMaxPromptTokens } from '../util/context-size.js';
 import { countTokens } from '../util/tokens.js';
 import { debug } from '../util/log.js';
+import { round1 } from '../util/values.js';
 
 /**
  * How the block reads: qvink's default template and separator (its index.js:93,
@@ -604,8 +605,3 @@ function divergencePercent(change) {
     if (!change.divergence || !change.previousLength) return null;
     return round1((change.divergence.index / change.previousLength) * 100);
 }
-
-function round1(value) {
-    return Math.round(value * 10) / 10;
-}
-

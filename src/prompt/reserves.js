@@ -29,17 +29,7 @@ import { wtrackerLoaded } from '../memory/state.js';
 import { hashString } from '../util/hash.js';
 import { estimateTokens, countTokens } from '../util/tokens.js';
 import { warn } from '../util/log.js';
-
-/**
- * ST's World Info module. `getSortedEntries` and the budget settings are not on
- * `getContext()` (public/scripts/st-context.js:115-309), so they come from the
- * module the way util/context-size.js takes `getMaxPromptTokens` from
- * `/script.js`: an absolute specifier, because that is the URL ST itself loaded
- * it under (`./scripts/world-info.js` from `/script.js`, public/script.js:52),
- * and a *dynamic* import, because a failed import at module scope would stop the
- * extension loading.
- */
-const ST_WORLD_INFO = '/scripts/world-info.js';
+import { loadWorldInfo } from '../util/st-modules.js';
 
 /**
  * The card fields ST puts in the story string (`storyStringParams`,
@@ -210,7 +200,7 @@ export function cardText(fields, systemPrompt = '', { stripExamples = false } = 
  *        outside the browser.
  */
 export function createReserves(getContext, {
-    load = () => import(/* @vite-ignore */ ST_WORLD_INFO),
+    load = loadWorldInfo,
     settings = null,
     scope = globalThis,
     runLength = RUN_LENGTH,
