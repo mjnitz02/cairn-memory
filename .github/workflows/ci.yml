@@ -55,8 +55,9 @@ jobs:
           fetch-depth: 0
       - name: manifest.json and package.json agree
         run: make version-check
+      # Dependabot bumps dev tooling only — nothing it touches ships, so no release.
       - name: Version bumped since the base branch
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]'
         run: |
           set -euo pipefail
           current=$(node -p "require('./manifest.json').version")

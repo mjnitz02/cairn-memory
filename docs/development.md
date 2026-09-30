@@ -27,6 +27,7 @@ run `make check`, you know what CI will say.
 | `make test` | Vitest, once |
 | `make test-watch` | Vitest, watching |
 | `make version-check` | `manifest.json` and `package.json` versions agree |
+| `make bump` | Minor bump in `manifest.json` and `package.json`; `PART=patch` or `PART=major` to override |
 | `make verify-st` | Re-check `docs/st-api-surface.md` against a local ST |
 | `make verify-rules` | Every `CLAUDE.md §N.M`, `docs/<page>.md`, `D-NNNN` and cited source path (`pipeline/budgeter.js`) still resolves |
 

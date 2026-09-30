@@ -5,7 +5,7 @@
 # Everything CI runs is here under the same target name (CLAUDE.md §9.34).
 
 .DEFAULT_GOAL := help
-.PHONY: help install lint lint-fix test test-watch verify-st verify-rules check version-check secrets clean
+.PHONY: help install lint lint-fix test test-watch verify-st verify-rules check version-check bump secrets clean
 
 # Local SillyTavern checkout used by verify-st. Override: make verify-st ST_PATH=...
 ST_PATH ?= $(HOME)/workspaces/SillyTavern
@@ -36,6 +36,14 @@ version-check: ## Assert manifest.json and package.json versions match
 		echo "✗ version mismatch: manifest.json $$m != package.json $$p"; exit 1; \
 	fi; \
 	echo "✓ version $$m"
+
+# PART=patch or PART=major to override. npm keeps package-lock.json in step too.
+PART ?= minor
+bump: ## Bump the version in manifest.json and package.json (minor; PART=patch|major)
+	@v=$$(npm version $(PART) --no-git-tag-version | tr -d v); \
+	node -e "const f='manifest.json',fs=require('fs'),m=JSON.parse(fs.readFileSync(f)); \
+		m.version='$$v'; fs.writeFileSync(f, JSON.stringify(m, null, 4) + '\n')"; \
+	echo "✓ version $$v"
 
 secrets: ## Scan history for leaked secrets (needs gitleaks on PATH)
 	@command -v gitleaks >/dev/null 2>&1 || { \
