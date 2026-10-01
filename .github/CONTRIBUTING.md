@@ -45,7 +45,8 @@ make check     # lint, version check, rule references, tests, secret scan, verif
 `verify-st` needs a local SillyTavern checkout; CI runs everything else.
 
 - Bump the version in both `manifest.json` and `package.json` (`make bump`) —
-  CI fails a PR that doesn't. Dependabot PRs are exempt.
+  CI fails a PR that doesn't. Dependabot PRs are exempt, and merge themselves
+  once CI is green.
 - Add a `CHANGELOG.md` line for anything a user would notice.
 - Update the docs that describe the behaviour you changed, in the same PR.
 - Fill in the PR template.

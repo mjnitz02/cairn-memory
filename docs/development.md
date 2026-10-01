@@ -31,6 +31,17 @@ run `make check`, you know what CI will say.
 | `make verify-st` | Re-check `docs/st-api-surface.md` against a local ST |
 | `make verify-rules` | Every `CLAUDE.md §N.M`, `docs/<page>.md`, `D-NNNN` and cited source path (`pipeline/budgeter.js`) still resolves |
 
+## Dependency updates
+
+Dependabot opens one PR a week covering npm and the pinned actions together, and
+`dependabot-automerge.yml` merges it once the required checks are green. Security
+updates arrive separately, one PR per ecosystem, and merge the same way.
+
+These PRs do not bump the version: npm here is dev tooling and nothing it
+installs ships, so there is nothing to release. The `Version` check skips its
+bump comparison for them and still enforces that `manifest.json` and
+`package.json` agree. A red Dependabot PR is the only one that needs a human.
+
 ## Working against a local SillyTavern
 
 Symlink the repo into your ST extensions directory so edits are live:
